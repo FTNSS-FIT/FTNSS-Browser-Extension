@@ -126,6 +126,26 @@ export async function currentCohort() {
   return typeof bag?.[COHORT_KEY] === 'string' ? bag[COHORT_KEY] : null;
 }
 
+/**
+ * What actually gets RECORDED for a cohort: the family, and whether it was the primary domain or a
+ * country-code variant. Never the hostname itself.
+ *
+ * Making the operator declare the cohort fixed its provenance but not its CONTENT: `airbnb.jp` is
+ * still a hostname, and because recording is blocked unless the declaration matches the page, an
+ * export carrying it still proves which domain was visited. The popup's "no hostname is stored" was
+ * therefore false, which is a claim defect on top of the privacy one.
+ *
+ * `{family: 'airbnb', variant: 'cctld'}` answers the question this phase actually asks — *do
+ * country-code domains behave differently from the primary one?* — without recording which country.
+ * The specific domain is only ever compared in the browser and never written down.
+ * (Codex review round 12, PR #1.)
+ */
+export function cohortRecordFor(label) {
+  const family = siteFamilyFor(label);
+  const primary = family === 'airbnb' ? 'airbnb.com' : family === 'booking' ? 'booking.com' : null;
+  return { family, variant: label === primary ? 'primary' : 'cctld' };
+}
+
 export async function setCurrentCohort(cohort) {
   if (!SITE_LABELS.includes(cohort)) throw new Error('unknown cohort');
   await chrome.storage.local.set({ [COHORT_KEY]: cohort });
@@ -181,7 +201,8 @@ export async function clearRecords() {
  * Every entry here is either a number we computed or a value chosen from our own vocabulary.
  */
 const EXPORT_FIELDS = [
-  'cohort', // declared by the operator; never derived from the page
+  'family', // 'airbnb' | 'booking' — declared by the operator, never a hostname
+  'variant', // 'primary' | 'cctld' — answers the ccTLD question without naming the country
   'recordedAt',
   'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and
                  // already within the privacy envelope the product itself operates in

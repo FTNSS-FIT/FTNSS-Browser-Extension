@@ -144,12 +144,24 @@ summarise(records, 'ALL SITES');
 
 const bySite = new Map();
 for (const r of records) {
-  // The cohort the operator declared — not a hostname read off the page.
-  const family = String(r.cohort || 'unknown');
+  // The family the operator declared — not a hostname read off the page.
+  const family = String(r.family || 'unknown');
   if (!bySite.has(family)) bySite.set(family, []);
   bySite.get(family).push(r);
 }
 for (const [family, rows] of bySite) summarise(rows, family.toUpperCase());
+
+// Does a country-code domain behave differently from the primary one? Answerable without any record
+// naming which country it was.
+const byVariant = new Map();
+for (const r of records) {
+  const v = String(r.variant || 'unknown');
+  if (!byVariant.has(v)) byVariant.set(v, []);
+  byVariant.get(v).push(r);
+}
+if (byVariant.size > 1) {
+  for (const [variant, rows] of byVariant) summarise(rows, `VARIANT: ${variant}`);
+}
 
 console.log(`
 NOT MEASURED BY THIS REPORT

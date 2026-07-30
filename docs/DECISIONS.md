@@ -142,6 +142,12 @@ an exported file makes that file a record of which domains were visited — the 
 rules say never leaves the browser. Both were true at once: the analysis was necessary and the
 provenance was wrong. Declaring it keeps the entire analysis with nothing page-derived persisted.
 
+**And what is recorded is the family, not the hostname.** Fixing the provenance was not enough on its
+own: `airbnb.jp` is still a hostname, and because recording is refused unless the declaration matches
+the page, an export carrying it would still have proved which domain was visited. Records carry
+`{family: 'airbnb', variant: 'cctld'}` — which answers the question the phase actually asks, *do
+country-code domains behave differently from the primary one?*, without recording which country.
+
 **Accuracy is not traded away for it.** The content script still reports what it detected, and the
 popup refuses to record while the declared cohort disagrees with the detected page. That check runs
 in the browser and the detected value is never written to a record — so a mislabelled cohort is

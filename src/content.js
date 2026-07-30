@@ -50,6 +50,28 @@
     return `${ldLength}|${main ? main.childElementCount : 0}|${document.querySelectorAll('img').length}`;
   }
 
+  // A MutationObserver that runs for the LIFETIME of the page, not one started per navigation.
+  //
+  // A per-navigation observer can only see what happens after it starts, so a soft navigation that
+  // completed before the 250ms poll noticed it produced no records at all — the wait then ran to the
+  // full ceiling and published a false `not_found` for a listing that was sitting there, readable.
+  // The signature check was meant to cover that case and cannot: a navigation that rewrites text and
+  // attributes in place leaves element counts, image counts and JSON-LD length identical.
+  //
+  // Watching continuously means the evidence exists before we go looking for it.
+  // (Codex review round 12, PR #1.)
+  let mutationCount = 0;
+  let lastMutationAt = 0;
+  new MutationObserver(() => {
+    mutationCount += 1;
+    lastMutationAt = performance.now();
+  }).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    characterData: true,
+  });
+
   /** Resolve once the DOM has stopped changing, or once we give up waiting. */
   function waitForStableDom({ quietMs = 300, maxMs = 5000, alreadyChanged = false } = {}) {
     return new Promise((resolve) => {
@@ -95,17 +117,28 @@
     softNavigation = false,
     navDetectedAt = null,
     latencyUncertaintyMs = 0,
+    mutationCountAtNavigation = 0,
   } = {}) {
     const myGeneration = (generation += 1);
     let domSettled = true;
 
     if (softNavigation) {
-      const alreadyChanged = domSignature() !== lastSignature;
+      // Three independent signals that the page has moved on, because each one alone has a blind
+      // spot: the signature misses in-place text rewrites, the observer we are about to start misses
+      // anything that already finished, and the persistent counter is the one that catches a
+      // navigation completed before the poll noticed it.
+      const mutatedSinceNavigation = mutationCount > mutationCountAtNavigation;
+      const mutatedJustNow = performance.now() - lastMutationAt < 1500;
+      const alreadyChanged =
+        domSignature() !== lastSignature || mutatedSinceNavigation || mutatedJustNow;
+
       const stability = await waitForStableDom({ alreadyChanged });
       domSettled = stability.settled;
       if (myGeneration !== generation) return;
 
       if (!stability.mutated && !alreadyChanged) {
+        // Genuinely nothing changed anywhere: not before we looked, not while we waited. Whatever is
+        // on screen still belongs to the previous listing.
         // Publish the failure rather than returning silently. A page may be readable and merely
         // slower than the ceiling, and "nothing shown" is indistinguishable from "nothing found" —
         // the same ambiguity the never-show-an-empty-panel rule exists to prevent.
@@ -169,10 +202,14 @@
     // and record listing A's coordinates while the person was looking at listing B, for seconds.
     // (Codex review round 11, PR #1.)
     void invalidateReading();
+    // Snapshot the mutation counter BEFORE the async work, so "did anything change because of this
+    // navigation" is answerable afterwards.
+    const mutationCountAtNavigation = mutationCount;
     void measureCurrentPage({
       softNavigation: true,
       navDetectedAt: performance.now(),
       latencyUncertaintyMs,
+      mutationCountAtNavigation,
     });
   }
 

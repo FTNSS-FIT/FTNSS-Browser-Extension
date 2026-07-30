@@ -103,31 +103,30 @@ export function extractFromMapLinks(doc) {
     if (!/map|maps|geo|marker|\bll=|@-?\d/i.test(raw)) continue;
 
     const hit = readUrl(raw);
-    if (hit != null) {
-      candidates.push(hit);
-      // Two is enough to know whether they agree; collecting every one on the page is work we do not
-      // need in order to answer that.
-      if (candidates.length >= 8) break;
+    if (hit == null) continue;
+
+    // Compare ONLINE, and never stop early on agreement. Collecting the first eight and checking
+    // them afterwards meant a page could place eight identical advert maps ahead of the listing's
+    // own map: the scan stopped satisfied, the real map was never seen, and the unrelated location
+    // was returned with confidence. Stopping early on agreement is only safe if you have already
+    // seen everything, which is the thing stopping early prevents.
+    // (Codex review round 12, PR #1.)
+    if (candidates.length > 0 && distanceMetres(candidates[0], hit) > CONFLICT_METRES) {
+      return notFound('map urls disagreed about the location — refusing to guess');
     }
+    candidates.push(hit);
   }
 
   if (candidates.length === 0) {
     return notFound(visited === 0 ? 'no elements to examine' : 'no map url carried a usable coordinate');
   }
 
-  // FAIL CLOSED WHEN THE PAGE DISAGREES WITH ITSELF.
-  //
-  // Taking the first map-shaped URL in document order assumed the listing's own map comes first.
-  // Nothing enforces that: a page can carry a city-overview map, a "hotels near here" widget, or an
-  // advert, any of which may appear earlier. The result was a confident coordinate for the wrong
-  // place — and a wrong answer is worse here than no answer, because tier 3 or an honest failure
-  // both beat pinning a gym next to a hotel the person is not looking at.
-  // (Codex review round 11, PR #1.)
+  // Every candidate on the page agreed. Taking the first map-shaped URL in document order used to
+  // assume the listing's own map comes first, which nothing enforces — a city-overview map, a
+  // "hotels near here" widget or an advert can appear earlier. A confident wrong coordinate is worse
+  // than no coordinate: tier 3 or an honest failure both beat pinning a gym next to a hotel the
+  // person is not looking at. (Codex review round 11, PR #1.)
   const first = candidates[0];
-  const disagreement = candidates.find((c) => distanceMetres(first, c) > CONFLICT_METRES);
-  if (disagreement != null) {
-    return notFound('map urls disagreed about the location — refusing to guess');
-  }
 
   return found({
     lat: first.lat,

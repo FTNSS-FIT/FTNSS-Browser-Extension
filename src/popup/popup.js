@@ -16,6 +16,7 @@ import {
   clearCurrentReading,
   currentCohort,
   setCurrentCohort,
+  cohortRecordFor,
   SITE_LABELS,
 } from '../lib/storage.js';
 import { toTransmittablePoint, distanceMetres } from '../lib/geo.js';
@@ -190,9 +191,26 @@ async function render() {
       }
     }
 
+    // RE-READ AND REVALIDATE before writing anything.
+    //
+    // `reading` was captured when the popup rendered. A popup can stay open across a soft
+    // navigation, and the controls rendered for listing A remained live and clickable after the
+    // person had moved to listing B — so a verdict meant for B could be written against A's
+    // coordinates. Session storage being invalidated did not help, because the closure still held
+    // the old object. Check that the reading is still there AND still the same one.
+    // (Codex review round 12, PR #1.)
+    const live = await currentReading();
+    if (live == null || live.publishedAt !== reading.publishedAt || live.navigationId !== reading.navigationId) {
+      statusEl.replaceChildren(
+        el('span', 'This page changed since the reading — nothing recorded.', 'warn'),
+      );
+      await render();
+      return;
+    }
+
     await saveRecord({
-      // The cohort the operator DECLARED — never the hostname the page happens to have.
-      cohort,
+      // The family and variant the operator DECLARED — never a hostname.
+      ...cohortRecordFor(cohort),
       // Date only. A precise time beside a site label is the makings of a browsing log, and nothing
       // in the report groups more finely than a day.
       recordedAt: new Date().toISOString().slice(0, 10),

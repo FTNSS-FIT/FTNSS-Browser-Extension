@@ -117,8 +117,9 @@ Deliberately, **no page identifier**: not the URL, not the hostname, not the add
   short list of sites is walkable, so cross-session dedup was dropped rather than kept as a token
   gesture. Recording the same listing in two sessions counts it twice; the panel guards the
   realistic mistake, which is a double click on one page view.
-- The site is **declared by the operator**, not derived from the page. Nothing hostname-derived is
-  ever persisted or exported.
+- The site is **declared by the operator**, and what gets recorded is the family and whether it was a
+  country-code variant — `{family: 'airbnb', variant: 'cctld'}`, never `airbnb.jp`. That answers the
+  ccTLD question without recording which country. Nothing hostname-shaped is persisted or exported.
 - **The projection is applied when a record is written**, not when it is exported, so the trail never
   exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
   decides it belongs, where a denylist protects only the fields somebody remembered.
