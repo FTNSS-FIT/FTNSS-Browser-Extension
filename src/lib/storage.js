@@ -193,6 +193,22 @@ export async function saveRecord(record) {
 // exportableRecords is defined below and used by saveRecord above — the SAME projection on both
 // sides, so what is stored and what is exported can never drift apart.
 
+/**
+ * Rewrite every stored record through the projection, unconditionally.
+ *
+ * Migration used to be a side effect of saving, which meant it never happened in the two states an
+ * abandoned old batch is most likely to be in: an orphaned batch (saving refused) and a full store
+ * (saving refused). A browsing trail could therefore sit on disk indefinitely while the UI said none
+ * was stored, and nothing would ever clean it. Runs at startup, before anything renders.
+ * (Codex review round 25, PR #1.)
+ */
+export async function migrateStoredRecords() {
+  const records = await loadRecords();
+  if (records.length === 0) return;
+  const projected = exportableRecords(records);
+  await chrome.storage.local.set({ [KEY]: projected });
+}
+
 export async function clearRecords() {
   await chrome.storage.local.remove(KEY);
 }

@@ -23,6 +23,7 @@ import {
   clearBatchCohortLabel,
   siteLabelFor,
   migrateAwayLocalCohort,
+  migrateStoredRecords,
   SITE_LABELS,
 } from '../lib/storage.js';
 import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
@@ -180,8 +181,20 @@ async function render() {
     // Still working out whether the page is readable. Shown, so the operator knows the extension is
     // alive, and not recordable — "no read" here would write a false miss for a page whose
     // coordinates are about to appear.
+    //
+    // AND WE COME BACK. Rendering once and returning left the popup saying "still reading" forever:
+    // the content script settled a second later and nothing asked it again, so that listing could
+    // never be recorded at all. The pages that take a moment to settle are the slow, heavy ones, so
+    // silently losing them raises the measured hit rate — the same direction as every other defect
+    // this instrument has had. (Codex review rounds 24 and 25, PR #1.)
     readingEl.appendChild(el('div', 'still reading this page…', 'muted'));
     await refreshCount();
+    if (pollsRemaining > 0) {
+      pollsRemaining -= 1;
+      setTimeout(() => void render(), 400);
+    } else {
+      readingEl.appendChild(el('div', 'This page did not settle. Reload it and try again.', 'warn'));
+    }
     return;
   }
 
@@ -360,5 +373,19 @@ document.getElementById('clear').addEventListener('click', async () => {
   await render();
 });
 
-void migrateAwayLocalCohort();
-void render();
+/**
+ * Sanitise anything an older build left on disk, BEFORE the first render.
+ *
+ * Legacy rows were only rewritten on the next successful save — and the two states where saving is
+ * refused, an orphaned batch and a full store, are exactly the states an abandoned old batch is
+ * likely to be in. So a browsing trail could sit in local storage indefinitely while the popup said
+ * none was stored, with no path that would ever clean it. Migration cannot depend on a later write
+ * succeeding. (Codex review round 25, PR #1.)
+ */
+async function start() {
+  await migrateAwayLocalCohort();
+  await migrateStoredRecords();
+  await render();
+}
+
+void start();

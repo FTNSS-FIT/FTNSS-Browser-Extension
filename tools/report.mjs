@@ -69,10 +69,15 @@ function summarise(rows, label) {
   // measured latency understates the real one by `latencyUncertaintyMs`. Adding it before the
   // comparison means a panel that may really have taken longer than the budget is not counted as a
   // hit on the strength of how it was measured. (Codex review round 4, PR #1.)
+  // The two uncertainties bound the true latency from OPPOSITE sides, and were previously summed
+  // into a single "worst case". That inflated every probe-delayed reading: a 750ms read with 250ms
+  // of probe delay is bounded ABOVE by 750ms, and was being reported as possibly 1000ms and dropped
+  // from the hits — the report penalising a reading for how carefully it was measured.
+  // (Codex review round 25, PR #1.)
+  const navigationDelay = (r) => r.timing?.navigationDelayMs ?? r.latencyUncertaintyMs ?? 0;
+  const probeDelay = (r) => r.timing?.probeDelayMs ?? 0;
   const worstCaseLatency = (r) =>
-    Number.isFinite(latencyOf(r))
-      ? latencyOf(r) + (r.timing?.readinessUncertaintyMs ?? r.latencyUncertaintyMs ?? 0)
-      : NaN;
+    Number.isFinite(latencyOf(r)) ? latencyOf(r) + navigationDelay(r) : NaN;
   // A hit needs latency that was MEASURED and inside the budget. Round 3 fixed missing-latency being
   // treated as too slow; the fix over-corrected into treating it as fast enough, which inflates the
   // headline number instead of deflating it. Neither is right: an unmeasured record is not evidence
@@ -82,9 +87,7 @@ function summarise(rows, label) {
   // cannot say which side it fell, and guessing in either direction biases the headline number, so
   // it is reported on its own line rather than counted. (Codex review round 23, PR #1.)
   const bestCaseLatency = (r) =>
-    Number.isFinite(latencyOf(r))
-      ? latencyOf(r) - (r.timing?.readinessUncertaintyMs ?? 0)
-      : NaN;
+    Number.isFinite(latencyOf(r)) ? Math.max(0, latencyOf(r) - probeDelay(r)) : NaN;
   const straddles = (r) =>
     Number.isFinite(latencyOf(r)) &&
     bestCaseLatency(r) <= LATENCY_BUDGET_MS &&

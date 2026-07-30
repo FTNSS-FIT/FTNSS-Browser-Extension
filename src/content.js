@@ -59,8 +59,22 @@
     const nav = performance.getEntriesByType('navigation')[0];
     return nav ? nav.domContentLoadedEventEnd : null;
   })();
-  /** How late the navigation may have been NOTICED. Added before any budget comparison. */
-  let readinessUncertaintyMs = 0;
+  /**
+   * TWO uncertainties, in OPPOSITE directions. They were one field, added together, which was wrong
+   * for half of what it contained.
+   *
+   *   navigationDelayMs — the navigation may have been noticed LATE, so the baseline was set late,
+   *                       so the measured duration is too SMALL. True latency ≤ measured + this.
+   *   probeDelayMs      — the coordinate appeared somewhere between two probes, so we saw it late,
+   *                       so the measured duration is too LARGE. True latency ≥ measured − this.
+   *
+   * Summing them and calling the total a worst case inflated every probe-delayed reading: a 750ms
+   * read with 250ms of probe delay is bounded ABOVE by 750ms, and was being reported as possibly
+   * 1000ms and excluded from hits. The instrument was penalising readings for how carefully it had
+   * measured them. (Codex review round 25, PR #1.)
+   */
+  let navigationDelayMs = 0;
+  let probeDelayMs = 0;
   /** When address text (tier 3) first appeared. A different event from a coordinate appearing. */
   let addressReadyMs = null;
 
@@ -90,7 +104,7 @@
         // that, a coordinate genuinely available at 700ms but first observed at 850ms is classified
         // as over an 800ms budget it never missed — and the report has no way to tell.
         // (Codex review round 23, PR #1.)
-        readinessUncertaintyMs += lastProbeAt == null ? 0 : Math.round(performance.now() - lastProbeAt);
+        probeDelayMs = lastProbeAt == null ? 0 : Math.round(performance.now() - lastProbeAt);
         readinessSettled = true;
         return;
       }
@@ -117,7 +131,8 @@
     // A same-document navigation has no navigation entry, so NOW is the baseline. This is the fix
     // for readiness times measured from a document loaded minutes earlier.
     pageReadyAt = performance.now();
-    readinessUncertaintyMs = uncertaintyMs;
+    navigationDelayMs = uncertaintyMs;
+    probeDelayMs = 0;
     void watchForReadiness();
   }
 
@@ -161,7 +176,9 @@
         // Measured separately, because address text appearing is not the same event as a coordinate
         // appearing and only the latter can satisfy the hit definition.
         addressReadyMs: addressReadyMs == null ? null : Math.round(addressReadyMs),
-        readinessUncertaintyMs,
+        // Kept separate: they bound the true value from opposite sides.
+        navigationDelayMs,
+        probeDelayMs,
       },
       // Still working out whether this page is readable. Shown to the operator, never recordable:
       // confirming "no read" on a page whose coordinates are about to appear writes a false miss,

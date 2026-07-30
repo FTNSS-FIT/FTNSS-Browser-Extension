@@ -170,6 +170,33 @@ popup refuses to record while the declared cohort disagrees with the detected pa
 in the browser and the detected value is never written to a record — so a mislabelled cohort is
 caught without the label ever being page-derived.
 
+## 12. What the panel shows: the six nearest gyms, within a maximum radius
+
+**Decided (Jordan, 2026-07-30):** the panel shows the **six nearest** published gyms to the queried
+point, and nothing beyond a maximum radius. Ranking is by distance.
+
+**Why a cap on both.** Six is about what a small panel can show without becoming a directory, and a
+traveller deciding "can I train here?" needs the nearest few rather than all of them. The radius
+matters more: without one, the sixth result in a thin market could be in another city, and a gym
+nobody could realistically reach is worse than an honest "nothing near here" — it makes the panel
+look like it is padding.
+
+**Proposed radius: 5km**, pending confirmation. The reasoning: under about 2km the result set would
+be mostly empty at current supply, and beyond about 5km a gym stops being somewhere you would go from
+a hotel. 5km is a short taxi or metro ride in a city, which is still a usable answer.
+
+**How this interacts with the ~1km rounding — they are different things.** The rounding is about
+*precision of the query point*: we are told roughly where, to about 1.1km. The radius is about *how
+far we then look*. They are unrelated numbers, but the first constrains what the second can claim:
+because the query point carries about 1.1km of uncertainty, **a displayed distance cannot be more
+precise than that**. The panel says "about 2km" or "a short walk", never "400m from this hotel",
+which the spec's own mock-up shows and which is not a claim the architecture can support.
+
+**The empty case is a result, not a failure**, and must read that way: "no FTNSS gyms within 5km"
+is true, useful, and — per §1 of the spec — the market-expansion signal worth collecting. It must
+never be confused with "we could not read this page", which is the different failure the panel also
+has to be able to state.
+
 ---
 
 ## Deliberately not in v1
