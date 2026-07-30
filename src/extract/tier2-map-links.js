@@ -8,7 +8,7 @@
 // rather than by hand, we never navigate to them, and we never send them anywhere.
 
 import { found, notFound } from './result.js';
-import { isUsableCoordinate } from '../lib/geo.js';
+import { isUsableCoordinate, parseCoordinate } from '../lib/geo.js';
 
 const MAX_ELEMENTS = 400;
 
@@ -26,8 +26,11 @@ const AT_RE = new RegExp(`@(${NUM}),(${NUM})`);
 function fromPair(text) {
   const m = PAIR_RE.exec(String(text).trim());
   if (m == null) return null;
-  const lat = Number(m[1]);
-  const lon = Number(m[2]);
+  // Safe here regardless (PAIR_RE already guarantees a plain decimal), but every coordinate in this
+  // codebase goes through the one parser — an exception that is currently harmless is how the next
+  // one gets added without argument.
+  const lat = parseCoordinate(m[1]);
+  const lon = parseCoordinate(m[2]);
   return isUsableCoordinate(lat, lon) ? { lat, lon } : null;
 }
 
@@ -56,8 +59,10 @@ function readUrl(raw) {
     for (const lonKey of LON_PARAMS) {
       const lonRaw = url.searchParams.get(lonKey);
       if (lonRaw == null) continue;
-      const lat = Number(latRaw);
-      const lon = Number(lonRaw);
+      // parseCoordinate, NOT Number(): `?lat=&lng=20` would otherwise become the valid-looking
+      // point `0, 20`, because Number('') is 0 and 0 is a real latitude. (Codex review, PR #1.)
+      const lat = parseCoordinate(latRaw);
+      const lon = parseCoordinate(lonRaw);
       if (isUsableCoordinate(lat, lon)) {
         return { lat, lon, source: `map url ?${latKey}/${lonKey}` };
       }
@@ -66,8 +71,8 @@ function readUrl(raw) {
 
   const at = AT_RE.exec(url.pathname);
   if (at != null) {
-    const lat = Number(at[1]);
-    const lon = Number(at[2]);
+    const lat = parseCoordinate(at[1]);
+    const lon = parseCoordinate(at[2]);
     if (isUsableCoordinate(lat, lon)) return { lat, lon, source: 'map url @lat,lon' };
   }
 

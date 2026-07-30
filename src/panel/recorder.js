@@ -48,7 +48,7 @@ const CSS = `
 
 function describe(result) {
   if (result.status === 'found') {
-    return `Tier ${result.tier} · ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)} (${result.precision})`;
+    return `Tier ${result.tier} · ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}`;
   }
   if (result.status === 'found_address') {
     return `Tier 3 · address only, not geocoded`;
@@ -59,10 +59,12 @@ function describe(result) {
 /**
  * @param {object} opts
  * @param {ReturnType<import('../extract/index.js').runExtraction>} opts.extraction
- * @param {number} opts.readyToPanelMs
+ * @param {number|null} opts.readyToPanelMs  null after a soft navigation — there is no new
+ *        navigation entry to measure against, and a fabricated number is worse than none
+ * @param {string} opts.capturedUrl
  * @param {(verdict: object) => Promise<void>} opts.onSave
  */
-export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
+export function mountRecorder({ extraction, readyToPanelMs, capturedUrl, onSave }) {
   document.getElementById(HOST_ID)?.remove();
 
   const host = el('div');
@@ -90,6 +92,12 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
     box.appendChild(addressLine);
   }
 
+  // Which listing this reading belongs to. Shown because the panel survives soft navigation and a
+  // reading is bound to the URL it was taken on, not to whatever the address bar says now.
+  const urlLine = el('div', capturedUrl.replace(/^https?:\/\//, '').slice(0, 60));
+  urlLine.className = 'muted';
+  box.appendChild(urlLine);
+
   const tiers = extraction.tiers;
   const tierLine = el(
     'div',
@@ -100,13 +108,47 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
   tierLine.className = 'muted';
   box.appendChild(tierLine);
 
-  const overBudget = readyToPanelMs > 800 || extraction.timing.totalMs > 150;
+  const overBudget =
+    (readyToPanelMs != null && readyToPanelMs > 800) || extraction.timing.totalMs > 150;
   const timing = el(
     'div',
-    `extract ${extraction.timing.totalMs}ms · ready→panel ${Math.round(readyToPanelMs)}ms`,
+    `extract ${extraction.timing.totalMs}ms · ready→panel ` +
+      (readyToPanelMs == null ? 'n/a (soft nav)' : `${Math.round(readyToPanelMs)}ms`),
   );
   timing.className = overBudget ? 'warn' : 'muted';
   box.appendChild(timing);
+
+  // Precision is OBSERVED, not inferred. The extractor used to label every tier-1 read 'exact',
+  // which on a site that publishes a deliberately fuzzed point would have recorded every listing as
+  // building-accurate. Whether a point is the building or an area is exactly what this phase is
+  // here to find out, so the person looking at the page says. (Codex review, PR #1.)
+  let precisionVerdict = 'not_assessed';
+  const hasCoordinate = extraction.result.status === 'found';
+
+  if (hasCoordinate) {
+    const precisionRow = el('div');
+    precisionRow.className = 'row';
+    const precisionLabel = el('span', 'Point is:');
+    precisionLabel.className = 'muted';
+    precisionRow.appendChild(precisionLabel);
+    const choices = [
+      ['Building', 'building'],
+      ['Area', 'area'],
+      ['Unclear', 'unclear'],
+    ];
+    const buttons = [];
+    for (const [label, value] of choices) {
+      const b = el('button', label);
+      b.addEventListener('click', () => {
+        precisionVerdict = value;
+        for (const other of buttons) other.className = '';
+        b.className = 'primary';
+      });
+      buttons.push(b);
+      precisionRow.appendChild(b);
+    }
+    box.appendChild(precisionRow);
+  }
 
   const truth = el('input');
   truth.placeholder = 'Ground truth "lat, lon" (optional)';
@@ -123,7 +165,12 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
     status.className = 'saved muted';
     status.textContent = 'Saving…';
     try {
-      await onSave({ verdict, groundTruthRaw: truth.value.trim(), note: note.value.trim() });
+      await onSave({
+        verdict,
+        precisionVerdict,
+        groundTruthRaw: truth.value.trim(),
+        note: note.value.trim(),
+      });
       status.className = 'saved ok';
       status.textContent = `Recorded: ${verdict}`;
     } catch (err) {
@@ -134,12 +181,20 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
 
   const buttons = el('div');
   buttons.className = 'row';
-  const options = [
-    ['Correct', 'correct', true],
-    ['Wrong', 'wrong', false],
-    ["Can't tell", 'unverifiable', false],
-    ['No read', 'no_read', false],
-  ];
+  // Correct/Wrong are only offered when there IS a coordinate to judge. Previously a person could
+  // mark an address-only or failed read "correct", and the report counted it as a hit — inflating
+  // the one number the phase-1 decision is made on. Make the incorrect input unavailable rather than
+  // filtering it out later. (Codex review, PR #1.)
+  const options = hasCoordinate
+    ? [
+        ['Correct', 'correct', true],
+        ['Wrong', 'wrong', false],
+        ["Can't tell", 'unverifiable', false],
+      ]
+    : [
+        ['Confirm no read', 'no_read', true],
+        ["Can't tell", 'unverifiable', false],
+      ];
   for (const [label, verdict, primary] of options) {
     const button = el('button', label);
     if (primary) button.className = 'primary';

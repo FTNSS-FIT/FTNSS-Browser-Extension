@@ -24,6 +24,13 @@ The manifest also includes `airbnb.co.uk` and `airbnb.es`. Those are there to te
 that a site's country-code domains serve different markup from the `.com`. If they do, a match list
 covering only `.com` would silently fail for exactly the users a 57-locale product exists to serve.
 
+**This is a deliberately partial ccTLD list, and that is not the same as the product's.** The
+repository rule requiring full country-code coverage governs the *shipped* site list, where a missing
+domain means a user silently gets nothing. Here the domains are *probes*: two are enough to answer
+"does the markup differ by ccTLD?", and enumerating every one would enlarge the sample without
+changing the answer. If the probes show a difference, full enumeration becomes a v1 requirement —
+which is precisely the finding this is designed to surface.
+
 ## What counts as a hit
 
 A **hit** requires all three:
@@ -57,9 +64,16 @@ Stated here because a limitation nobody wrote down becomes a result somebody quo
   how many have a gym near enough to show? — needs the proximity endpoint, which does not exist yet.
   The harness records the rounded point that *would* have been sent, so coverage can be computed over
   the same sample once it does.
-- **Precision is recorded, not judged.** Whether a site publishes a building or a fuzzed area is a
-  per-site fact to be measured. Marking a read approximate on a hunch would bias the result, so the
-  human verification step is what establishes it.
+- **Precision is observed, not inferred.** Whether a site publishes a building or a deliberately
+  fuzzed area is a per-site fact to be measured, so the extractor reports `unknown` and the person
+  recording says which it was. An earlier version labelled every structured-data read `exact`, which
+  on a site that fuzzes location would have recorded every listing as building-accurate — the
+  repository's own "never render precision we do not have" rule, broken in the place it mattered
+  most.
+
+- **A `correct` verdict requires an extracted coordinate.** Tier 3 produces a string, not a
+  location, so the recorder does not offer "correct" when there is no point to judge, and the report
+  refuses to count one if an older export contains it.
 
 ## Running it
 
@@ -69,6 +83,10 @@ written, which is also the easiest thing to audit.
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
 2. Browse listings. The recorder appears on listing pages; record a verdict on each.
 3. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
+
+The recorder re-reads the page when you navigate between listings without a reload, and each reading
+is bound to the URL it was taken on — so a verdict can never be attributed to a listing you have
+already left.
 4. `npm run report measurements/<file>.json`
 
 Optionally paste a known-good `lat, lon` into the recorder before saving; the report then includes the

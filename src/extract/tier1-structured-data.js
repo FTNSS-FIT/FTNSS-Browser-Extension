@@ -10,7 +10,7 @@
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
 import { found, notFound } from './result.js';
-import { isUsableCoordinate } from '../lib/geo.js';
+import { isUsableCoordinate, parseCoordinate } from '../lib/geo.js';
 
 /** Types whose `geo` we will believe. A `geo` on an arbitrary type is not a listing's location. */
 const LODGING_TYPES = new Set([
@@ -32,6 +32,12 @@ const LODGING_TYPES = new Set([
 
 const MAX_NODES = 500; // a page cannot make us walk forever
 const MAX_DEPTH = 12;
+// Caps applied BEFORE parsing. The node/depth limits above only bound the walk — a single
+// multi-megabyte block still had to be read out of the DOM and run through JSON.parse first, so a
+// page could burn memory and main-thread time for free before any of our limits applied.
+// (Codex review, PR #1.)
+const MAX_SCRIPTS = 25;
+const MAX_JSON_CHARS = 512 * 1024;
 
 /** `@type` may be a string or an array. Normalise, and ignore anything that is neither. */
 function typesOf(node) {
@@ -67,27 +73,11 @@ function* walk(root) {
   }
 }
 
-/**
- * Coordinates arrive as numbers on some sites and as strings on others — both are valid schema.org.
- * Anything else (an object, an array, a number in a locale format we would have to guess at) is
- * refused rather than coerced. `Number('')` is 0, which is how a blank field becomes Null Island.
- */
-function coerceCoordinate(value) {
-  if (typeof value === 'number') return value;
-  if (typeof value !== 'string') return NaN;
-  const trimmed = value.trim();
-  if (trimmed === '') return NaN;
-  // Reject anything that is not a plain decimal number. Leaves "38,7115" (comma decimal) refused
-  // on purpose: we cannot tell it from a "lat,lon" pair, and guessing wrong moves the point.
-  if (!/^[+-]?\d+(\.\d+)?$/.test(trimmed)) return NaN;
-  return Number(trimmed);
-}
-
 function geoFrom(node) {
   const geo = node.geo;
   if (geo == null || typeof geo !== 'object' || Array.isArray(geo)) return null;
-  const lat = coerceCoordinate(geo.latitude);
-  const lon = coerceCoordinate(geo.longitude);
+  const lat = parseCoordinate(geo.latitude);
+  const lon = parseCoordinate(geo.longitude);
   if (!isUsableCoordinate(lat, lon)) return null;
   return { lat, lon };
 }
@@ -102,13 +92,18 @@ export function extractFromStructuredData(doc) {
 
   let parsedAny = false;
   let sawLodgingWithoutGeo = false;
+  let examined = 0;
 
   for (const script of scripts) {
+    if (examined >= MAX_SCRIPTS) break;
+    const raw = script.textContent || '';
+    if (raw.length === 0 || raw.length > MAX_JSON_CHARS) continue;
+    examined += 1;
     let parsed;
     try {
       // textContent, never innerHTML or eval. A JSON-LD block is data; treating it as anything
       // executable is the whole attack.
-      parsed = JSON.parse(script.textContent || '');
+      parsed = JSON.parse(raw);
     } catch {
       continue; // a malformed block is common and is not a reason to abandon the others
     }
@@ -127,11 +122,13 @@ export function extractFromStructuredData(doc) {
         lon: geo.lon,
         tier: 1,
         source: `ld+json ${types[0]}.geo`,
-        // The site published a point for this listing. Whether that point is the building or a
-        // deliberately fuzzed area is a per-site fact we MEASURE rather than assume — see
-        // docs/PHASE-1-MEASUREMENT.md. Recorded as exact here; the human verification step is what
-        // establishes the truth, and marking it approximate on a hunch would bias the result.
-        precision: 'exact',
+        // 'unknown', NOT 'exact'. Whether a published point is the building or a deliberately
+        // fuzzed area is a per-site fact this phase exists to MEASURE. Claiming 'exact' without a
+        // check is the repo's own "never render precision we do not have" rule broken in the one
+        // place it was most likely to matter — a site that fuzzes location would have been recorded
+        // as building-accurate on every single listing. The human records the precision verdict.
+        // (Codex review, PR #1.)
+        precision: 'unknown',
       });
     }
   }

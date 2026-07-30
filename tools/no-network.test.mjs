@@ -65,7 +65,15 @@ test('no source file renders untrusted content as markup', () => {
 
 test('the manifest asks for narrow permissions and never <all_urls>', () => {
   const manifest = JSON.parse(readFileSync(join(SRC, 'manifest.json'), 'utf8'));
-  const patterns = [...manifest.host_permissions, ...manifest.content_scripts.flatMap((c) => c.matches)];
+  // host_permissions is deliberately ABSENT: for a static content script, `matches` already
+  // authorises injection, while host_permissions would additionally grant cross-origin request
+  // capability that a harness making no requests must not hold. Assert it stays absent.
+  assert.equal(manifest.host_permissions, undefined, 'host_permissions must stay absent');
+
+  const patterns = [
+    ...manifest.content_scripts.flatMap((c) => c.matches),
+    ...manifest.web_accessible_resources.flatMap((w) => w.matches),
+  ];
 
   for (const pattern of patterns) {
     assert.ok(pattern !== '<all_urls>', 'manifest must never request <all_urls>');

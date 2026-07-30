@@ -6,7 +6,14 @@
 // page". Those are different statements and one of them is false. Making failure an explicit,
 // typed outcome means a caller has to handle it on purpose.
 
-/** @typedef {'exact'|'approximate'} Precision */
+/**
+ * @typedef {'approximate'|'unknown'} Precision
+ *
+ * There is deliberately no 'exact'. Nothing in this codebase can currently establish that a
+ * published point is the building rather than a deliberately fuzzed area — that is a per-site fact
+ * phase 1 exists to measure — and a value the code cannot justify is one it should not be able to
+ * emit. The human records what they saw. (Codex review, PR #1.)
+ */
 
 /**
  * A successful read.

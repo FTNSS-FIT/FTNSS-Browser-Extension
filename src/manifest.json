@@ -3,12 +3,8 @@
   "name": "FTNSS phase 1 measurement harness (internal)",
   "version": "0.1.0",
   "description": "Internal measurement tool. Records how often a listing page's location can be read. Not for publication.",
-  "permissions": ["storage"],
-  "host_permissions": [
-    "*://*.booking.com/*",
-    "*://*.airbnb.com/*",
-    "*://*.airbnb.co.uk/*",
-    "*://*.airbnb.es/*"
+  "permissions": [
+    "storage"
   ],
   "content_scripts": [
     {
@@ -18,13 +14,19 @@
         "*://*.airbnb.co.uk/*",
         "*://*.airbnb.es/*"
       ],
-      "js": ["content.js"],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["extract/*.js", "lib/*.js", "panel/*.js"],
+      "resources": [
+        "extract/*.js",
+        "lib/*.js",
+        "panel/*.js"
+      ],
       "matches": [
         "*://*.booking.com/*",
         "*://*.airbnb.com/*",

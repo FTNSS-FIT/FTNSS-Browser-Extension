@@ -42,6 +42,26 @@ export function toTransmittablePoint(lat, lon) {
   };
 }
 
+/**
+ * Parse one coordinate field from page-supplied text. STRICT on purpose, and shared by every tier —
+ * it lived in tier 1 only, and tier 2 used a bare `Number()`, which meant `?lat=&lng=20` produced
+ * the perfectly valid-looking point `0, 20`. `Number('')` is `0`, and `0` is a real latitude, so
+ * nothing downstream could tell that apart from a genuine reading. (Codex review, PR #1.)
+ *
+ * Numbers pass through. Strings must be a plain decimal. Everything else is refused rather than
+ * coerced — a comma decimal ("38,7115") is indistinguishable from a truncated "lat,lon" pair, and
+ * guessing wrong moves the point, which is the confidently-wrong failure this project cares most
+ * about.
+ */
+export function parseCoordinate(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string') return NaN;
+  const trimmed = value.trim();
+  if (trimmed === '') return NaN;
+  if (!/^[+-]?\d+(\.\d+)?$/.test(trimmed)) return NaN;
+  return Number(trimmed);
+}
+
 /** Great-circle distance in metres. Used only to score a measured read against ground truth. */
 export function distanceMetres(a, b) {
   const R = 6371000;

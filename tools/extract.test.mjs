@@ -1,7 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { toTransmittablePoint, isUsableCoordinate, distanceMetres } from '../src/lib/geo.js';
+import {
+  toTransmittablePoint,
+  isUsableCoordinate,
+  distanceMetres,
+  parseCoordinate,
+} from '../src/lib/geo.js';
 import { extractFromStructuredData } from '../src/extract/tier1-structured-data.js';
 import { extractFromMapLinks } from '../src/extract/tier2-map-links.js';
 import { extractFromAddressText } from '../src/extract/tier3-address-text.js';
@@ -117,6 +122,35 @@ test('tier 2 reads split lat/lng parameters', () => {
 
 test("tier 2 reads Google's @lat,lon path form", () => {
   const r = extractFromMapLinks(linkDocument('https://www.google.com/maps/@38.7115,-9.1287,15z'));
+  assert.equal(r.status, 'found');
+});
+
+test('tier 2 refuses a blank lat with a present lng — Number(\'\') is 0 and 0 is a real latitude', () => {
+  // Regression: this produced the valid-looking point 0,20 and could be selected as the listing's
+  // location. isUsableCoordinate only rejects exactly 0,0, so nothing downstream caught it.
+  const r = extractFromMapLinks(linkDocument('/map?lat=&lng=20'));
+  assert.equal(r.status, 'not_found');
+});
+
+test('the strict coordinate parser is shared by every tier', () => {
+  assert.equal(Number.isNaN(parseCoordinate('')), true);
+  assert.equal(Number.isNaN(parseCoordinate('38,7115')), true);
+  assert.equal(Number.isNaN(parseCoordinate(null)), true);
+  assert.equal(parseCoordinate('38.7115'), 38.7115);
+  assert.equal(parseCoordinate(-9.1287), -9.1287);
+});
+
+test('tier 1 does not claim precision it has not checked', () => {
+  // Labelling every published point 'exact' would record a site that deliberately fuzzes location
+  // as building-accurate on every listing. Precision is measured, not assumed.
+  const r = extractFromStructuredData(ldJsonDocument(HOTEL));
+  assert.equal(r.precision, 'unknown');
+});
+
+test('tier 1 skips an oversized block before parsing it', () => {
+  const huge = `{"@type":"Hotel","pad":"${'x'.repeat(600 * 1024)}"}`;
+  const r = extractFromStructuredData(ldJsonDocument(huge, HOTEL));
+  // The oversized block is skipped without being parsed; the sane one after it still works.
   assert.equal(r.status, 'found');
 });
 

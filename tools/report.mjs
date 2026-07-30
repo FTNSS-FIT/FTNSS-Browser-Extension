@@ -42,7 +42,15 @@ function quantile(values, q) {
 
 function summarise(rows, label) {
   const total = rows.length;
-  const correct = rows.filter((r) => r.verdict === 'correct');
+  // A hit REQUIRES an extracted coordinate. A `correct` verdict on a record whose result was
+  // `found_address` or `not_found` is not a hit — tier 3 produces a string, not a location, and
+  // counting one would inflate the single number the phase-1 decision is made on. The recorder no
+  // longer offers those verdicts, but old exports predate that and the report must not trust its
+  // input. (Codex review, PR #1.)
+  const correct = rows.filter((r) => r.verdict === 'correct' && r.result?.status === 'found');
+  const inconsistent = rows.filter(
+    (r) => r.verdict === 'correct' && r.result?.status !== 'found',
+  ).length;
   const wrong = rows.filter((r) => r.verdict === 'wrong').length;
   const unverifiable = rows.filter((r) => r.verdict === 'unverifiable').length;
   const noRead = rows.filter((r) => r.verdict === 'no_read').length;
@@ -64,6 +72,11 @@ function summarise(rows, label) {
   console.log(`  WRONG                      ${pct(wrong, total)}   ${wrong}/${total}   <- must be ~0`);
   console.log(`  miss (honest failure)      ${pct(noRead, total)}`);
   console.log(`  unverifiable               ${pct(unverifiable, total)}`);
+  if (inconsistent > 0) {
+    console.log(
+      `  ⚠ ${inconsistent} record(s) marked "correct" with no extracted coordinate — NOT counted as hits`,
+    );
+  }
 
   const tierOf = (n) => rows.filter((r) => r.result?.tier === n).length;
   console.log(
@@ -80,6 +93,15 @@ function summarise(rows, label) {
   console.log(
     `  extraction   p50 ${quantile(extractTimes, 0.5)}ms   p95 ${quantile(extractTimes, 0.95)}ms   (budget ${EXTRACT_BUDGET_MS}ms)`,
   );
+
+  const precisionOf = (v) => rows.filter((r) => r.precisionVerdict === v).length;
+  const assessed = total - precisionOf('not_assessed');
+  if (assessed > 0) {
+    console.log(
+      `  precision (of ${assessed} assessed)  building: ${pct(precisionOf('building'), assessed)}` +
+        `  area: ${pct(precisionOf('area'), assessed)}  unclear: ${pct(precisionOf('unclear'), assessed)}`,
+    );
+  }
 
   const errors = rows.map((r) => r.errorMetres).filter(Number.isFinite);
   if (errors.length > 0) {
