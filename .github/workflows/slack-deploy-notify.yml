@@ -1,0 +1,131 @@
+name: Slack Deploy Notify
+
+# Notifies the CONSUMER deployments Slack channel (Jordan, 2026-07-30: this repo reports into
+# the consumer channel rather than getting its own). Otherwise identical to Admin/Partner/Mobile.
+# Notifies the deployments Slack channel on PR open AND merge (matches
+# Consumer-Web's two-message pattern). Payload built with jq --arg (safe
+# escaping). main → the repo's deployments channel; a dev branch → the shared
+# #dev-deployments channel. APP_LABEL distinguishes this app in shared
+# channels (web vs mobile vs desktop etc.).
+
+on:
+  pull_request:
+    types: [opened, closed]
+    branches: [main, develop, development]
+
+jobs:
+  notify-opened:
+    if: github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build payload
+        id: data
+        env:
+          APP_LABEL: "🧩 Browser Extension"
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: |
+          BODY_SNIPPET=$(printf '%s' "$PR_BODY" | head -5 | tr '\n' ' ' | cut -c1-300)
+          payload=$(jq -nc \
+            --arg applabel "$APP_LABEL" --arg title "$PR_TITLE" --arg body "$BODY_SNIPPET" \
+            --arg url "$PR_URL" --arg num "$PR_NUM" --arg head "$HEAD_REF" --arg base "$BASE_REF" --arg author "$AUTHOR" \
+            '{
+              text: (":arrow_heading_up: " + $applabel + " — New PR"),
+              attachments: [ { color: "#2196F3", blocks: [
+                { type: "section", text: { type: "mrkdwn", text: ("*<" + $url + "|#" + $num + ": " + $title + ">*") } },
+                { type: "section", text: { type: "mrkdwn", text: (":speech_balloon: " + $body) } },
+                { type: "section", fields: [
+                  { type: "mrkdwn", text: (":twisted_rightwards_arrows: *Branch*\n`" + $head + "` → `" + $base + "`") },
+                  { type: "mrkdwn", text: (":bust_in_silhouette: *Author*\n" + $author) },
+                  { type: "mrkdwn", text: (":link: *PR*\n<" + $url + "|View PR →>") }
+                ] }
+              ] } ]
+            }')
+          { echo "payload<<JSONEOF"; echo "$payload"; echo "JSONEOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Post — production channel
+        if: github.event.pull_request.base.ref == 'main'
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          errors: true
+          webhook: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.data.outputs.payload }}
+
+      - name: Post — dev channel
+        if: github.event.pull_request.base.ref != 'main'
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          errors: true
+          webhook: ${{ secrets.SLACK_DEV_DEPLOY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.data.outputs.payload }}
+
+  notify:
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build payload
+        id: data
+        env:
+          APP_LABEL: "🧩 Browser Extension"
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          MERGED_BY: ${{ github.event.pull_request.merged_by.login }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          REPO: ${{ github.repository }}
+        run: |
+          # NOT "production". Unlike every other FTNSS repo, a merge to main here does NOT deploy anything:
+          # this ships through the Chrome Web Store, so main is only a candidate until a release is tagged
+          # and submitted, and store review is days of calendar time later. The sibling repos' wording
+          # ("deploying to production!") would be a false statement in the channel on every single merge —
+          # and a channel that routinely says something untrue is one people stop reading.
+          if [ "$BASE_REF" = "main" ]; then ENVN="main — ships at the next store release"; else ENVN="$BASE_REF"; fi
+          SHA_SHORT=$(printf '%s' "$SHA" | cut -c1-7)
+          SHA_URL="https://github.com/$REPO/commit/$SHA"
+          BODY_SNIPPET=$(printf '%s' "$PR_BODY" | head -5 | tr '\n' ' ' | cut -c1-300)
+          payload=$(jq -nc \
+            --arg applabel "$APP_LABEL" --arg envn "$ENVN" --arg title "$PR_TITLE" --arg body "$BODY_SNIPPET" \
+            --arg url "$PR_URL" --arg num "$PR_NUM" --arg head "$HEAD_REF" --arg base "$BASE_REF" \
+            --arg mergedby "$MERGED_BY" --arg shashort "$SHA_SHORT" --arg shaurl "$SHA_URL" \
+            '{
+              text: (":merged: " + $applabel + " — PR Merged → " + $envn),
+              attachments: [ { color: "#FF4D1C", blocks: [
+                { type: "section", text: { type: "mrkdwn", text: ("*<" + $url + "|#" + $num + ": " + $title + ">*") } },
+                { type: "section", text: { type: "mrkdwn", text: (":speech_balloon: " + $body) } },
+                { type: "section", fields: [
+                  { type: "mrkdwn", text: (":seedling: *Branch*\n`" + $head + "` → `" + $base + "`") },
+                  { type: "mrkdwn", text: (":memo: *Commit*\n<" + $shaurl + "|" + $shashort + ">") },
+                  { type: "mrkdwn", text: (":bust_in_silhouette: *Merged by*\n" + $mergedby) },
+                  { type: "mrkdwn", text: (":link: *PR*\n<" + $url + "|View PR →>") }
+                ] }
+              ] } ]
+            }')
+          { echo "payload<<JSONEOF"; echo "$payload"; echo "JSONEOF"; } >> "$GITHUB_OUTPUT"
+
+      - name: Post — production channel
+        if: github.event.pull_request.base.ref == 'main'
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          errors: true
+          webhook: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.data.outputs.payload }}
+
+      - name: Post — dev channel
+        if: github.event.pull_request.base.ref != 'main'
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          errors: true
+          webhook: ${{ secrets.SLACK_DEV_DEPLOY_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: ${{ steps.data.outputs.payload }}

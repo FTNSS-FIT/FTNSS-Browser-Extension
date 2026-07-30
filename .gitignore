@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+*.zip
+
+# Configuration is injected at build time. Never commit a real one.
+.env
+.env.*
+!.env.example
+
+# Phase 1 measurement output. Contains listing URLs from real browsing sessions,
+# which is exactly the data this project promises never to collect centrally.
+# It stays on the machine that produced it.
+measurements/
+*.local.json
+
+.DS_Store
+.idea/
+.vscode/
