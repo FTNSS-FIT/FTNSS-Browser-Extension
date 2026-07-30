@@ -83,11 +83,11 @@ written, which is also the easiest thing to audit.
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
 2. Browse listings. The recorder appears on listing pages; record a verdict on each.
 3. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
+4. `npm run report measurements/<file>.json`
 
 The recorder re-reads the page when you navigate between listings without a reload, and each reading
 is bound to the URL it was taken on — so a verdict can never be attributed to a listing you have
 already left.
-4. `npm run report measurements/<file>.json`
 
 Optionally paste a known-good `lat, lon` into the recorder before saving; the report then includes the
 positional error distribution.
