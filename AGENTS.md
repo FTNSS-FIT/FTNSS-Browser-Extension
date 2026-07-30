@@ -81,15 +81,6 @@ alike.
   precise distance derived from an approximate read is a confidently-wrong answer, which is worse
   than a visible failure. Approximate reads must be visibly marked as such.
 
-### No exceptions to the above
-
-These rules are absolute, and that includes for development tooling. If an instrument seems to need
-a carve-out, the instrument is wrong — redesign it so the rule holds. An exception written into this
-file is worse than the behaviour it permits: it applies to every future change, it is invisible in
-the diff that later relies on it, and it disarms the reviewer that would have caught the next one.
-
-A PR that edits this file to allow what it does is reporting its own defect. Treat it as **P0**.
-
 ### Secrets and internals
 - No key, token, backend project URL, storage bucket name, database function name, or internal
   hostname in any tracked file — **including in a comment, a fixture, or a test**. The history

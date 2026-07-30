@@ -94,10 +94,14 @@ test('a page-supplied __proto__ key cannot pollute', () => {
 });
 
 test('deeply nested page JSON terminates instead of hanging', () => {
-  let nested = { '@type': 'Thing' };
-  for (let i = 0; i < 5000; i += 1) nested = { child: nested };
+  // Built as a STRING rather than via JSON.stringify on a 5000-deep object. stringify is recursive,
+  // so how deep it can go depends on the runtime's stack — it handles this fine on the Node we run,
+  // but a fixture whose validity varies by platform is a test that fails for a reason unrelated to
+  // what it is testing. JSON.parse is iterative and takes it either way.
+  const depth = 5000;
+  const nested = '{"child":'.repeat(depth) + '{"@type":"Thing"}' + '}'.repeat(depth);
   const started = Date.now();
-  extractFromStructuredData(ldJsonDocument(JSON.stringify(nested)));
+  extractFromStructuredData(ldJsonDocument(nested));
   assert.ok(Date.now() - started < 2000);
 });
 

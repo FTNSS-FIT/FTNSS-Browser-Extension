@@ -51,8 +51,12 @@
     for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
       ldLength += (script.textContent || '').length;
     }
+    // NO document.title. An SPA typically updates the title as part of the route change, before the
+    // listing markup is swapped — so including it meant page CHROME changing counted as evidence the
+    // listing had changed, which is the same mistake as trusting the pathname, one layer in.
+    // Everything here is listing BODY content. (Codex review round 6, PR #1.)
     const main = document.querySelector('main') ?? document.body;
-    return `${ldLength}|${document.title}|${main ? main.childElementCount : 0}|${
+    return `${ldLength}|${main ? main.childElementCount : 0}|${
       document.querySelectorAll('img').length
     }`;
   }
@@ -113,19 +117,24 @@
       // Nothing may remain on screen while we wait — a panel from the previous listing on a page
       // that is no longer that listing is worse than an empty corner.
       unmountRecorder();
-      // If the DOM has ALREADY been replaced, there is nothing to wait for. Without this check a
-      // fast soft navigation — one that completed before the poll noticed the URL change — produced
-      // no mutations, waited out the full ceiling, and then returned having recorded nothing and
-      // shown nothing. The person got silence on a page that was perfectly readable.
-      // (Codex review round 4, PR #1.)
-      if (domSignature() === lastSignature) {
-        const stability = await waitForStableDom();
-        domSettled = stability.settled;
-        // A newer navigation started while we waited; that one owns the page now.
-        if (myGeneration !== generation) return;
-        // The URL changed and the DOM still has not. Whatever is on screen belongs to the previous
-        // listing, so measuring it would attribute that listing's reading to this one.
-        if (!stability.mutated) return;
+      // ALWAYS wait for the page to settle — a changed signature is treated as evidence that the
+      // DOM moved, never as a reason to skip the wait.
+      //
+      // Skipping on a signature difference was wrong in both directions: a swap still in flight got
+      // read half-finished, and any signal that changes early (the pathname, then the title) counted
+      // as a completed transition. Waiting always, and accepting EITHER an observed mutation OR a
+      // signature that has already moved, covers the fast navigation that finished before the poll
+      // noticed it without trusting a weak signal about a document we can just watch instead.
+      // (Codex review rounds 4 and 6, PR #1.)
+      const changedBeforeWeLooked = domSignature() !== lastSignature;
+      const stability = await waitForStableDom();
+      domSettled = stability.settled;
+      // A newer navigation started while we waited; that one owns the page now.
+      if (myGeneration !== generation) return;
+      // Nothing mutated and nothing had already changed: whatever is on screen still belongs to the
+      // previous listing, so measuring it would attribute that listing's reading to this one.
+      if (!stability.mutated && !changedBeforeWeLooked) {
+        return;
       }
     }
 
@@ -255,10 +264,17 @@
   // and history.pushState is patched by the page's own framework — wrapping it would put our code
   // in the page's call path, which is exactly the entanglement a content script should avoid. A
   // poll is dumber, cannot be defeated by the page, and costs a string comparison per second.
-  let lastUrl = location.href;
+  // Compared WITHOUT the fragment. A `#photos` link is not a new listing, but it fires hashchange —
+  // which used to unmount the panel, wait out the full ceiling for a DOM change that had no reason
+  // to happen, and then return having remounted nothing. The person was left with an empty corner on
+  // a listing that read perfectly well. (Codex review round 6, PR #1.)
+  const withoutFragment = (href) => href.split('#')[0];
+
+  let lastUrl = withoutFragment(location.href);
   function onMaybeNavigated(latencyUncertaintyMs) {
-    if (location.href === lastUrl) return;
-    lastUrl = location.href;
+    const current = withoutFragment(location.href);
+    if (current === lastUrl) return;
+    lastUrl = current;
     // Clear immediately and synchronously — the wait happens inside measureCurrentPage, and the
     // previous listing's panel must not survive even that long.
     unmountRecorder();
