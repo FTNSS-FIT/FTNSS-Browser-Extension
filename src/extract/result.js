@@ -39,6 +39,20 @@ export function foundAddress({ address, source }) {
 }
 
 /**
+ * The page carried coordinate evidence that DISAGREES WITH ITSELF.
+ *
+ * Distinct from `notFound`, and the distinction is the point. Absence means "look elsewhere", so an
+ * ambiguous tier reported as absent let the runner fall through and answer from a lower tier — using
+ * one of the very coordinates that was in dispute. Ambiguity means "stop": we have evidence, it
+ * conflicts, and choosing between conflicting evidence is guessing. A confidently wrong location is
+ * the failure this project cares about most, and it is worse than admitting we could not read the
+ * page. (Codex review round 23, PR #1.)
+ */
+export function ambiguous(reason) {
+  return { status: 'ambiguous', reason };
+}
+
+/**
  * This tier could not read the page. `reason` is for our own diagnosis, never for the user —
  * the user-facing message is always the same "we couldn't read this page".
  */
@@ -47,4 +61,5 @@ export function notFound(reason) {
 }
 
 export const isFound = (r) => r != null && r.status === 'found';
+export const isAmbiguous = (r) => r != null && r.status === 'ambiguous';
 export const isFoundAddress = (r) => r != null && r.status === 'found_address';

@@ -9,7 +9,7 @@
 // types, 40-deep nesting, a `__proto__` key, a `geo` that is a string. Nothing below trusts a shape
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
-import { found, notFound } from './result.js';
+import { found, notFound, ambiguous } from './result.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 /**
@@ -166,7 +166,7 @@ export function extractFromStructuredData(doc) {
       // a confident coordinate for the wrong hotel is worse than no coordinate at all.
       // (Codex review round 17, PR #1.)
       if (best != null && distanceMetres(best, geo) > CONFLICT_METRES) {
-        return notFound('structured data described two different places — refusing to guess');
+        return ambiguous('structured data described two different places');
       }
       if (best == null) best = geo;
     }

@@ -55,6 +55,15 @@ function parseGroundTruth(raw) {
   return isUsableCoordinate(lat, lon) ? { lat, lon } : null;
 }
 
+/** Is this the same extraction the person formed their verdict from? */
+function sameReading(a, b) {
+  const ra = a?.result ?? {};
+  const rb = b?.result ?? {};
+  if (ra.status !== rb.status || (ra.tier ?? null) !== (rb.tier ?? null)) return false;
+  if (ra.status === 'found') return ra.lat === rb.lat && ra.lon === rb.lon;
+  return true;
+}
+
 function describe(result) {
   if (result?.status === 'found') {
     // Two decimals whatever the classification. Three is ~100m, which is a precision claim, and no
@@ -63,6 +72,7 @@ function describe(result) {
     return `Tier ${result.tier} · ~${result.lat.toFixed(2)}, ${result.lon.toFixed(2)} · ${tag}`;
   }
   if (result?.status === 'found_address') return 'Tier 3 · address only, not geocoded';
+  if (result?.status === 'ambiguous') return 'Ambiguous — the page disagreed with itself';
   return 'No read — could not read this page';
 }
 
@@ -214,7 +224,12 @@ async function render() {
     // The comparison is on an opaque per-page token, so neither side handles a URL.
     // (Codex review round 22, PR #1.)
     const fresh = await readActivePage();
-    if (fresh == null || fresh.pageToken !== reading.pageToken) {
+    // Compare the READING, not only the token. The token changes with the URL, so a page that
+    // replaces listing A's DOM with listing B at the SAME url kept a valid token while everything
+    // it described had changed — and A's coordinate could be recorded as correct for B. Comparing
+    // what was actually extracted covers both, and needs no URL on either side.
+    // (Codex review round 23, PR #1.)
+    if (fresh == null || fresh.pageToken !== reading.pageToken || !sameReading(fresh, reading)) {
       statusEl.replaceChildren(
         el('span', 'This page changed while the popup was open — nothing recorded.', 'warn'),
       );

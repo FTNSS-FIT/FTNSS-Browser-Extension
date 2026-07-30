@@ -43,8 +43,10 @@ A **hit** requires all three:
    reading exists — which is the latency the product's own panel would inherit. It does *not* include
    how long the popup took to open, because the popup opens when the operator clicks it, and folding
    that in would measure the person rather than the page. On a soft navigation the measurement can
-   also be up to one poll interval late, so the error bar is recorded per row and added before the
-   budget comparison.
+   also be up to one poll interval late, and readiness itself is sampled rather than observed, so
+   both error bars are recorded per row. A reading whose best case is inside the budget and whose
+   worst case is outside **straddles** it: we cannot say which side it fell, so it is reported
+   separately rather than counted in either direction. Guessing would bias the headline number.
 
 ## Why misses and wrongs are counted separately
 
@@ -53,6 +55,7 @@ They are different failures and they need different budgets.
 | Outcome | What it means |
 |---|---|
 | **Miss** | We could not read the page, and the panel says so. Acceptable behaviour |
+| **Ambiguous** | The page carried coordinate evidence that disagreed with itself — two lodging objects, two map pins, or the structured data and the map pointing to different places. We refuse rather than pick. Counted as a failure, deliberately: choosing between conflicting evidence is guessing |
 | **Wrong** | We read the page and got the wrong place — a gym shown next to the wrong hotel. The panel is confidently lying, which is worse than admitting failure. **This must be near zero** |
 
 A single "accuracy" number hides the distinction, and hiding it is how a project ships on a figure

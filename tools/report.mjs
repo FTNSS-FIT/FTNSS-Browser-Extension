@@ -78,12 +78,27 @@ function summarise(rows, label) {
   // headline number instead of deflating it. Neither is right: an unmeasured record is not evidence
   // of meeting a budget, so it is excluded from hits and reported on its own line.
   // (Codex review round 5, PR #1.)
+  // A reading whose BEST case is inside the budget and whose WORST case is outside straddles it. We
+  // cannot say which side it fell, and guessing in either direction biases the headline number, so
+  // it is reported on its own line rather than counted. (Codex review round 23, PR #1.)
+  const bestCaseLatency = (r) =>
+    Number.isFinite(latencyOf(r))
+      ? latencyOf(r) - (r.timing?.readinessUncertaintyMs ?? 0)
+      : NaN;
+  const straddles = (r) =>
+    Number.isFinite(latencyOf(r)) &&
+    bestCaseLatency(r) <= LATENCY_BUDGET_MS &&
+    worstCaseLatency(r) > LATENCY_BUDGET_MS;
+
   const measured = (r) => Number.isFinite(worstCaseLatency(r)) && Number.isFinite(r.timing?.totalMs);
   const inBudget = (r) =>
     worstCaseLatency(r) <= LATENCY_BUDGET_MS && r.timing.totalMs <= EXTRACT_BUDGET_MS;
-  const withinBudget = correct.filter((r) => measured(r) && inBudget(r)).length;
+  const withinBudget = correct.filter((r) => measured(r) && inBudget(r) && !straddles(r)).length;
+  const straddling = correct.filter((r) => measured(r) && straddles(r)).length;
   const unmeasuredLatency = correct.filter((r) => !measured(r)).length;
-  const correctButSlow = correct.filter((r) => measured(r) && !inBudget(r)).length;
+  // Straddling readings are reported on their own line, so they must not also appear here — a row
+  // counted in two buckets makes the percentages sum past 100 and reads as worse than it is.
+  const correctButSlow = correct.filter((r) => measured(r) && !inBudget(r) && !straddles(r)).length;
 
   const readyTimes = rows.map(worstCaseLatency).filter(Number.isFinite);
   const extractTimes = rows.map((r) => r.timing?.totalMs).filter(Number.isFinite);
@@ -91,6 +106,11 @@ function summarise(rows, label) {
   console.log(`\n${label}  (n=${total})`);
   console.log(`  HIT (correct + in budget)  ${pct(withinBudget, total)}   ${withinBudget}/${total}`);
   console.log(`  correct, over budget       ${pct(correctButSlow, total)}`);
+  if (straddling > 0) {
+    console.log(
+      `  correct, latency STRADDLES the budget  ${pct(straddling, total)}  — detection error spans it, not counted`,
+    );
+  }
   if (unmeasuredLatency > 0) {
     console.log(
       `  correct, latency UNMEASURED ${pct(unmeasuredLatency, total)}  — not counted as hits either way`,

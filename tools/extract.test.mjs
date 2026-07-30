@@ -11,7 +11,7 @@ import {
 import { extractFromStructuredData } from '../src/extract/tier1-structured-data.js';
 import { extractFromMapLinks } from '../src/extract/tier2-map-links.js';
 import { extractFromAddressText } from '../src/extract/tier3-address-text.js';
-import { ldJsonDocument, linkDocument, fakeDocument, textNode } from './fake-dom.mjs';
+import { ldJsonDocument, linkDocument, fakeDocument, textNode, scriptNode, attrNode } from './fake-dom.mjs';
 
 // ─── geo ──────────────────────────────────────────────────────────────────────
 
@@ -354,7 +354,9 @@ test('tier 2 fails closed when map urls disagree about where the listing is', ()
     'https://maps.example/?ll=51.5074,-0.1278',
   );
   const r = extractFromMapLinks(doc);
-  assert.equal(r.status, 'not_found');
+  // AMBIGUOUS, not not_found. Absence means "look elsewhere", so reporting a conflict as absence let
+  // the runner fall through and answer from a lower tier using one of the disputed coordinates.
+  assert.equal(r.status, 'ambiguous');
   assert.match(r.reason, /disagree/);
 });
 
@@ -428,7 +430,7 @@ test('tier 1 fails closed when structured data describes two different places', 
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
   );
   const r = extractFromStructuredData(doc);
-  assert.equal(r.status, 'not_found');
+  assert.equal(r.status, 'ambiguous');
   assert.match(r.reason, /two different places/);
 });
 
@@ -455,7 +457,7 @@ test('the agreement tolerance is tighter than the correctness bound', () => {
   const apart = extractFromMapLinks(
     linkDocument('https://maps.example/?ll=38.7115,-9.1287', 'https://maps.example/?ll=38.7250,-9.1287'),
   );
-  assert.equal(apart.status, 'not_found', '1.5km apart must not count as agreement');
+  assert.equal(apart.status, 'ambiguous', '1.5km apart must not count as agreement');
 
   const together = extractFromMapLinks(
     linkDocument('https://maps.example/?ll=38.7115,-9.1287', 'https://maps.example/?ll=38.7116,-9.1288'),
@@ -468,7 +470,7 @@ test('tier 1 applies the same tolerance as tier 2', () => {
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.725, longitude: -9.1287 } }),
   );
-  assert.equal(extractFromStructuredData(doc).status, 'not_found');
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
 });
 
 test('rounding is idempotent everywhere, including across the antimeridian', async () => {
@@ -497,4 +499,44 @@ test('the reported antimeridian case stays inside the guarantee', () => {
   const twice = toTransmittablePoint(once.lat, once.lon);
   assert.deepEqual(twice, once);
   assert.ok(distanceMetres(input, twice) < 1200);
+});
+
+// ─── cross-tier agreement ─────────────────────────────────────────────────────
+
+test('the read fails when structured data and the map link disagree with each other', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Checking conflicts only WITHIN a tier missed the page contradicting itself ACROSS sources — at
+  // least as strong a signal that we cannot tell, and previously answered confidently from tier 1.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } })),
+    ],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.example/?ll=51.5074,-0.1278' })],
+  });
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('the read succeeds when the tiers agree', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } })),
+    ],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.example/?ll=38.7116,-9.1288' })],
+  });
+  const r = runExtraction(doc).result;
+  assert.equal(r.status, 'found');
+  assert.equal(r.tier, 1);
+});
+
+test('an ambiguous tier is never rescued by a lower tier', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 51.5074, longitude: -0.1278 } })),
+    ],
+    '[itemprop="address"]': [textNode('Travessa das Merceeiras 27, Lisboa')],
+  });
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });

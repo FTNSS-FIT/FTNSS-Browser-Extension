@@ -67,6 +67,8 @@
   async function watchForReadiness() {
     const startedFor = readinessIdentity;
     const readyAt = pageReadyAt;
+    /** When we last looked and found nothing. The gap to the next look is the detection error. */
+    let lastProbeAt = null;
     // Poll briefly for the page to become readable. Both measured sites render asynchronously, so a
     // listing whose data lands just after load is readable rather than absent — and calling it
     // absent would bias the hit rate upward, because the pages that do this are the slow, heavy
@@ -83,9 +85,16 @@
       const status = runExtraction(document).result.status;
       if (status === 'found') {
         readingReadyMs = readyAt == null ? null : Math.max(0, performance.now() - readyAt);
+        // The coordinate became available at some point between the previous probe and this one, so
+        // the true readiness is up to one probe interval EARLIER than measured. Without carrying
+        // that, a coordinate genuinely available at 700ms but first observed at 850ms is classified
+        // as over an 800ms budget it never missed — and the report has no way to tell.
+        // (Codex review round 23, PR #1.)
+        readinessUncertaintyMs += lastProbeAt == null ? 0 : Math.round(performance.now() - lastProbeAt);
         readinessSettled = true;
         return;
       }
+      lastProbeAt = performance.now();
       if (status === 'found_address' && addressReadyMs == null) {
         addressReadyMs = readyAt == null ? null : Math.max(0, performance.now() - readyAt);
       }

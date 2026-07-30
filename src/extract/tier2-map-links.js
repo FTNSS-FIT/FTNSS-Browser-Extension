@@ -7,7 +7,7 @@
 // SECURITY: these are attacker-supplied URLs read from the page. We parse them with the URL API
 // rather than by hand, we never navigate to them, and we never send them anywhere.
 
-import { found, notFound } from './result.js';
+import { found, notFound, ambiguous } from './result.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 // Nodes VISITED, not nodes that looked map-shaped. Counting only the ones that passed the prefilter
@@ -119,7 +119,7 @@ export function extractFromMapLinks(doc) {
     // seen everything, which is the thing stopping early prevents.
     // (Codex review round 12, PR #1.)
     if (candidates.length > 0 && distanceMetres(candidates[0], hit) > CONFLICT_METRES) {
-      return notFound('map urls disagreed about the location — refusing to guess');
+      return ambiguous('map urls disagreed about the location');
     }
     candidates.push(hit);
   }
