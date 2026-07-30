@@ -158,6 +158,15 @@
           domSettled: false,
           latencyUncertaintyMs,
         });
+        // Bind the failure to the page it describes, exactly as a success is bound.
+        //
+        // Without this, FTNSS_CONFIRM rejected the reading it had just published, so "Confirm no
+        // read" could never be recorded — and that removed one whole CLASS of misses from the
+        // sample: pages that fail to settle. Those are not randomly distributed; they are the slow
+        // and the heavy ones. A sample that cannot record them reports a hit rate for the easy half
+        // of the web. (Codex review round 18, PR #1.)
+        lastPublishedIdentity = pageIdentity(location.href);
+        lastPublishedStatus = 'not_found';
         return;
       }
     }

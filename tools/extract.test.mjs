@@ -450,3 +450,26 @@ test('a generic schema.org Place is not treated as the listing', () => {
   );
   assert.equal(extractFromStructuredData(doc).status, 'not_found');
 });
+
+test('the agreement tolerance is tighter than the correctness bound', () => {
+  // A disagreement threshold looser than the ~1.11km within which a read counts as correct does not
+  // catch wrong answers, it certifies them: two points could "agree" while being far enough apart
+  // that at most one of them could ever have been right.
+  const apart = extractFromMapLinks(
+    linkDocument('https://maps.example/?ll=38.7115,-9.1287', 'https://maps.example/?ll=38.7250,-9.1287'),
+  );
+  assert.equal(apart.status, 'not_found', '1.5km apart must not count as agreement');
+
+  const together = extractFromMapLinks(
+    linkDocument('https://maps.example/?ll=38.7115,-9.1287', 'https://maps.example/?ll=38.7116,-9.1288'),
+  );
+  assert.equal(together.status, 'found', 'the same building must still resolve');
+});
+
+test('tier 1 applies the same tolerance as tier 2', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.725, longitude: -9.1287 } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'not_found');
+});

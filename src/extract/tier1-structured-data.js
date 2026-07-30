@@ -12,8 +12,19 @@
 import { found, notFound } from './result.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
-/** Two lodging objects further apart than this are not the same listing. */
-const CONFLICT_METRES = 2000;
+/**
+ * How far apart two candidates may be and still be treated as the same listing.
+ *
+ * This was 2000m — nearly twice the ~1.11km cell the protocol defines correctness within. So a page
+ * could place an unrelated coordinate first and the real one 1500m later, the two would be judged to
+ * "agree", and the unrelated point would be returned with confidence and scored as a hit. A
+ * disagreement threshold looser than the correctness bound is not a check; it is a way of certifying
+ * wrong answers.
+ *
+ * 250m instead: two records genuinely describing one building are far closer than that, and anything
+ * beyond it is a question we should refuse rather than resolve. (Codex review round 18, PR #1.)
+ */
+const CONFLICT_METRES = 250;
 
 /** Types whose `geo` we will believe. A `geo` on an arbitrary type is not a listing's location. */
 const LODGING_TYPES = new Set([

@@ -92,11 +92,45 @@ async function renderCohort() {
   return selected;
 }
 
+/**
+ * Ask the content script whether its published reading still describes the page on screen.
+ *
+ * No permission is needed: the content script is already injected by the manifest on these hosts,
+ * and messaging our own content script is not a new capability.
+ */
+async function confirmCurrent() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id == null) return null;
+    return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_CONFIRM' });
+  } catch {
+    return null;
+  }
+}
+
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();
   const cohort = await renderCohort();
   const reading = await currentReading();
+
+  // CONFIRM BEFORE DISPLAYING, not only before recording.
+  //
+  // Blocking the save was half the job: during the SPA-detection window the popup still SHOWED
+  // listing A's coordinates under the heading "Current page", which is a false statement to the
+  // person reading it. They would have gone and verified the wrong hotel — and the verdict they then
+  // formed is the ground truth this whole measurement rests on, so a display-only bug corrupts the
+  // result just as thoroughly as a recording one. (Codex review round 18, PR #1.)
+  if (reading != null) {
+    const confirmation = await confirmCurrent();
+    if (confirmation?.current !== true) {
+      readingEl.className = 'warn';
+      readingEl.textContent =
+        'This page changed since it was read. Reload or navigate again — nothing shown here would be current.';
+      await refreshCount();
+      return;
+    }
+  }
 
   if (reading == null) {
     readingEl.className = 'muted';
@@ -223,25 +257,12 @@ async function render() {
     // coordinates. Session storage being invalidated did not help, because the closure still held
     // the old object. Check that the reading is still there AND still the same one.
     // (Codex review round 12, PR #1.)
-    // Ask the content script whether its reading is still for the page on screen.
-    //
-    // No permission is needed for this: the content script is already injected by the manifest on
-    // these hosts, and messaging our own content script is not a new capability. `activeTab` was
-    // added here and then removed for exactly that reason — it bought nothing and widened the
-    // boundary to every tab the toolbar is clicked on. (Codex review round 17, PR #1.)
-    //
-    // Re-reading storage cannot detect a navigation the content script has not noticed yet — the
-    // stale reading IS what gets re-read. Only the content script can compare against the live URL,
-    // and it answers with a boolean, never the URL itself. If it cannot be reached, the page is not
-    // one we measure and nothing should be recorded against it.
-    // (Codex review round 16, PR #1.)
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    let confirmation = null;
-    try {
-      confirmation = await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_CONFIRM' });
-    } catch {
-      confirmation = null;
-    }
+    // Confirm AGAIN at record time. Rendering may have happened seconds ago; the person may have
+    // navigated while deciding. Re-reading storage cannot detect a navigation the content script has
+    // not noticed yet — the stale reading IS what gets re-read — so only the content script can
+    // answer, and it answers with a boolean. If it cannot be reached, the page is not one we measure
+    // and nothing should be recorded against it. (Codex review round 16, PR #1.)
+    const confirmation = await confirmCurrent();
     if (confirmation?.current !== true) {
       statusEl.replaceChildren(
         el('span', 'This page is no longer the one that was read — nothing recorded.', 'warn'),

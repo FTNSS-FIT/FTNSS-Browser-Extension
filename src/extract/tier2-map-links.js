@@ -15,8 +15,15 @@ import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.
 // claimed to prevent exactly that. (Codex review round 11, PR #1.)
 const MAX_ELEMENTS = 1500;
 const MAX_URL_CHARS = 2000;
-/** Two candidates further apart than this are not the same place, so we cannot pick between them. */
-const CONFLICT_METRES = 2000;
+/**
+ * How far apart two map candidates may be and still be treated as the same place.
+ *
+ * Was 2000m, which is looser than the ~1.11km within which the protocol defines a read as correct —
+ * so two points could "agree" while being far enough apart that at most one of them could ever have
+ * been right. A threshold looser than the correctness bound certifies wrong answers rather than
+ * catching them. (Codex review round 18, PR #1.)
+ */
+const CONFLICT_METRES = 250;
 
 /** `?ll=38.71,-9.12`, `?center=…`, `?q=…` — a lat,lon pair in a single query parameter. */
 const PAIR_PARAMS = ['ll', 'center', 'sll', 'cbll', 'q', 'query', 'markers', 'location'];
