@@ -1,12 +1,15 @@
 name: Slack Deploy Notify
 
-# Notifies the CONSUMER deployments Slack channel (Jordan, 2026-07-30: this repo reports into
-# the consumer channel rather than getting its own). Otherwise identical to Admin/Partner/Mobile.
-# Notifies the deployments Slack channel on PR open AND merge (matches
-# Consumer-Web's two-message pattern). Payload built with jq --arg (safe
-# escaping). main → the repo's deployments channel; a dev branch → the shared
-# #dev-deployments channel. APP_LABEL distinguishes this app in shared
-# channels (web vs mobile vs desktop etc.).
+# Notifies the CONSUMER deployments Slack channel on PR open AND merge (matches Consumer-Web's
+# two-message pattern). Payload built with jq --arg (safe escaping). APP_LABEL distinguishes this
+# app in a shared channel (web vs mobile vs desktop etc.).
+#
+# ONE WEBHOOK, not two. The sibling repos split main → their own deployments channel and dev
+# branches → the shared #dev-deployments channel. This repo reports everything into consumer
+# deployments (Jordan, 2026-07-30), so both secrets would have held the same URL — and two secrets
+# that must stay identical are not a feature, they are a way for one of them to quietly drift and
+# send half the notifications somewhere nobody is reading. Splitting channels later is a one-line
+# change, and a deliberate one.
 
 on:
   pull_request:
@@ -48,21 +51,13 @@ jobs:
             }')
           { echo "payload<<JSONEOF"; echo "$payload"; echo "JSONEOF"; } >> "$GITHUB_OUTPUT"
 
-      - name: Post — production channel
-        if: github.event.pull_request.base.ref == 'main'
+      # `errors: true` so a rejected payload FAILS the job. Silence is the failure mode that matters
+      # for a notifier: nobody notices a message that was never sent.
+      - name: Post — consumer deployments
         uses: slackapi/slack-github-action@v2.1.0
         with:
           errors: true
           webhook: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: ${{ steps.data.outputs.payload }}
-
-      - name: Post — dev channel
-        if: github.event.pull_request.base.ref != 'main'
-        uses: slackapi/slack-github-action@v2.1.0
-        with:
-          errors: true
-          webhook: ${{ secrets.SLACK_DEV_DEPLOY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: ${{ steps.data.outputs.payload }}
 
@@ -112,20 +107,12 @@ jobs:
             }')
           { echo "payload<<JSONEOF"; echo "$payload"; echo "JSONEOF"; } >> "$GITHUB_OUTPUT"
 
-      - name: Post — production channel
-        if: github.event.pull_request.base.ref == 'main'
+      # `errors: true` so a rejected payload FAILS the job. Silence is the failure mode that matters
+      # for a notifier: nobody notices a message that was never sent.
+      - name: Post — consumer deployments
         uses: slackapi/slack-github-action@v2.1.0
         with:
           errors: true
           webhook: ${{ secrets.SLACK_DEPLOY_WEBHOOK_URL }}
-          webhook-type: incoming-webhook
-          payload: ${{ steps.data.outputs.payload }}
-
-      - name: Post — dev channel
-        if: github.event.pull_request.base.ref != 'main'
-        uses: slackapi/slack-github-action@v2.1.0
-        with:
-          errors: true
-          webhook: ${{ secrets.SLACK_DEV_DEPLOY_WEBHOOK_URL }}
           webhook-type: incoming-webhook
           payload: ${{ steps.data.outputs.payload }}
