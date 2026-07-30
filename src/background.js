@@ -61,6 +61,7 @@ function validateReading(raw) {
       totalMs: asDuration(timing.totalMs),
       readingReadyMs: asDuration(timing.readingReadyMs),
     },
+    provisional: raw.provisional === true,
     softNavigation: raw.softNavigation === true,
     domSettled: raw.domSettled !== false,
     latencyUncertaintyMs: asDuration(raw.latencyUncertaintyMs) ?? 0,
@@ -71,50 +72,67 @@ function validateReading(raw) {
   };
 }
 
-// A reading must not outlive the page it describes.
+// A reading must not outlive the page it describes — AND THE STATE THAT ENFORCES THAT MUST NOT
+// OUTLIVE THE WORKER EITHER.
 //
-// It used to be removed only when the tab closed or a verdict was recorded — so navigating from
-// listing A to listing B, or away to a site with no content script at all, left A's reading in place
-// and the popup presented it as "Current page". A verdict then attached A's coordinates to a page
-// the person was looking at but had never measured. Nothing could notice, because the only component
-// that knew a navigation had happened was the content script that no longer ran.
-// (Codex review round 10, PR #1.)
-const navigationIds = new Map();
-/** Documents whose page has been navigated away from; their late messages are no longer welcome. */
-const invalidatedDocuments = new Set();
-/** The document currently published for each tab, so we know which one to invalidate. */
-const activeDocuments = new Map();
-/** The newest navigation sequence a tab's content script has reported. */
-const latestSeq = new Map();
+// All of this lived in module-scope Map and Set objects. An MV3 service worker is terminated after a
+// short idle period and restarted on the next event, so those vanished — while readings, which live
+// in session storage, did not. After a restart an old document's in-flight reading could be accepted
+// against an empty high-water mark, overwrite the new page's reading, and then raise the mark so the
+// NEW document's readings were rejected. Every navigation guard added over five rounds evaporated on
+// a timer, and the failure mode was the exact one they were built to prevent.
+//
+// The state now lives in session storage alongside the readings it governs, so the two are lost and
+// kept together. (Codex review round 19, PR #1.)
+const STATE_KEY = 'phase1_navstate';
+
+async function loadState() {
+  const bag = await chrome.storage.session.get(STATE_KEY);
+  const state = bag?.[STATE_KEY];
+  return state && typeof state === 'object' ? state : {};
+}
+
+async function tabState(tabId) {
+  const state = await loadState();
+  return state[tabId] ?? { navigationId: 0, activeDocumentId: null, seqByDoc: {}, invalidated: [] };
+}
+
+async function writeTabState(tabId, next) {
+  const state = await loadState();
+  state[tabId] = next;
+  await chrome.storage.session.set({ [STATE_KEY]: state });
+}
+
+async function dropTabState(tabId) {
+  const state = await loadState();
+  delete state[tabId];
+  await chrome.storage.session.set({ [STATE_KEY]: state });
+}
 
 /**
  * Drop a tab's reading.
  *
- * `blacklistDocument` is the whole distinction, and getting it wrong broke the harness outright.
+ * `blacklistDocument` is the whole distinction, and getting it wrong broke the harness outright once.
  *
  * A SOFT navigation keeps the SAME document — that is what same-document navigation means — so
  * blacklisting the document on a soft invalidate blacklisted the very document about to publish the
- * replacement. Every subsequent listing on the site was then rejected and silently went unmeasured,
- * on two sites that are both single-page applications. The harness would have appeared to work,
- * recorded the first listing of a session, and quietly ignored every one after it.
- *
- * Blacklisting is only correct for a FULL navigation, where the old document is genuinely gone and
- * any message still in flight from it is stale by definition. For a soft navigation the sequence
- * number below does that job instead. (Codex review round 15, PR #1.)
+ * replacement. Every subsequent listing then went unmeasured, on two sites that are both single-page
+ * applications. Blacklisting is only correct for a FULL navigation, where the old document is
+ * genuinely gone and anything still in flight from it is stale by definition.
  */
-function invalidateTab(tabId, { blacklistDocument }) {
-  navigationIds.set(tabId, (navigationIds.get(tabId) ?? 0) + 1);
+async function invalidateTab(tabId, { blacklistDocument }) {
+  const state = await tabState(tabId);
+  state.navigationId += 1;
   if (blacklistDocument) {
-    const previous = activeDocuments.get(tabId);
-    if (previous != null) {
-      invalidatedDocuments.add(previous);
-      // Unbounded growth would be a slow leak in a worker that can live a long time. The set only
-      // needs to outlive messages already in flight, which is milliseconds.
-      setTimeout(() => invalidatedDocuments.delete(previous), 30_000);
+    if (state.activeDocumentId != null) {
+      // Bounded: it only needs to outlive messages already in flight, which is milliseconds.
+      state.invalidated = [...state.invalidated, state.activeDocumentId].slice(-20);
     }
-    activeDocuments.delete(tabId);
+    state.activeDocumentId = null;
+    state.seqByDoc = {};
   }
-  return chrome.storage.session.remove(key(tabId));
+  await writeTabState(tabId, state);
+  await chrome.storage.session.remove(key(tabId));
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -124,87 +142,66 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // though it described the top-level page the operator is looking at.
   if (sender.id !== chrome.runtime.id) return false;
   if (sender.tab?.id == null || sender.frameId !== 0) return false;
+  if (message?.type !== 'FTNSS_READING' && message?.type !== 'FTNSS_INVALIDATE') return false;
 
-  // DOCUMENT CHECKS FIRST, for invalidation as well as publication.
-  //
-  // Invalidation used to be handled before them, so a delayed invalidate from a document already
-  // navigated away from could delete the REPLACEMENT document's reading — the stale message doing
-  // precisely the damage the document checks exist to prevent. Its sequence was also written into
-  // `latestSeq` unchecked, which could LOWER the high-water mark and re-admit the stale readings the
-  // mark exists to reject. A guard that runs after the thing it guards is not a guard.
-  // (Codex review round 17, PR #1.)
-  const senderDocumentId = sender.documentId ?? null;
-  if (senderDocumentId != null && invalidatedDocuments.has(senderDocumentId)) return false;
+  handleMessage(message, sender)
+    .then((ok) => sendResponse({ ok }))
+    .catch(() => sendResponse({ ok: false }));
+  return true; // every path is async now that the state is in storage
+});
 
-  /** Monotonic only: a sequence may raise the high-water mark, never lower it. */
-  const acceptSeq = (tabId, value) => {
-    if (!Number.isSafeInteger(value) || value < 0) return false;
-    if (value < (latestSeq.get(tabId) ?? 0)) return false;
-    latestSeq.set(tabId, value);
-    return true;
-  };
+async function handleMessage(message, sender) {
+  const tabId = sender.tab.id;
+  const documentId = sender.documentId ?? null;
+  const state = await tabState(tabId);
 
-  if (message?.type === 'FTNSS_INVALIDATE') {
+  // Document checks run FIRST, for invalidation as well as publication. A guard that runs after the
+  // thing it guards is not a guard: a delayed invalidate from a superseded document could otherwise
+  // delete the replacement document's reading.
+  if (documentId != null && state.invalidated.includes(documentId)) return false;
+
+  // Sequences are scoped PER DOCUMENT. A fresh document starts its own count, so a high-water mark
+  // left by the previous one cannot reject every reading the new one publishes.
+  const docKey = documentId ?? 'unknown';
+  const seq = message.seq;
+  if (!Number.isSafeInteger(seq) || seq < 0) return false;
+  if (seq < (state.seqByDoc[docKey] ?? 0)) return false;
+  state.seqByDoc = { ...state.seqByDoc, [docKey]: seq };
+
+  if (message.type === 'FTNSS_INVALIDATE') {
     // A soft navigation: same document, so the document itself stays welcome.
-    if (!acceptSeq(sender.tab.id, message.seq)) return false;
-    invalidateTab(sender.tab.id, { blacklistDocument: false })
-      .then(() => sendResponse({ ok: true }))
-      .catch(() => sendResponse({ ok: false }));
+    await writeTabState(tabId, state);
+    await invalidateTab(tabId, { blacklistDocument: false });
     return true;
   }
-
-  if (message?.type !== 'FTNSS_READING') return false;
 
   const reading = validateReading(message.reading);
   if (reading == null) return false;
 
-  // REJECT A MESSAGE FROM A DOCUMENT THAT HAS ALREADY BEEN NAVIGATED AWAY FROM.
-  //
-  // Messages are asynchronous. A reading published by listing A could still be in flight when the
-  // navigation to B invalidated it — and stamping it with the CURRENT navigationId on arrival marked
-  // A's coordinates as belonging to B. Where B was an unsupported site, no content script ever ran
-  // there to publish a replacement, so that mislabelled reading was the one the popup showed and
-  // offered to record.
-  //
-  // `sender.documentId` is assigned by the browser, is unique per document, and cannot be chosen by
-  // the content script. Binding to it means a late message identifies the document it actually came
-  // from rather than whichever one happens to be current when it lands.
-  // (Codex review round 14, PR #1.)
-  // Within ONE document, `documentId` cannot distinguish listing A from listing B, so a sequence
-  // number supplied by the content script does. A reading from a superseded navigation is stale
-  // however promptly it arrives.
-  if (!acceptSeq(sender.tab.id, message.seq)) return false;
+  state.activeDocumentId = documentId;
+  await writeTabState(tabId, state);
 
-  const documentId = senderDocumentId;
-  activeDocuments.set(sender.tab.id, documentId);
-
-  chrome.storage.session
-    .set({
-      [key(sender.tab.id)]: {
-        ...reading,
-        publishedAt: Date.now(),
-        documentId,
-        // The navigation this reading belongs to. The popup refuses one whose generation is not the
-        // tab's current generation.
-        navigationId: navigationIds.get(sender.tab.id) ?? 0,
-      },
-    })
-    .then(() => sendResponse({ ok: true }))
-    .catch(() => sendResponse({ ok: false }));
-  return true; // response is async
-});
+  await chrome.storage.session.set({
+    [key(tabId)]: {
+      ...reading,
+      publishedAt: Date.now(),
+      documentId,
+      seq,
+      navigationId: state.navigationId,
+    },
+  });
+  return true;
+}
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   // `loading` fires for every top-level navigation, including one leaving our site list entirely.
   // It needs no host permission, which is the point: the alternative signals all do.
   if (changeInfo.status !== 'loading') return;
   // A full navigation: the old document is gone, so its late messages are stale by definition.
-  latestSeq.delete(tabId);
   void invalidateTab(tabId, { blacklistDocument: true });
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void invalidateTab(tabId, { blacklistDocument: true });
-  navigationIds.delete(tabId);
-  latestSeq.delete(tabId);
+  void chrome.storage.session.remove(key(tabId));
+  void dropTabState(tabId);
 });

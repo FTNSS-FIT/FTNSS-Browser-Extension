@@ -123,6 +123,7 @@
     latencyUncertaintyMs = 0,
     mutationCountAtNavigation = 0,
     isRetry = false,
+    provisional = false,
   } = {}) {
     const myGeneration = (generation += 1);
     let domSettled = true;
@@ -204,6 +205,12 @@
       // A retry's latency is measured to the moment the reading actually became available, which is
       // the honest number: the product would have waited exactly that long too.
       retried: isRetry,
+      // A NOT-YET-FINAL failure. The first `not_found` was published immediately and stayed
+      // recordable for the 2.5s of each retry — so "Confirm no read" could be pressed on a page
+      // whose coordinates were about to appear, writing a false miss that no later success could
+      // undo. A provisional failure is shown but cannot be recorded.
+      // (Codex review round 19, PR #1.)
+      provisional: provisional && extraction.result.status === 'not_found',
     });
     lastPublishedStatus = extraction.result.status;
     lastPublishedIdentity = identity;
@@ -223,14 +230,15 @@
    * success. (Codex review round 16, PR #1.)
    */
   async function measureOnLoad() {
-    const result = await measureCurrentPage();
+    const result = await measureCurrentPage({ provisional: true });
     for (let attempt = 0; attempt < 3; attempt += 1) {
       if (result?.status !== 'not_found' && lastPublishedStatus !== 'not_found') return;
       const before = generation;
       await waitForStableDom({ alreadyChanged: false, maxMs: 2500 });
       // A real navigation happened while we waited; it owns the page now.
       if (generation !== before) return;
-      const retry = await measureCurrentPage({ isRetry: true });
+      const isLastAttempt = attempt === 2;
+      const retry = await measureCurrentPage({ isRetry: true, provisional: !isLastAttempt });
       if (retry?.status !== 'not_found') return;
     }
   }

@@ -186,6 +186,15 @@ async function render() {
     readingEl.appendChild(el('div', '⚠ page had not settled', 'warn'));
   }
 
+  if (reading.provisional === true) {
+    // Still retrying. Shown, so the person knows the extension is working, but not recordable —
+    // pressing "Confirm no read" here would write a false miss for a page whose coordinates are
+    // about to appear.
+    readingEl.appendChild(el('div', 'still reading this page…', 'muted'));
+    await refreshCount();
+    return;
+  }
+
   const hasCoordinate = reading.result?.status === 'found';
   let precisionVerdict = 'not_assessed';
 
@@ -285,23 +294,30 @@ async function render() {
       return;
     }
 
-    await saveRecord({
-      // The family and variant the operator DECLARED — never a hostname.
-      ...cohortRecordFor(cohort),
-      // Date only. A precise time beside a site label is the makings of a browsing log, and nothing
-      // in the report groups more finely than a day.
-      recordedAt: new Date().toISOString().slice(0, 10),
-      verdict,
-      precisionVerdict,
-      softNavigation: reading.softNavigation === true,
-      domSettled: reading.domSettled !== false,
-      latencyUncertaintyMs: reading.latencyUncertaintyMs ?? 0,
-      timing: reading.timing,
-      tiers: reading.tiers,
-      errorMetres,
-      result: reading.result,
-      transmitted: hasCoordinate ? toTransmittablePoint(reading.result.lat, reading.result.lon) : null,
-    });
+    try {
+      await saveRecord({
+        // The family and variant the operator DECLARED — never a hostname.
+        ...cohortRecordFor(cohort),
+        // Date only. A precise time beside a site label is the makings of a browsing log, and nothing
+        // in the report groups more finely than a day.
+        recordedAt: new Date().toISOString().slice(0, 10),
+        verdict,
+        precisionVerdict,
+        softNavigation: reading.softNavigation === true,
+        domSettled: reading.domSettled !== false,
+        latencyUncertaintyMs: reading.latencyUncertaintyMs ?? 0,
+        timing: reading.timing,
+        tiers: reading.tiers,
+        errorMetres,
+        result: reading.result,
+        transmitted: hasCoordinate
+          ? toTransmittablePoint(reading.result.lat, reading.result.lon)
+          : null,
+      });
+    } catch (err) {
+      statusEl.replaceChildren(el('span', err?.message ?? 'Could not save.', 'warn'));
+      return;
+    }
 
     // Clearing the reading is also the dedup: one record per page view, and the popup then reports
     // that there is nothing to record until the next navigation republishes.

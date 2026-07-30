@@ -91,6 +91,7 @@ export async function publishReading(reading) {
             },
       tiers: reading.tiers,
       timing: reading.timing,
+      provisional: reading.provisional,
       softNavigation: reading.softNavigation,
       domSettled: reading.domSettled,
       latencyUncertaintyMs: reading.latencyUncertaintyMs,
@@ -204,7 +205,15 @@ export async function saveRecord(record) {
   // of it was kept. Applying the allowlist to the whole set turns each save into a migration, so the
   // claim becomes true for existing installs rather than only for fresh ones.
   // (Codex review round 15, PR #1.)
-  const trimmed = exportableRecords([...records, record]).slice(-MAX_RECORDS);
+  // NO SILENT TRUNCATION. `.slice(-MAX_RECORDS)` dropped the OLDEST record once the store was full
+  // while the UI still reported success — so a long collection would have lost its earliest
+  // measurements, in collection order, without anyone being told. Losing data silently from a data
+  // collection tool is the one failure it cannot have. Refuse instead, visibly.
+  // (Codex review round 19, PR #1.)
+  if (records.length >= MAX_RECORDS) {
+    throw new Error(`storage is full (${MAX_RECORDS} records) — export and clear before continuing`);
+  }
+  const trimmed = exportableRecords([...records, record]);
   await chrome.storage.local.set({ [KEY]: trimmed });
   return trimmed.length;
 }
