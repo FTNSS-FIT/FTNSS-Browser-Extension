@@ -109,6 +109,7 @@
     softNavigation = false,
     navDetectedAt = null,
     latencyUncertaintyMs = 0,
+    signatureAtNav = null,
   } = {}) {
     const myGeneration = (generation += 1);
 
@@ -126,7 +127,13 @@
       // signature that has already moved, covers the fast navigation that finished before the poll
       // noticed it without trusting a weak signal about a document we can just watch instead.
       // (Codex review rounds 4 and 6, PR #1.)
-      const changedBeforeWeLooked = domSignature() !== lastSignature;
+      // Compared against the signature taken AT THE MOMENT NAVIGATION WAS DETECTED, not against the
+      // last measured page. `lastSignature` could have drifted for reasons that had nothing to do
+      // with this navigation — a lazy-loaded image, a price refresh on the page we were already on —
+      // and any such drift read as "the new listing has arrived". The evidence has to be scoped to
+      // the navigation it is being used to justify. (Codex review round 7, PR #1.)
+      const baseline = signatureAtNav ?? lastSignature;
+      const changedBeforeWeLooked = domSignature() !== baseline;
       const stability = await waitForStableDom();
       domSettled = stability.settled;
       // A newer navigation started while we waited; that one owns the page now.
@@ -134,6 +141,24 @@
       // Nothing mutated and nothing had already changed: whatever is on screen still belongs to the
       // previous listing, so measuring it would attribute that listing's reading to this one.
       if (!stability.mutated && !changedBeforeWeLooked) {
+        // NOT a silent return. The page may be perfectly readable and simply slower than our
+        // ceiling, and a person staring at an empty corner cannot tell that from "there was nothing
+        // to find" — which is the same ambiguity the product's never-show-an-empty-panel rule
+        // exists to prevent, reproduced in the instrument. Show the explicit unreadable state and
+        // let the person decide. (Codex review round 7, PR #1.)
+        mountRecorder({
+          extraction: {
+            result: { status: 'not_found', reason: 'page did not settle after navigation' },
+            tiers: {
+              tier1: { status: 'not_found' },
+              tier2: { status: 'not_found' },
+              tier3: { status: 'not_found' },
+            },
+            timing: { totalMs: 0, tier1Ms: 0, tier2Ms: 0, tier3Ms: 0 },
+          },
+          readyToPanelMs: null,
+          onSave: async () => {},
+        });
         return;
       }
     }
@@ -275,6 +300,9 @@
     const current = withoutFragment(location.href);
     if (current === lastUrl) return;
     lastUrl = current;
+    // Signature first: unmounting our own panel mutates the document, so reading it afterwards
+    // would fold our own change into the evidence about the page's.
+    const signatureBeforeUnmount = domSignature();
     // Clear immediately and synchronously — the wait happens inside measureCurrentPage, and the
     // previous listing's panel must not survive even that long.
     unmountRecorder();
@@ -282,6 +310,8 @@
       softNavigation: true,
       navDetectedAt: performance.now(),
       latencyUncertaintyMs,
+      // Captured HERE, before any waiting, so the comparison is scoped to this navigation.
+      signatureAtNav: signatureBeforeUnmount,
     });
   }
   // 250ms rather than 1000ms: the poll interval IS the latency measurement's error bar, so a slower

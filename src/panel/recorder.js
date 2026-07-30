@@ -15,6 +15,7 @@
 // stale panel standing. Anything that finds our own DOM by searching a document the attacker writes
 // is defeated the same way. (Codex review round 4, PR #1.)
 let mountedHost = null;
+let hostObserver = null;
 
 /**
  * Remove the panel currently on screen. Called the instant a navigation is detected, BEFORE anything
@@ -22,6 +23,9 @@ let mountedHost = null;
  * the stale-reading bug wearing a different hat. Nothing on screen beats something wrong on screen.
  */
 export function unmountRecorder() {
+  // Stop the guard BEFORE removing, or it re-attaches the very node we are removing.
+  hostObserver?.disconnect();
+  hostObserver = null;
   mountedHost?.remove();
   mountedHost = null;
 }
@@ -238,4 +242,22 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
   box.appendChild(dismissRow);
 
   document.documentElement.appendChild(host);
+
+  // A closed shadow root protects what is INSIDE the panel; it does nothing for the host element,
+  // which sits in a document the page controls and can simply remove. That would suppress the
+  // read-status display entirely — and a status that can be silently removed is worse than none,
+  // because its absence looks identical to "nothing to report".
+  //
+  // Re-attach if it disappears. This does not make suppression impossible — the page could also
+  // hide it with CSS, and nothing rendered into a hostile document is ever fully safe — which is why
+  // the popup carries the record count independently, in browser-owned UI the page cannot touch.
+  // (Codex review round 7, PR #1.)
+  const guard = new MutationObserver(() => {
+    if (mountedHost === host && !host.isConnected) {
+      document.documentElement.appendChild(host);
+    }
+  });
+  guard.observe(document.documentElement, { childList: true });
+  hostObserver?.disconnect();
+  hostObserver = guard;
 }
