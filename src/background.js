@@ -80,6 +80,23 @@ function validateReading(raw) {
 // that knew a navigation had happened was the content script that no longer ran.
 // (Codex review round 10, PR #1.)
 const navigationIds = new Map();
+/** Documents whose page has been navigated away from; their late messages are no longer welcome. */
+const invalidatedDocuments = new Set();
+/** The document currently published for each tab, so we know which one to invalidate. */
+const activeDocuments = new Map();
+
+function invalidateTab(tabId) {
+  navigationIds.set(tabId, (navigationIds.get(tabId) ?? 0) + 1);
+  const previous = activeDocuments.get(tabId);
+  if (previous != null) {
+    invalidatedDocuments.add(previous);
+    // Unbounded growth would be a slow leak in a worker that can live for a long time. The set only
+    // needs to outlive messages already in flight, which is milliseconds.
+    setTimeout(() => invalidatedDocuments.delete(previous), 30_000);
+  }
+  activeDocuments.delete(tabId);
+  return chrome.storage.session.remove(key(tabId));
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // `sender.id` proves this came from our own extension rather than from a page that found the
@@ -91,9 +108,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // A content script telling us its page is gone needs no payload and no validation beyond the
   // sender checks above — it can only ever discard its OWN tab's reading.
   if (message?.type === 'FTNSS_INVALIDATE') {
-    navigationIds.set(sender.tab.id, (navigationIds.get(sender.tab.id) ?? 0) + 1);
-    chrome.storage.session
-      .remove(key(sender.tab.id))
+    invalidateTab(sender.tab.id)
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;
@@ -104,11 +119,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const reading = validateReading(message.reading);
   if (reading == null) return false;
 
+  // REJECT A MESSAGE FROM A DOCUMENT THAT HAS ALREADY BEEN NAVIGATED AWAY FROM.
+  //
+  // Messages are asynchronous. A reading published by listing A could still be in flight when the
+  // navigation to B invalidated it — and stamping it with the CURRENT navigationId on arrival marked
+  // A's coordinates as belonging to B. Where B was an unsupported site, no content script ever ran
+  // there to publish a replacement, so that mislabelled reading was the one the popup showed and
+  // offered to record.
+  //
+  // `sender.documentId` is assigned by the browser, is unique per document, and cannot be chosen by
+  // the content script. Binding to it means a late message identifies the document it actually came
+  // from rather than whichever one happens to be current when it lands.
+  // (Codex review round 14, PR #1.)
+  const documentId = sender.documentId ?? null;
+  if (documentId != null && invalidatedDocuments.has(documentId)) return false;
+  activeDocuments.set(sender.tab.id, documentId);
+
   chrome.storage.session
     .set({
       [key(sender.tab.id)]: {
         ...reading,
         publishedAt: Date.now(),
+        documentId,
         // The navigation this reading belongs to. The popup refuses one whose generation is not the
         // tab's current generation.
         navigationId: navigationIds.get(sender.tab.id) ?? 0,
@@ -123,11 +155,10 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   // `loading` fires for every top-level navigation, including one leaving our site list entirely.
   // It needs no host permission, which is the point: the alternative signals all do.
   if (changeInfo.status !== 'loading') return;
-  navigationIds.set(tabId, (navigationIds.get(tabId) ?? 0) + 1);
-  void chrome.storage.session.remove(key(tabId));
+  void invalidateTab(tabId);
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  void invalidateTab(tabId);
   navigationIds.delete(tabId);
-  void chrome.storage.session.remove(key(tabId));
 });

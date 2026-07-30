@@ -122,7 +122,7 @@ export async function invalidateReading() {
 const COHORT_KEY = 'phase1_cohort';
 
 export async function currentCohort() {
-  const bag = await chrome.storage.local.get(COHORT_KEY);
+  const bag = await chrome.storage.session.get(COHORT_KEY);
   return typeof bag?.[COHORT_KEY] === 'string' ? bag[COHORT_KEY] : null;
 }
 
@@ -148,7 +148,18 @@ export function cohortRecordFor(label) {
 
 export async function setCurrentCohort(cohort) {
   if (!SITE_LABELS.includes(cohort)) throw new Error('unknown cohort');
-  await chrome.storage.local.set({ [COHORT_KEY]: cohort });
+  await chrome.storage.session.set({ [COHORT_KEY]: cohort });
+}
+
+/**
+ * Delete the key an older build wrote to LOCAL storage.
+ *
+ * Moving where a value is written does nothing for anyone who already ran the previous version: the
+ * old copy simply stops being read, which looks identical to being gone and is not. This is also the
+ * function the popup imported for two commits while it did not exist — see the note in popup.js.
+ */
+export async function migrateAwayLocalCohort() {
+  await chrome.storage.local.remove(COHORT_KEY);
 }
 
 /** The reading for the tab the person is looking at — never a global "last page published". */

@@ -224,7 +224,12 @@ async function render() {
     // the old object. Check that the reading is still there AND still the same one.
     // (Codex review round 12, PR #1.)
     const live = await currentReading();
-    if (live == null || live.publishedAt !== reading.publishedAt || live.navigationId !== reading.navigationId) {
+    if (
+      live == null ||
+      live.publishedAt !== reading.publishedAt ||
+      live.navigationId !== reading.navigationId ||
+      live.documentId !== reading.documentId
+    ) {
       statusEl.replaceChildren(
         el('span', 'This page changed since the reading — nothing recorded.', 'warn'),
       );
