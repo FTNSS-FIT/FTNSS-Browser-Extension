@@ -11,7 +11,7 @@
   const [
     { runExtraction },
     { mountRecorder, unmountRecorder },
-    { saveRecord },
+    { saveRecord, urlKey, siteLabelFor },
     { toTransmittablePoint, distanceMetres },
   ] =
     await Promise.all([
@@ -66,10 +66,13 @@
    * record so a reading taken under an unsettled DOM is identifiable later rather than silently
    * mixed in.
    */
-  function waitForStableDom({ quietMs = 300, maxMs = 3000 } = {}) {
+  function waitForStableDom({ quietMs = 300, maxMs = 5000 } = {}) {
     return new Promise((resolve) => {
       let timer;
+      let mutated = false;
+
       const observer = new MutationObserver(() => {
+        mutated = true;
         clearTimeout(timer);
         timer = setTimeout(settle, quietMs);
       });
@@ -79,15 +82,20 @@
         clearTimeout(timer);
         clearTimeout(ceiling);
         observer.disconnect();
-        resolve({ settled: !hitCeiling });
+        resolve({ settled: !hitCeiling, mutated });
       }
 
       observer.observe(document.documentElement, { childList: true, subtree: true });
-      timer = setTimeout(settle, quietMs);
+      // NO initial quiet timer. Starting one meant an unchanged DOM satisfied the wait immediately:
+      // the URL had already flipped to listing B while the DOM still held listing A, nothing had
+      // mutated yet, and 300ms of that stillness read as "settled". We then extracted A under B's
+      // identity — the mis-attribution this whole mechanism exists to prevent, arrived at by waiting
+      // for the wrong thing. Settling now requires POSITIVE EVIDENCE that the page changed.
+      // (Codex review round 3, PR #1.)
     });
   }
 
-  async function measureCurrentPage({ softNavigation = false } = {}) {
+  async function measureCurrentPage({ softNavigation = false, navDetectedAt = null } = {}) {
     const myGeneration = (generation += 1);
 
     let domSettled = true;
@@ -95,9 +103,13 @@
       // Nothing may remain on screen while we wait — a panel from the previous listing on a page
       // that is no longer that listing is worse than an empty corner.
       unmountRecorder();
-      ({ settled: domSettled } = await waitForStableDom());
+      const stability = await waitForStableDom();
+      domSettled = stability.settled;
       // A newer navigation started while we waited; that one owns the page now.
       if (myGeneration !== generation) return;
+      // The URL changed but the DOM never did. Whatever is on screen still belongs to the previous
+      // listing, so measuring it would attribute that listing's reading to this one. Record nothing.
+      if (!stability.mutated) return;
     }
 
     // Captured AFTER the wait, so the URL and the DOM we are about to read belong to the same
@@ -119,10 +131,24 @@
     // Latency the user would actually feel: from the page being ready to the panel being on screen.
     // Only meaningful for the initial load — after a soft navigation there is no new navigation
     // entry, so it is reported as null rather than as a number that means something else.
+    // Latency the person would actually feel, measured for BOTH kinds of navigation.
+    //
+    // This used to be null for every soft navigation, which the report then coerced to Infinity —
+    // so every SPA navigation was classified over-budget and could never be a hit. On sites that are
+    // SPAs, that is most of the sample: the headline number would have been driven down by a
+    // measurement artifact and read as a product failure. (Codex review round 3, PR #1.)
+    //
+    // The two are measured from different origins and are NOT interchangeable, so which one this is
+    // stays on the record.
     const nav = performance.getEntriesByType('navigation')[0];
     const isSoftNavigation = softNavigation;
-    const readyToPanelMs =
-      isSoftNavigation || !nav ? null : Math.max(0, performance.now() - nav.domContentLoadedEventEnd);
+    const readyToPanelMs = isSoftNavigation
+      ? navDetectedAt == null
+        ? null
+        : Math.max(0, performance.now() - navDetectedAt)
+      : nav
+        ? Math.max(0, performance.now() - nav.domContentLoadedEventEnd)
+        : null;
 
     mountRecorder({
       extraction,
@@ -148,11 +174,10 @@
         }
 
         await saveRecord({
-          // The URL extraction actually ran against — NOT location.href at save time.
-          // Stored locally only; see the note at the top of lib/storage.js for why this harness
-          // keeps a URL when the product never will.
-          url: capturedUrl,
-          site: location.hostname,
+          // A non-reversible key for dedup, NOT the URL. The URL itself is never stored.
+          urlKey: urlKey(capturedUrl),
+          // Chosen from our own allowlist, not read off the page.
+          site: siteLabelFor(location.hostname),
           recordedAt: new Date().toISOString(),
           softNavigation: isSoftNavigation,
           // False when the DOM never went quiet within the ceiling. Such a reading is usable but
@@ -202,7 +227,7 @@
     // Clear immediately and synchronously — the wait happens inside measureCurrentPage, and the
     // previous listing's panel must not survive even that long.
     unmountRecorder();
-    void measureCurrentPage({ softNavigation: true });
+    void measureCurrentPage({ softNavigation: true, navDetectedAt: performance.now() });
   }
   setInterval(onMaybeNavigated, 1000);
   addEventListener('popstate', onMaybeNavigated);

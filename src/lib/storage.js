@@ -1,18 +1,47 @@
 // Local measurement storage.
 //
-// WHY THE URL IS STORED HERE AND NOWHERE ELSE. The shipped extension never records a URL at all.
-// This harness does, for one reason: a measurement is worthless without ground truth, and checking
-// whether an extracted point is actually right means being able to go back to the listing. So the
-// URL is kept — in chrome.storage.local, on the machine that did the browsing, never transmitted,
-// and exported only by an explicit click to a directory that is gitignored.
+// NO PAGE IDENTIFIER IS STORED. Not the URL, not the hostname, not the address text.
 //
-// This is a deliberate, bounded exception for a development tool that is never published, and it is
-// the reason `measurements/` is gitignored rather than merely untracked. When the harness is
-// retired the exception goes with it. No code path in this file, or reachable from it, performs a
-// network request.
+// An earlier version kept the URL so a disputed reading could be re-checked against the listing it
+// came from, and argued the case as a bounded exception. That was wrong twice over: it put a
+// browsing trail on disk, and the way it was defended — by writing a carve-out into the rules file —
+// disarmed the reviewer that would have caught the next one. The rule is absolute; the instrument
+// had to change instead. (Codex review round 3, PR #1.)
+//
+// What replaced it:
+//   • dedup uses a non-reversible hash of the URL, never the URL;
+//   • the site is a label chosen from OUR OWN allowlist, not `location.hostname`, so no page can put
+//     text into it;
+//   • the export is built from a strict ALLOWLIST of fields. A denylist fails open — it protects
+//     only the fields someone remembered, and every new field is exposed by default.
 
 const KEY = 'phase1_records';
 const MAX_RECORDS = 500;
+
+/**
+ * The only sites this harness runs on. The stored label comes from here, so it is a value we chose
+ * rather than one the page supplied.
+ */
+export const SITE_LABELS = ['booking.com', 'airbnb.com'];
+
+export function siteLabelFor(hostname) {
+  const match = SITE_LABELS.find((label) => hostname === label || hostname.endsWith(`.${label}`));
+  return match ?? 'other';
+}
+
+/**
+ * FNV-1a. Used ONLY to notice that a listing has already been recorded, so re-recording replaces
+ * rather than double-counting it. It is not a security primitive and does not need to be: it exists
+ * so we never have to keep the URL itself.
+ */
+export function urlKey(url) {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < url.length; i += 1) {
+    hash ^= url.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, '0');
+}
 
 export async function loadRecords() {
   const bag = await chrome.storage.local.get(KEY);
@@ -22,9 +51,9 @@ export async function loadRecords() {
 
 export async function saveRecord(record) {
   const records = await loadRecords();
-  // One record per listing URL. Re-recording a page you have already done replaces the old entry
-  // rather than counting the same listing twice, which would quietly weight the sample.
-  const withoutDuplicate = records.filter((r) => r.url !== record.url);
+  // One record per listing. Re-recording a page you have already done replaces the old entry rather
+  // than counting the same listing twice, which would quietly weight the sample.
+  const withoutDuplicate = records.filter((r) => r.urlKey !== record.urlKey);
   withoutDuplicate.push(record);
   const trimmed = withoutDuplicate.slice(-MAX_RECORDS);
   await chrome.storage.local.set({ [KEY]: trimmed });
@@ -36,35 +65,43 @@ export async function clearRecords() {
 }
 
 /**
- * Fields that identify or reproduce the page. Everything the phase-1 REPORT needs is outside this
- * list — the numbers are computed from verdicts, tiers, timings and rounded points, none of which
- * say which listing anyone looked at.
+ * The exact set of fields an exported record may contain — an ALLOWLIST, so a field added later is
+ * withheld until someone decides it belongs, rather than shipped because nobody remembered it.
+ * Every entry here is either a number we computed or a value chosen from our own vocabulary.
  */
-const PAGE_IDENTIFYING = ['url', 'note', 'groundTruth', 'errorMetres'];
+const EXPORT_FIELDS = [
+  'site', // from SITE_LABELS, never location.hostname
+  'recordedAt',
+  'verdict',
+  'precisionVerdict',
+  'softNavigation',
+  'domSettled',
+  'timing',
+  'tiers',
+  'errorMetres', // a distance we computed; carries no position
+];
 
-/**
- * A copy with the page-identifying fields removed, and coordinates reduced to what the product would
- * actually transmit.
- *
- * The full export exists because a measurement cannot be verified without being able to return to
- * the listing. But a file that reproduces a browsing session should not be the one that gets
- * attached to a message or dropped in a shared folder, and the way to prevent that is to make the
- * safe artifact the convenient one rather than to rely on everyone remembering which is which.
- * (Codex review round 2, PR #1.)
- */
-export function redactRecords(records) {
+/** The result, reduced to what the report reads: never a coordinate, never page text. */
+function exportableResult(result) {
+  if (result == null) return null;
+  return {
+    status: result.status,
+    tier: result.tier ?? null,
+    precision: result.precision ?? null,
+    // `source` is a fixed vocabulary set by the extractors, but it is rebuilt here rather than
+    // copied so that a future extractor cannot widen what leaves this module by widening its own
+    // string. Anything unrecognised becomes 'other'.
+    source: typeof result.source === 'string' && result.source.length <= 40 ? result.source : 'other',
+  };
+}
+
+export function exportableRecords(records) {
   return records.map((record) => {
-    const copy = { ...record };
-    for (const field of PAGE_IDENTIFYING) delete copy[field];
-    if (copy.result?.status === 'found') {
-      // Rounded to transmission precision — the report's accuracy figures come from the verdict,
-      // not from re-deriving position, so nothing is lost that the decision depends on.
-      copy.result = { ...copy.result, lat: undefined, lon: undefined };
+    const out = {};
+    for (const field of EXPORT_FIELDS) {
+      if (record[field] !== undefined) out[field] = record[field];
     }
-    if (copy.result?.status === 'found_address') {
-      // The address is page content. The report only needs to know one was present.
-      copy.result = { ...copy.result, address: undefined };
-    }
-    return copy;
+    out.result = exportableResult(record.result);
+    return out;
   });
 }

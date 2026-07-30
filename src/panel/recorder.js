@@ -83,10 +83,9 @@ function describe(result) {
  * @param {ReturnType<import('../extract/index.js').runExtraction>} opts.extraction
  * @param {number|null} opts.readyToPanelMs  null after a soft navigation — there is no new
  *        navigation entry to measure against, and a fabricated number is worse than none
- * @param {string} opts.capturedUrl
  * @param {(verdict: object) => Promise<void>} opts.onSave
  */
-export function mountRecorder({ extraction, readyToPanelMs, capturedUrl, onSave }) {
+export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
   unmountRecorder();
 
   const host = el('div');
@@ -113,12 +112,6 @@ export function mountRecorder({ extraction, readyToPanelMs, capturedUrl, onSave 
     addressLine.className = 'muted';
     box.appendChild(addressLine);
   }
-
-  // Which listing this reading belongs to. Shown because the panel survives soft navigation and a
-  // reading is bound to the URL it was taken on, not to whatever the address bar says now.
-  const urlLine = el('div', capturedUrl.replace(/^https?:\/\//, '').slice(0, 60));
-  urlLine.className = 'muted';
-  box.appendChild(urlLine);
 
   const tiers = extraction.tiers;
   const tierLine = el(

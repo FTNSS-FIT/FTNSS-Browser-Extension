@@ -57,11 +57,18 @@ function summarise(rows, label) {
 
   // A hit is correct AND inside the latency budget. A correct read that arrives after the user has
   // moved on is worth nothing, so it does not count as one.
-  const withinBudget = correct.filter(
-    (r) =>
-      (r.timing?.readyToPanelMs ?? Infinity) <= LATENCY_BUDGET_MS &&
-      (r.timing?.totalMs ?? Infinity) <= EXTRACT_BUDGET_MS,
-  ).length;
+  //
+  // A MISSING latency is not an over-budget one. Coercing null to Infinity classified every record
+  // without a timing as too slow — and on SPA sites that was most of the sample, so a measurement
+  // artifact would have driven the headline number down and read as a product failure. A record
+  // with no latency is counted on correctness and reported separately as unmeasured, never
+  // silently failed. (Codex review round 3, PR #1.)
+  const latencyOf = (r) => r.timing?.readyToPanelMs;
+  const overBudget = (r) =>
+    (Number.isFinite(latencyOf(r)) && latencyOf(r) > LATENCY_BUDGET_MS) ||
+    (Number.isFinite(r.timing?.totalMs) && r.timing.totalMs > EXTRACT_BUDGET_MS);
+  const withinBudget = correct.filter((r) => !overBudget(r)).length;
+  const unmeasuredLatency = correct.filter((r) => !Number.isFinite(latencyOf(r))).length;
 
   const readyTimes = rows.map((r) => r.timing?.readyToPanelMs).filter(Number.isFinite);
   const extractTimes = rows.map((r) => r.timing?.totalMs).filter(Number.isFinite);
@@ -69,6 +76,11 @@ function summarise(rows, label) {
   console.log(`\n${label}  (n=${total})`);
   console.log(`  HIT (correct + in budget)  ${pct(withinBudget, total)}   ${withinBudget}/${total}`);
   console.log(`  correct, over budget       ${pct(correct.length - withinBudget, total)}`);
+  if (unmeasuredLatency > 0) {
+    console.log(
+      `  (of the hits, ${unmeasuredLatency} had no latency measurement — counted on correctness only)`,
+    );
+  }
   console.log(`  WRONG                      ${pct(wrong, total)}   ${wrong}/${total}   <- must be ~0`);
   console.log(`  miss (honest failure)      ${pct(noRead, total)}`);
   console.log(`  unverifiable               ${pct(unverifiable, total)}`);
@@ -103,6 +115,11 @@ function summarise(rows, label) {
     );
   }
 
+  const unsettled = rows.filter((r) => r.domSettled === false).length;
+  if (unsettled > 0) {
+    console.log(`  ⚠ ${unsettled} record(s) taken before the page settled — treat with suspicion`);
+  }
+
   const errors = rows.map((r) => r.errorMetres).filter(Number.isFinite);
   if (errors.length > 0) {
     console.log(
@@ -115,10 +132,8 @@ summarise(records, 'ALL SITES');
 
 const bySite = new Map();
 for (const r of records) {
-  // Group by registrable-ish domain so airbnb.com and airbnb.co.uk report together — the point of
-  // including ccTLDs in the sample is to compare them, not to split the sample into slivers.
-  const host = String(r.site || 'unknown');
-  const family = host.includes('airbnb') ? 'airbnb' : host.includes('booking') ? 'booking.com' : host;
+  // `site` is already a label from our own allowlist, not a hostname read off the page.
+  const family = String(r.site || 'unknown');
   if (!bySite.has(family)) bySite.set(family, []);
   bySite.get(family).push(r);
 }

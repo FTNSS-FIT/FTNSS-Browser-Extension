@@ -125,7 +125,11 @@ export function extractFromStructuredData(doc) {
         lat: geo.lat,
         lon: geo.lon,
         tier: 1,
-        source: `ld+json ${types[0]}.geo`,
+        // FIXED STRING. This used to interpolate the page's own `@type`, which is attacker
+        // controlled — a page publishing `"@type": ["<anything at all>", "Hotel"]` put its own text
+        // into a field we then wrote into an exported artifact. Diagnostic value is not worth
+        // carrying page content forward. (Codex review round 3, PR #1.)
+        source: 'ld+json.geo',
         // 'unknown', NOT 'exact'. Whether a published point is the building or a deliberately
         // fuzzed area is a per-site fact this phase exists to MEASURE. Claiming 'exact' without a
         // check is the repo's own "never render precision we do not have" rule broken in the one

@@ -3,7 +3,7 @@
 // The export is a local file download built from an in-memory blob. There is no upload, no sync,
 // and no network request anywhere in this file.
 
-import { loadRecords, clearRecords, redactRecords } from '../lib/storage.js';
+import { loadRecords, clearRecords, exportableRecords } from '../lib/storage.js';
 
 const countEl = document.getElementById('count');
 
@@ -31,17 +31,10 @@ async function download(records, suffix) {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-// The shareable one is the default. It carries the verdicts, tiers, timings and rounded points the
-// report is computed from, and none of the URLs, addresses or notes — so it can be passed around
-// without passing a browsing session around with it.
+// ONE export. Nothing page-identifying is stored, so there is no sensitive variant to keep local
+// and no choice for anyone to get wrong. The payload is built from an allowlist in storage.js.
 document.getElementById('export').addEventListener('click', async () => {
-  download(redactRecords(await loadRecords()), 'redacted');
-});
-
-// The full export stays available because verifying a disputed reading means returning to the
-// listing. It is the deliberate exception described in AGENTS.md, not an oversight.
-document.getElementById('export-full').addEventListener('click', async () => {
-  download(await loadRecords(), 'full');
+  download(exportableRecords(await loadRecords()), 'measurements');
 });
 
 document.getElementById('clear').addEventListener('click', async () => {

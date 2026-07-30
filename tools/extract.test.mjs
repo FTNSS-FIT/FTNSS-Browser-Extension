@@ -140,6 +140,18 @@ test('the strict coordinate parser is shared by every tier', () => {
   assert.equal(parseCoordinate(-9.1287), -9.1287);
 });
 
+test('tier 1 source carries no page-controlled text', () => {
+  // The source string used to interpolate the page's own @type, so a page could put arbitrary text
+  // into a field that then reached an exported artifact.
+  const hostile = JSON.stringify({
+    '@type': ['<script>alert(1)</script> secret-page-data', 'Hotel'],
+    geo: { latitude: 38.7115, longitude: -9.1287 },
+  });
+  const r = extractFromStructuredData(ldJsonDocument(hostile));
+  assert.equal(r.status, 'found');
+  assert.equal(r.source, 'ld+json.geo');
+});
+
 test('tier 1 does not claim precision it has not checked', () => {
   // Labelling every published point 'exact' would record a site that deliberately fuzzes location
   // as building-accurate on every listing. Precision is measured, not assumed.
@@ -181,4 +193,53 @@ test('tier 3 returns an address string, not a coordinate', () => {
 test('tier 3 rejects a label that merely lives in an address-shaped element', () => {
   const doc = fakeDocument({ '[class*="address" i]': [textNode('Show address')] });
   assert.equal(extractFromAddressText(doc).status, 'not_found');
+});
+
+// ─── export shape ─────────────────────────────────────────────────────────────
+
+test('the export is an allowlist — a field added later is withheld, not shipped', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  const [out] = exportableRecords([
+    {
+      site: 'airbnb.com',
+      verdict: 'correct',
+      timing: { totalMs: 12 },
+      // None of these may survive. The first three are the fields the harness must never emit;
+      // the last is the case an allowlist exists for — something nobody thought about yet.
+      urlKey: 'deadbeef',
+      note: 'the Smiths, 14 Acacia Ave',
+      groundTruth: { lat: 1, lon: 2 },
+      somethingAddedNextMonth: 'page text',
+      result: { status: 'found', tier: 1, lat: 38.7115, lon: -9.1287, source: 'ld+json.geo' },
+    },
+  ]);
+
+  assert.deepEqual(Object.keys(out).sort(), ['result', 'site', 'timing', 'verdict']);
+  // A coordinate is a location. The report is computed from verdicts, so it never needs one.
+  assert.equal(out.result.lat, undefined);
+  assert.equal(out.result.lon, undefined);
+  assert.equal(out.result.status, 'found');
+});
+
+test('an unrecognised source string cannot smuggle page text into the export', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  const long = 'x'.repeat(200);
+  const [out] = exportableRecords([{ result: { status: 'found', source: long } }]);
+  assert.equal(out.result.source, 'other');
+});
+
+test('the site label comes from our allowlist, never from the page', async () => {
+  const { siteLabelFor } = await import('../src/lib/storage.js');
+  assert.equal(siteLabelFor('www.airbnb.com'), 'airbnb.com');
+  assert.equal(siteLabelFor('secure.booking.com'), 'booking.com');
+  // A host we never listed cannot introduce a new label.
+  assert.equal(siteLabelFor('airbnb.com.evil.example'), 'other');
+});
+
+test('dedup uses a hash, and the URL is not recoverable from a record', async () => {
+  const { urlKey } = await import('../src/lib/storage.js');
+  const a = urlKey('https://www.airbnb.com/rooms/12345');
+  assert.equal(a, urlKey('https://www.airbnb.com/rooms/12345'));
+  assert.notEqual(a, urlKey('https://www.airbnb.com/rooms/12346'));
+  assert.ok(!a.includes('airbnb'));
 });

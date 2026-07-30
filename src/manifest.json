@@ -10,9 +10,7 @@
     {
       "matches": [
         "*://*.booking.com/*",
-        "*://*.airbnb.com/*",
-        "*://*.airbnb.co.uk/*",
-        "*://*.airbnb.es/*"
+        "*://*.airbnb.com/*"
       ],
       "js": [
         "content.js"
@@ -29,9 +27,7 @@
       ],
       "matches": [
         "*://*.booking.com/*",
-        "*://*.airbnb.com/*",
-        "*://*.airbnb.co.uk/*",
-        "*://*.airbnb.es/*"
+        "*://*.airbnb.com/*"
       ]
     }
   ],
