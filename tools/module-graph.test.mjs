@@ -88,3 +88,28 @@ test('the popup imports only modules that exist and load', async () => {
   await assert.doesNotReject(() => import('../src/lib/geo.js'));
   await assert.doesNotReject(() => import('../src/lib/storage.js'));
 });
+
+test('every timing field the content script emits survives the export allowlist', () => {
+  // An allowlist fails CLOSED, which is what we want — but it fails closed SILENTLY, so renaming a
+  // field in the producer drops it with no error anywhere. That happened: `readinessUncertaintyMs`
+  // was split into `navigationDelayMs` and `probeDelayMs`, the allowlist kept the old name, and both
+  // new fields vanished on export. Nothing caught it — every test built its own fixtures, so only a
+  // record exported from a real browser ever showed it.
+  const content = readFileSync(join(SRC, 'content.js'), 'utf8');
+  const storage = readFileSync(join(SRC, 'lib/storage.js'), 'utf8');
+
+  const timingBlock = content.slice(content.indexOf('timing: {'), content.indexOf('provisional:'));
+  const emitted = [...timingBlock.matchAll(/^\s{8}([A-Za-z0-9_]+)[,:]/gm)].map((m) => m[1]);
+  assert.ok(emitted.length >= 3, `expected to find timing fields, found ${emitted.join(',')}`);
+
+  const allowBlock = storage.slice(
+    storage.indexOf('function exportableTiming'),
+    storage.indexOf('const KNOWN_REASONS'),
+  );
+  for (const field of emitted) {
+    assert.ok(
+      allowBlock.includes(`${field}:`),
+      `content.js emits timing.${field} but the export allowlist drops it`,
+    );
+  }
+});

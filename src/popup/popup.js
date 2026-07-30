@@ -157,6 +157,18 @@ async function render() {
     ),
   );
 
+  // WHY each tier gave up, shown whenever nothing was found. "No read" on its own tells the person
+  // holding the instrument nothing about whether the site is unreadable or the harness is broken,
+  // and they are the one who can tell the difference by looking at the page.
+  if (reading.result?.status !== 'found') {
+    const t1 = reading.tiers?.tier1Reason;
+    const t2 = reading.tiers?.tier2Reason;
+    const t3 = reading.tiers?.tier3Reason;
+    for (const [label, reason] of [['t1', t1], ['t2', t2], ['t3', t3]]) {
+      if (reason) readingEl.appendChild(el('div', `${label}: ${reason}`, 'muted'));
+    }
+  }
+
   const latency = reading.timing?.readingReadyMs;
   readingEl.appendChild(
     el(

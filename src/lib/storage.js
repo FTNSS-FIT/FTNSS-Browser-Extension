@@ -293,14 +293,58 @@ function exportableTiming(timing) {
     totalMs: asDuration(timing.totalMs),
     readingReadyMs: asDuration(timing.readingReadyMs),
     addressReadyMs: asDuration(timing.addressReadyMs),
-    readinessUncertaintyMs: asDuration(timing.readinessUncertaintyMs) ?? 0,
+    // These two were named `readinessUncertaintyMs` until they were split apart because they bound
+    // the true latency from opposite sides. The allowlist kept the OLD name, so both new fields were
+    // silently dropped on export and the report's straddle logic always saw zero.
+    //
+    // An allowlist fails CLOSED, which is the property we want — but it fails closed silently, so a
+    // producer that renames a field loses it with no error anywhere. Found by the first real record
+    // exported from a browser, not by any test, because every test built its own fixtures.
+    navigationDelayMs: asDuration(timing.navigationDelayMs) ?? 0,
+    probeDelayMs: asDuration(timing.probeDelayMs) ?? 0,
   };
 }
+
+/**
+ * The exact failure reasons the extractors may emit.
+ *
+ * These are OUR strings from a closed vocabulary, not page text — which is what makes them safe to
+ * export. Without them a miss is `not_found, not_found, not_found`, which is a record that something
+ * went wrong and no record of what: you cannot tell a site that publishes no structured data from
+ * one that publishes it without coordinates, and those call for completely different responses.
+ * Diagnosing the misses is most of what phase 1 is for.
+ */
+const KNOWN_REASONS = new Set([
+  'no ld+json blocks on page',
+  'ld+json present but none parsed',
+  'lodging type found, no usable geo',
+  'no lodging type in structured data',
+  'structured data described two different places',
+  'no elements to examine',
+  'no map url carried a usable coordinate',
+  'map urls disagreed about the location',
+  'no address-shaped text found',
+  'too many candidate elements to examine',
+  'all three tiers failed',
+  'structured data and map link disagreed about the location',
+  'page did not settle after navigation',
+]);
+
+const knownReason = (value) =>
+  typeof value === 'string' && KNOWN_REASONS.has(value) ? value : null;
 
 function exportableTiers(tiers) {
   if (tiers == null || typeof tiers !== 'object') return null;
   const tier = (value) => (TIER_STATUSES.has(value) ? value : 'not_found');
-  return { tier1: tier(tiers.tier1), tier2: tier(tiers.tier2), tier3: tier(tiers.tier3) };
+  return {
+    tier1: tier(tiers.tier1),
+    tier2: tier(tiers.tier2),
+    tier3: tier(tiers.tier3),
+    // Why each tier gave up. From the closed vocabulary above, never page text.
+    tier1Reason: knownReason(tiers.tier1Reason),
+    tier2Reason: knownReason(tiers.tier2Reason),
+    tier3Reason: knownReason(tiers.tier3Reason),
+  };
 }
 
 /**

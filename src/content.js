@@ -167,6 +167,12 @@
         tier1: extraction.tiers.tier1.status,
         tier2: extraction.tiers.tier2.status,
         tier3: extraction.tiers.tier3.status,
+        // Why each tier gave up. A miss that only says "not_found" three times records that
+        // something went wrong and nothing about what — and telling those cases apart is most of
+        // what this phase is for.
+        tier1Reason: extraction.tiers.tier1.reason ?? null,
+        tier2Reason: extraction.tiers.tier2.reason ?? null,
+        tier3Reason: extraction.tiers.tier3.reason ?? null,
       },
       timing: {
         totalMs: Math.round((performance.now() - started) * 100) / 100,
