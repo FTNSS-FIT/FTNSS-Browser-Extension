@@ -63,7 +63,7 @@ function summarise(rows, label) {
   // artifact would have driven the headline number down and read as a product failure. A record
   // with no latency is counted on correctness and reported separately as unmeasured, never
   // silently failed. (Codex review round 3, PR #1.)
-  const latencyOf = (r) => r.timing?.readyToPanelMs;
+  const latencyOf = (r) => r.timing?.readingReadyMs;
   // WORST CASE, not the flattering one: a polled detection can be up to one interval late, so the
   // measured latency understates the real one by `latencyUncertaintyMs`. Adding it before the
   // comparison means a panel that may really have taken longer than the budget is not counted as a
@@ -112,7 +112,7 @@ function summarise(rows, label) {
       `  3: ${pct(rows.filter((r) => r.tiers?.tier3 === 'found_address').length, total)}`,
   );
   console.log(
-    `  ready→panel  p50 ${quantile(readyTimes, 0.5)}ms   p95 ${quantile(readyTimes, 0.95)}ms   (budget ${LATENCY_BUDGET_MS}ms)`,
+    `  reading ready  p50 ${quantile(readyTimes, 0.5)}ms   p95 ${quantile(readyTimes, 0.95)}ms   (budget ${LATENCY_BUDGET_MS}ms)`,
   );
   console.log(
     `  extraction   p50 ${quantile(extractTimes, 0.5)}ms   p95 ${quantile(extractTimes, 0.95)}ms   (budget ${EXTRACT_BUDGET_MS}ms)`,

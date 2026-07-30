@@ -20,31 +20,7 @@
 import { toTransmittablePoint } from './geo.js';
 
 const KEY = 'phase1_records';
-const CURRENT_KEY = 'phase1_current_reading';
 const MAX_RECORDS = 500;
-
-/**
- * The reading for the page currently on screen, published by the content script and consumed by the
- * popup.
- *
- * It lives in SESSION storage, not local. This is the only place an exact coordinate exists at all,
- * and it exists only long enough for the popup to show it and compute a distance against ground
- * truth. Session storage is cleared when the browser closes, so the transient thing is stored
- * transiently rather than by convention. It is overwritten on every navigation and never enters a
- * saved record — `saveRecord` puts everything through the projection below.
- */
-export async function publishReading(reading) {
-  await chrome.storage.session.set({ [CURRENT_KEY]: { ...reading, publishedAt: Date.now() } });
-}
-
-export async function currentReading() {
-  const bag = await chrome.storage.session.get(CURRENT_KEY);
-  return bag?.[CURRENT_KEY] ?? null;
-}
-
-export async function clearCurrentReading() {
-  await chrome.storage.session.remove(CURRENT_KEY);
-}
 
 /**
  * The only sites this harness runs on. The stored label comes from here, so it is a value we chose
@@ -55,9 +31,10 @@ export const SITE_LABELS = [
   'booking.co.uk',
   'booking.fr',
   'booking.de',
-  ...['com','co.uk','fr','de','es','it','nl','pt','ca','com.au','ie','at','ch','be','dk','se','no','fi','pl','gr','cz','com.br','mx','jp'].map(
-    (tld) => `airbnb.${tld}`,
-  ),
+  ...[
+    'com','co.uk','fr','de','es','it','nl','pt','ca','com.au','ie','at','ch','be','dk','se','no',
+    'fi','pl','gr','cz','com.br','mx','jp',
+  ].map((tld) => `airbnb.${tld}`),
 ];
 
 /** Which family a label belongs to, for the headline per-site breakdown. */
@@ -79,13 +56,55 @@ export function siteLabelFor(hostname) {
   return matches.sort((a, b) => b.length - a.length)[0];
 }
 
-// NO URL-DERIVED VALUE IS PERSISTED, not even a hash. A 32-bit hash of a URL from one of two known
-// sites is not a one-way function in any useful sense — the candidate space is small enough to walk
-// — so storing one still left a reconstructable trail on disk. Cross-session dedup is not worth
-// that, so it is gone: recording the same listing twice in different sessions counts it twice, and
-// the person doing the measuring is working through a list and can avoid it. Double-clicking Save
-// on one page view is guarded in the panel, which is the realistic mistake.
-// (Codex review round 4, PR #1.)
+/**
+ * Publish the reading for the page on screen.
+ *
+ * It goes through the service worker rather than straight to storage, so the reading is keyed by a
+ * tab id the content script cannot choose. The projection here is not incidental: the popup used to
+ * receive the full extraction, which carried the page URL and, for a tier-3 read, the address text
+ * off the page — while the popup told the person no URL or page text was stored. Sending only what
+ * the popup renders makes the claim true at the source instead of relying on a later filter.
+ * (Codex review round 9, PR #1.)
+ */
+export async function publishReading(reading) {
+  const result = reading.result ?? null;
+  await chrome.runtime.sendMessage({
+    type: 'FTNSS_READING',
+    reading: {
+      site: reading.site,
+      // No `identity`, and no address text. The popup renders neither, and the surest way for a
+      // value not to leak is for it never to be sent.
+      result:
+        result == null
+          ? null
+          : {
+              status: result.status,
+              tier: result.tier ?? null,
+              precision: result.precision ?? null,
+              ...(result.status === 'found' ? { lat: result.lat, lon: result.lon } : {}),
+            },
+      tiers: reading.tiers,
+      timing: reading.timing,
+      softNavigation: reading.softNavigation,
+      domSettled: reading.domSettled,
+      latencyUncertaintyMs: reading.latencyUncertaintyMs,
+    },
+  });
+}
+
+/** The reading for the tab the person is looking at — never a global "last page published". */
+export async function currentReading() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id == null) return null;
+  const bag = await chrome.storage.session.get(`reading:${tab.id}`);
+  return bag?.[`reading:${tab.id}`] ?? null;
+}
+
+export async function clearCurrentReading() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id == null) return;
+  await chrome.storage.session.remove(`reading:${tab.id}`);
+}
 
 export async function loadRecords() {
   const bag = await chrome.storage.local.get(KEY);

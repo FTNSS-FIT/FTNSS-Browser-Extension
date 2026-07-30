@@ -36,8 +36,15 @@ A **hit** requires all three:
 1. A coordinate was extracted.
 2. It is **correct** — checked by the person against the address on the page. Within ~1km counts,
    because ~1km is the precision the product deliberately rounds to anyway.
-3. It arrived inside the budget: **800ms** from page-ready to panel-rendered, extraction **≤150ms**.
-   A correct read that arrives after the user has moved on is worth nothing.
+3. It arrived inside the budget: **800ms** from page-ready to the reading being available,
+   extraction **≤150ms**. A correct read that arrives after the user has moved on is worth nothing.
+
+   **What that clock does and does not include.** It measures the pipeline — page ready until a
+   reading exists — which is the latency the product's own panel would inherit. It does *not* include
+   how long the popup took to open, because the popup opens when the operator clicks it, and folding
+   that in would measure the person rather than the page. On a soft navigation the measurement can
+   also be up to one poll interval late, so the error bar is recorded per row and added before the
+   budget comparison.
 
 ## Why misses and wrongs are counted separately
 
@@ -126,7 +133,8 @@ The rule is absolute; the instrument changed instead.
 moment of recording, by the person looking at the page — which is when the evidence is best — but a
 disputed number cannot be re-litigated from the export.
 
-**On latency:** a soft navigation is noticed by polling, so the measurement can be up to one poll
-interval late and therefore understates the real latency. That error bar is recorded on each row and
-**added before the budget comparison**, so a panel is never counted as a hit on the strength of how
-it happened to be measured.
+**On the ~1km rounding:** the grid is latitude-aware. A fixed number of decimal places is only ~1km
+of longitude near the equator — it is about 380m at 70° and 190m at 80°, so a uniform-sounding
+guarantee was quietly weakest in the Nordic markets this extension already lists. The longitude step
+is now derived from the rounded latitude, giving cells about 1.1km across in both directions
+everywhere, and the grid is recomputable from the published coordinate alone.

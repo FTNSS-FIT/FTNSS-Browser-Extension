@@ -7,10 +7,34 @@
 // becomes a convention that mostly holds.
 
 /**
- * Transmission precision, in decimal places. Two places is ~1.1km of latitude — plenty to answer
- * "is there a gym near this hotel", uselessly coarse as a location trail.
+ * Target transmission precision, in kilometres. Roughly what 0.01° of LATITUDE is worth anywhere on
+ * Earth — plenty to answer "is there a gym near this hotel", uselessly coarse as a location trail.
  */
-export const TRANSMIT_DECIMALS = 2;
+export const TRANSMIT_KM = 1.11;
+
+/** Degrees of latitude per kilometre is very nearly constant; degrees of longitude are not. */
+const KM_PER_DEGREE_LATITUDE = 111.32;
+const LATITUDE_STEP = TRANSMIT_KM / KM_PER_DEGREE_LATITUDE; // ~0.01°
+
+/**
+ * How many degrees of longitude make up TRANSMIT_KM at this latitude.
+ *
+ * THIS IS THE WHOLE POINT OF THIS FUNCTION. Meridians converge toward the poles, so a fixed 0.01°
+ * of longitude is ~1.1km at the equator, ~380m at 70°, and ~190m at 80°. Rounding longitude to a
+ * fixed two decimal places therefore delivered about a kilometre of privacy in Lisbon and a few
+ * hundred metres in Tromsø — while the guarantee was stated, in the README and intended for the
+ * store listing, as though it were uniform. It was weakest exactly where nobody had checked.
+ *
+ * Norway, Sweden and Finland are on this extension's own site list, so this is not a polar edge
+ * case; it is a market we intend to serve. (Codex review round 9, PR #1.)
+ */
+function longitudeStepAt(latitude) {
+  const cos = Math.cos((latitude * Math.PI) / 180);
+  // Near the poles the step tends to infinity. Clamp to 1°, coarser than anything the product needs,
+  // which keeps the output finite and comparable.
+  if (cos < LATITUDE_STEP) return 1;
+  return Math.min(1, LATITUDE_STEP / cos);
+}
 
 /** A coordinate is only usable if it is a real number in range. Pages publish junk; some publish 0,0. */
 export function isUsableCoordinate(lat, lon) {
@@ -28,18 +52,24 @@ export function isUsableCoordinate(lat, lon) {
 }
 
 /**
- * Round toward ~1km. The ONLY function that may produce a coordinate for sending.
+ * Round to a grid whose cells are about TRANSMIT_KM across in BOTH directions, wherever on Earth the
+ * point is. The ONLY function that may produce a coordinate for sending.
  *
  * Truncation vs rounding: this rounds. Truncating biases every point toward the equator and prime
  * meridian, which over many samples is a signal in itself. Rounding does not.
+ *
+ * The longitude step is derived from the ALREADY-ROUNDED latitude, so the grid is reproducible from
+ * the output alone — anyone checking the claim can recompute it from the coordinate we published,
+ * without needing the input we started from.
  */
 export function toTransmittablePoint(lat, lon) {
   if (!isUsableCoordinate(lat, lon)) return null;
-  const f = 10 ** TRANSMIT_DECIMALS;
-  return {
-    lat: Math.round(lat * f) / f,
-    lon: Math.round(lon * f) / f,
-  };
+  const roundedLat = Math.round(lat / LATITUDE_STEP) * LATITUDE_STEP;
+  const lonStep = longitudeStepAt(roundedLat);
+  const roundedLon = Math.round(lon / lonStep) * lonStep;
+  // Trim floating-point noise. 6dp is far finer than any step above, so it never adds precision.
+  const trim = (n) => Math.round(n * 1e6) / 1e6;
+  return { lat: trim(roundedLat), lon: trim(roundedLon) };
 }
 
 /**

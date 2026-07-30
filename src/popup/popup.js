@@ -75,12 +75,16 @@ async function render() {
     ),
   );
 
-  const latency = reading.timing?.readyToPanelMs;
+  // NOT "time until the person saw it". The popup opens whenever it is clicked, which could be
+  // seconds later, and folding that in would measure the operator rather than the page. This is
+  // page-ready → reading available: the pipeline latency the product's own panel would inherit.
+  // (Codex review round 9, PR #1.)
+  const latency = reading.timing?.readingReadyMs;
   const worstCase = latency == null ? null : latency + (reading.latencyUncertaintyMs ?? 0);
   readingEl.appendChild(
     el(
       'div',
-      `extract ${reading.timing?.totalMs ?? '?'}ms · to-panel ${
+      `extract ${reading.timing?.totalMs ?? '?'}ms · reading ready ${
         worstCase == null ? 'unmeasured' : `≤${Math.round(worstCase)}ms`
       }`,
       worstCase != null && worstCase > 800 ? 'warn' : 'muted',

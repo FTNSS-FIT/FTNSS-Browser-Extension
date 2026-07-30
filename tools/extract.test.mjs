@@ -15,7 +15,33 @@ import { ldJsonDocument, linkDocument, fakeDocument, textNode } from './fake-dom
 // ─── geo ──────────────────────────────────────────────────────────────────────
 
 test('rounding reduces precision to ~1km', () => {
-  assert.deepEqual(toTransmittablePoint(38.711503, -9.128744), { lat: 38.71, lon: -9.13 });
+  const r = toTransmittablePoint(38.711503, -9.128744);
+  assert.ok(distanceMetres({ lat: 38.711503, lon: -9.128744 }, r) < 1110);
+});
+
+test('the ~1km guarantee holds at HIGH LATITUDES, not just near the equator', () => {
+  // A fixed 2dp longitude is ~1.1km at the equator but ~380m at 70 degrees and ~190m at 80 — so a
+  // uniform-sounding promise was weakest in exactly the Nordic markets this extension lists.
+  for (const lat of [0, 38.71, 51.5, 60, 69.65, 80, 85]) {
+    let worst = 0;
+    for (let i = 0; i < 200; i += 1) {
+      const point = { lat: lat + (i % 10) * 0.001, lon: 10 + i * 0.0009 };
+      const rounded = toTransmittablePoint(point.lat, point.lon);
+      worst = Math.max(worst, distanceMetres(point, rounded));
+    }
+    // Coarse enough to be a real guarantee everywhere...
+    assert.ok(worst > 100, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
+    // ...and not so coarse that the product stops working.
+    assert.ok(worst < 1200, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
+  }
+});
+
+test('the rounding grid is recomputable from the published point alone', () => {
+  // Someone checking our claim has only the output. Rounding an already-rounded point must be a
+  // no-op, or the grid they can derive is not the grid we used.
+  const once = toTransmittablePoint(69.6492, 18.9553);
+  const twice = toTransmittablePoint(once.lat, once.lon);
+  assert.deepEqual(twice, once);
 });
 
 test('rounding is the only way a point is produced, and it refuses junk', () => {
@@ -262,7 +288,9 @@ test('the export boundary re-rounds a coordinate the caller did not round', asyn
   const { exportableRecords } = await import('../src/lib/storage.js');
   // A caller handing over a full-precision point must not be able to put one in the record.
   const [out] = exportableRecords([{ transmitted: { lat: 38.711503, lon: -9.128744 } }]);
-  assert.deepEqual(out.transmitted, { lat: 38.71, lon: -9.13 });
+  assert.deepEqual(out.transmitted, toTransmittablePoint(38.711503, -9.128744));
+  // And it is genuinely coarser than what went in.
+  assert.ok(distanceMetres({ lat: 38.711503, lon: -9.128744 }, out.transmitted) > 0);
 });
 
 test('the export boundary rejects an unusable point rather than passing it through', async () => {

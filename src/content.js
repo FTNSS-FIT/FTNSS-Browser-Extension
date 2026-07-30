@@ -51,7 +51,7 @@
   }
 
   /** Resolve once the DOM has stopped changing, or once we give up waiting. */
-  function waitForStableDom({ quietMs = 300, maxMs = 5000 } = {}) {
+  function waitForStableDom({ quietMs = 300, maxMs = 5000, alreadyChanged = false } = {}) {
     return new Promise((resolve) => {
       let timer;
       let mutated = false;
@@ -68,7 +68,15 @@
         resolve({ settled: !hitCeiling, mutated });
       }
       observer.observe(document.documentElement, { childList: true, subtree: true });
-      // No initial quiet timer: settling requires positive evidence that something changed.
+      // Start the quiet timer ONLY when the change is already established. Without this, a soft
+      // navigation that completed before the poll noticed it produced no further mutations, so the
+      // wait ran to the full ceiling — five seconds added to the measured latency of exactly the
+      // FASTEST pages, which then failed the budget. The metric would have punished the sites that
+      // performed best. (Codex review round 9, PR #1.)
+      //
+      // Where nothing has changed yet, there is still no initial timer: settling then requires
+      // positive evidence that something moved.
+      if (alreadyChanged) timer = setTimeout(settle, quietMs);
     });
   }
 
@@ -82,7 +90,7 @@
 
     if (softNavigation) {
       const alreadyChanged = domSignature() !== lastSignature;
-      const stability = await waitForStableDom();
+      const stability = await waitForStableDom({ alreadyChanged });
       domSettled = stability.settled;
       if (myGeneration !== generation) return;
 
@@ -95,7 +103,7 @@
           identity: pageIdentity(location.href),
           result: { status: 'not_found', reason: 'page did not settle after navigation' },
           tiers: { tier1: 'not_found', tier2: 'not_found', tier3: 'not_found' },
-          timing: { totalMs: 0, readyToPanelMs: null },
+          timing: { totalMs: 0, readingReadyMs: null },
           softNavigation: true,
           domSettled: false,
           latencyUncertaintyMs,
@@ -129,7 +137,7 @@
         tier2: extraction.tiers.tier2.status,
         tier3: extraction.tiers.tier3.status,
       },
-      timing: { ...extraction.timing, readyToPanelMs: readyMs == null ? null : Math.round(readyMs) },
+      timing: { ...extraction.timing, readingReadyMs: readyMs == null ? null : Math.round(readyMs) },
       softNavigation,
       domSettled,
       latencyUncertaintyMs: softNavigation ? latencyUncertaintyMs : 0,
