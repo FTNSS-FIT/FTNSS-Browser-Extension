@@ -99,6 +99,13 @@ test('no extension UI is injected into the page', () => {
   for (const pattern of [/createElement/, /attachShadow/, /appendChild/, /\.style\b/]) {
     assert.ok(!pattern.test(content), `content script must not build UI: ${pattern}`);
   }
+
+  // The content script must not WRITE anywhere either. It answers questions; it does not publish.
+  // A stored reading is what allowed one listing's coordinates to be shown for another, and the
+  // cheapest way to keep that gone is to make storing impossible from here.
+  for (const pattern of [/chrome\.storage/, /sendMessage/]) {
+    assert.ok(!pattern.test(content), `content script must not publish state: ${pattern}`);
+  }
   const manifest = JSON.parse(readFileSync(join(SRC, 'manifest.json'), 'utf8'));
   const exposed = manifest.web_accessible_resources.flatMap((w) => w.resources);
   assert.ok(!exposed.some((r) => r.startsWith('panel/')), 'no panel is exposed to the page');

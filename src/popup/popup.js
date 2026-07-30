@@ -1,9 +1,13 @@
-// The recorder. This is browser-owned extension UI, NOT a panel injected into the listing page.
+// The recorder. Browser-owned extension UI, not a panel injected into the listing page.
 //
-// The page cannot hide it, cannot move it, cannot swallow its clicks, and cannot watch what is typed
-// into it. That matters most for the two things this UI is for: displaying the "could not read this
-// page" state, whose whole value is that its absence is not something a page can arrange, and taking
-// the person's verdict, which is the ground truth the entire measurement rests on.
+// The page cannot hide it, move it, swallow its clicks, or watch what is typed into it. That matters
+// for the two things it does: showing the "could not read this page" state, whose whole value is
+// that its absence cannot be arranged by the page, and taking the person's verdict, which is the
+// ground truth the entire measurement rests on.
+//
+// It reads the page ON OPEN. There is no stored reading to go stale, so there is nothing to
+// revalidate, no navigation to detect, and no window in which this can show one listing's
+// coordinates while another is on screen.
 //
 // No network request is made anywhere in this file.
 
@@ -12,32 +16,15 @@ import {
   clearRecords,
   saveRecord,
   exportableRecords,
-  currentReading,
-  clearCurrentReading,
+  readActivePage,
   currentCohort,
   setCurrentCohort,
   cohortRecordFor,
+  siteLabelFor,
   migrateAwayLocalCohort,
   SITE_LABELS,
 } from '../lib/storage.js';
 import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
-
-/**
- * Ground truth, parsed strictly.
- *
- * `Number()` turned "38.7115," into (38.7115, 0) — Null Island, silently — and accepted "91,0",
- * which is not a latitude. Both would have gone straight into the positional-error statistics as
- * though they were readings, corrupting the one number that tells us whether a correct-looking
- * coordinate is actually correct. Returns null for anything it cannot fully justify.
- * (Codex review round 13, PR #1.)
- */
-function parseGroundTruth(raw) {
-  const parts = raw.split(',');
-  if (parts.length !== 2) return null;
-  const lat = parseCoordinate(parts[0].trim());
-  const lon = parseCoordinate(parts[1].trim());
-  return isUsableCoordinate(lat, lon) ? { lat, lon } : null;
-}
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -51,9 +38,25 @@ function el(tag, text, className) {
   return node;
 }
 
+/**
+ * Ground truth, parsed strictly.
+ *
+ * `Number()` turned "38.7115," into (38.7115, 0) — Null Island, silently — and accepted "91,0",
+ * which is not a latitude. Both would have entered the positional-error statistics as though they
+ * were readings, corrupting the one number that says whether a correct-LOOKING coordinate is
+ * actually correct.
+ */
+function parseGroundTruth(raw) {
+  const parts = raw.split(',');
+  if (parts.length !== 2) return null;
+  const lat = parseCoordinate(parts[0].trim());
+  const lon = parseCoordinate(parts[1].trim());
+  return isUsableCoordinate(lat, lon) ? { lat, lon } : null;
+}
+
 function describe(result) {
   if (result?.status === 'found') {
-    // Two decimals for every classification. Three is ~100m, which is a precision claim, and no
+    // Two decimals whatever the classification. Three is ~100m, which is a precision claim, and no
     // read here has established that much.
     const tag = result.precision === 'approximate' ? 'approximate' : 'precision unverified';
     return `Tier ${result.tier} · ~${result.lat.toFixed(2)}, ${result.lon.toFixed(2)} · ${tag}`;
@@ -92,50 +95,18 @@ async function renderCohort() {
   return selected;
 }
 
-/**
- * Ask the content script whether its published reading still describes the page on screen.
- *
- * No permission is needed: the content script is already injected by the manifest on these hosts,
- * and messaging our own content script is not a new capability.
- */
-async function confirmCurrent() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id == null) return null;
-    return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_CONFIRM' });
-  } catch {
-    return null;
-  }
-}
-
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();
   const cohort = await renderCohort();
-  const reading = await currentReading();
 
-  // CONFIRM BEFORE DISPLAYING, not only before recording.
-  //
-  // Blocking the save was half the job: during the SPA-detection window the popup still SHOWED
-  // listing A's coordinates under the heading "Current page", which is a false statement to the
-  // person reading it. They would have gone and verified the wrong hotel — and the verdict they then
-  // formed is the ground truth this whole measurement rests on, so a display-only bug corrupts the
-  // result just as thoroughly as a recording one. (Codex review round 18, PR #1.)
-  if (reading != null) {
-    const confirmation = await confirmCurrent();
-    if (confirmation?.current !== true) {
-      readingEl.className = 'warn';
-      readingEl.textContent =
-        'This page changed since it was read. Reload or navigate again — nothing shown here would be current.';
-      await refreshCount();
-      return;
-    }
-  }
+  // Read the page as it is right now.
+  const reading = await readActivePage();
 
   if (reading == null) {
     readingEl.className = 'muted';
     readingEl.textContent =
-      'No reading for this page. Open a listing on a supported site, or reload the tab.';
+      'No reading for this page. Open a listing on one of the sites in the manifest, or reload the tab.';
     await refreshCount();
     return;
   }
@@ -157,39 +128,30 @@ async function render() {
     ),
   );
 
-  // The declared cohort is what gets recorded, so a mismatch would silently file this reading under
-  // the wrong site — which would corrupt the one comparison the phase exists to make. The check is
-  // done here, in the browser, and the detected value is never written anywhere.
-  const mismatch = cohort != null && reading.detectedSite !== 'other' && reading.detectedSite !== cohort;
-  if (mismatch) {
-    readingEl.appendChild(
-      el('div', `⚠ this page looks like ${reading.detectedSite}, not ${cohort}`, 'warn'),
-    );
-  }
-
-  // NOT "time until the person saw it". The popup opens whenever it is clicked, which could be
-  // seconds later, and folding that in would measure the operator rather than the page. This is
-  // page-ready → reading available: the pipeline latency the product's own panel would inherit.
-  // (Codex review round 9, PR #1.)
   const latency = reading.timing?.readingReadyMs;
-  const worstCase = latency == null ? null : latency + (reading.latencyUncertaintyMs ?? 0);
   readingEl.appendChild(
     el(
       'div',
       `extract ${reading.timing?.totalMs ?? '?'}ms · reading ready ${
-        worstCase == null ? 'unmeasured' : `≤${Math.round(worstCase)}ms`
+        latency == null ? 'unmeasured' : `${latency}ms`
       }`,
-      worstCase != null && worstCase > 800 ? 'warn' : 'muted',
+      latency != null && latency > 800 ? 'warn' : 'muted',
     ),
   );
-  if (reading.domSettled === false) {
-    readingEl.appendChild(el('div', '⚠ page had not settled', 'warn'));
+
+  // The declared cohort is what gets recorded, so a mismatch would file this reading under the wrong
+  // site and corrupt the one comparison this phase exists to make. Checked here, in the browser; the
+  // detected host is never written anywhere.
+  const detected = reading.detectedHost ? siteLabelFor(reading.detectedHost) : 'other';
+  const mismatch = cohort != null && detected !== 'other' && detected !== cohort;
+  if (mismatch) {
+    readingEl.appendChild(el('div', `⚠ this page looks like ${detected}, not ${cohort}`, 'warn'));
   }
 
   if (reading.provisional === true) {
-    // Still retrying. Shown, so the person knows the extension is working, but not recordable —
-    // pressing "Confirm no read" here would write a false miss for a page whose coordinates are
-    // about to appear.
+    // Still working out whether the page is readable. Shown, so the operator knows the extension is
+    // alive, and not recordable — "no read" here would write a false miss for a page whose
+    // coordinates are about to appear.
     readingEl.appendChild(el('div', 'still reading this page…', 'muted'));
     await refreshCount();
     return;
@@ -207,14 +169,14 @@ async function render() {
       ['Area', 'area'],
       ['Unclear', 'unclear'],
     ]) {
-      const b = el('button', label);
-      b.addEventListener('click', () => {
+      const button = el('button', label);
+      button.addEventListener('click', () => {
         precisionVerdict = value;
         for (const other of buttons) other.className = '';
-        b.className = 'primary';
+        button.className = 'primary';
       });
-      buttons.push(b);
-      row.appendChild(b);
+      buttons.push(button);
+      row.appendChild(button);
     }
     controlsEl.appendChild(row);
   }
@@ -236,7 +198,6 @@ async function render() {
     }
     if (verdict === 'not_a_listing') {
       // A dismissal, not a datum — a non-listing must not enter the denominator.
-      await clearCurrentReading();
       await render();
       return;
     }
@@ -246,8 +207,8 @@ async function render() {
     if (raw && hasCoordinate) {
       const groundTruth = parseGroundTruth(raw);
       if (groundTruth == null) {
-        // Refuse VISIBLY rather than dropping it. Silently ignoring unparseable input means the
-        // person believes they supplied ground truth and the statistics quietly disagree.
+        // Refuse VISIBLY. Silently ignoring unparseable input means the person believes they
+        // supplied ground truth while the statistics quietly disagree.
         statusEl.replaceChildren(
           el('span', 'Ground truth must be "lat, lon" and in range — nothing recorded.', 'warn'),
         );
@@ -258,54 +219,15 @@ async function render() {
       );
     }
 
-    // RE-READ AND REVALIDATE before writing anything.
-    //
-    // `reading` was captured when the popup rendered. A popup can stay open across a soft
-    // navigation, and the controls rendered for listing A remained live and clickable after the
-    // person had moved to listing B — so a verdict meant for B could be written against A's
-    // coordinates. Session storage being invalidated did not help, because the closure still held
-    // the old object. Check that the reading is still there AND still the same one.
-    // (Codex review round 12, PR #1.)
-    // Confirm AGAIN at record time. Rendering may have happened seconds ago; the person may have
-    // navigated while deciding. Re-reading storage cannot detect a navigation the content script has
-    // not noticed yet — the stale reading IS what gets re-read — so only the content script can
-    // answer, and it answers with a boolean. If it cannot be reached, the page is not one we measure
-    // and nothing should be recorded against it. (Codex review round 16, PR #1.)
-    const confirmation = await confirmCurrent();
-    if (confirmation?.current !== true) {
-      statusEl.replaceChildren(
-        el('span', 'This page is no longer the one that was read — nothing recorded.', 'warn'),
-      );
-      await render();
-      return;
-    }
-
-    const live = await currentReading();
-    if (
-      live == null ||
-      live.publishedAt !== reading.publishedAt ||
-      live.navigationId !== reading.navigationId ||
-      live.documentId !== reading.documentId
-    ) {
-      statusEl.replaceChildren(
-        el('span', 'This page changed since the reading — nothing recorded.', 'warn'),
-      );
-      await render();
-      return;
-    }
-
     try {
       await saveRecord({
         // The family and variant the operator DECLARED — never a hostname.
         ...cohortRecordFor(cohort),
-        // Date only. A precise time beside a site label is the makings of a browsing log, and nothing
-        // in the report groups more finely than a day.
+        // Date only. A precise time beside a site label is the makings of a browsing log, and
+        // nothing in the report groups more finely than a day.
         recordedAt: new Date().toISOString().slice(0, 10),
         verdict,
         precisionVerdict,
-        softNavigation: reading.softNavigation === true,
-        domSettled: reading.domSettled !== false,
-        latencyUncertaintyMs: reading.latencyUncertaintyMs ?? 0,
         timing: reading.timing,
         tiers: reading.tiers,
         errorMetres,
@@ -319,11 +241,8 @@ async function render() {
       return;
     }
 
-    // Clearing the reading is also the dedup: one record per page view, and the popup then reports
-    // that there is nothing to record until the next navigation republishes.
-    await clearCurrentReading();
     statusEl.replaceChildren(el('span', `Recorded: ${verdict}`, 'ok'));
-    await render();
+    await refreshCount();
   }
 
   const options = hasCoordinate
@@ -340,9 +259,9 @@ async function render() {
 
   const row = el('div', null, 'row');
   for (const [label, verdict, primary] of options) {
-    const b = el('button', label, primary ? 'primary' : null);
-    b.addEventListener('click', () => void record(verdict));
-    row.appendChild(b);
+    const button = el('button', label, primary ? 'primary' : null);
+    button.addEventListener('click', () => void record(verdict));
+    row.appendChild(button);
   }
   controlsEl.appendChild(row);
 

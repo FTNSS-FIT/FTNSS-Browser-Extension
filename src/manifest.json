@@ -85,8 +85,5 @@
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "FTNSS measurement harness"
-  },
-  "background": {
-    "service_worker": "background.js"
   }
 }

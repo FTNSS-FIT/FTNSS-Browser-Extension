@@ -117,21 +117,32 @@ It shares **contracts, not code**: the design tokens, the address and country-co
 the endpoint. Those were settled across several applications, and a new surface reinventing them is
 how the same bug lands a fourth time.
 
-## 10. The measurement UI lives in the extension, not in the page
+## 10. The UI lives in the extension, and the page is read ON DEMAND
 
-The phase 1 harness renders nothing into the listing page. The content script reads the page and
-publishes what it read; the recorder is the extension popup.
+The harness renders nothing into the listing page, and it stores no reading between navigations. The
+popup asks the content script to read the page at the moment it opens.
 
-**Why.** A panel mounted in the page sits in a document the page controls, so the page can hide it,
-move it, swallow its clicks, or observe what is typed into it. The two things that UI exists for are
-displaying "we could not read this page" — whose entire value is that its absence cannot be
-arranged by the page — and capturing the person's verdict, which is the ground truth the whole
-measurement rests on. Neither can live somewhere the subject of the measurement can interfere with.
+**Why the UI is not in the page.** A panel mounted in the page sits in a document the page controls,
+so the page can hide it, move it, swallow its clicks, or observe what is typed into it. The two
+things that UI exists for are displaying "we could not read this page" — whose entire value is that
+its absence cannot be arranged by the page — and capturing the person's verdict, which is the ground
+truth the whole measurement rests on. Neither can live where the subject of the measurement can
+interfere.
 
-Three separate review rounds each found a different way to subvert an in-page panel: remove the host
-element, plant a decoy carrying its id, hide it with CSS. Each fix was sound and each was answered by
-a new variant, because the problem was structural rather than a series of oversights. Browser-owned
-UI is not a hardening of that design; it is the design that does not have the problem.
+**Why the reading is taken on demand.** The earlier design published readings into shared storage for
+the popup to collect later, which made it possible for a stored reading to describe a page the person
+had already left. Booking and Airbnb are both `pushState` applications: the URL changes with no page
+load and no reliable event. Polling, mutation observers, DOM fingerprints, document ids, sequence
+numbers and service-worker navigation epochs were each tried; each closed one gap and opened another,
+and the failure was always the same — listing A's coordinates presented as listing B's.
+
+Reading on demand removes the question rather than answering it. The reading is taken milliseconds
+before it is shown, from the page on screen. It cannot go stale because it does not exist until it is
+needed. This deleted the service worker, all the navigation state, and roughly 1,000 lines.
+
+**What remains** is a small navigation signal governing one timer — how long until the page became
+readable. If it is wrong, a latency is reported as unmeasured. It can no longer misattribute a
+coordinate, which is the property that matters.
 
 ## 11. The site is DECLARED by the operator, not derived from the page
 

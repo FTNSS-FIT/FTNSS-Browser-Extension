@@ -1,17 +1,20 @@
-// Local measurement storage.
+// Local measurement storage — the recorded verdicts, and the operator's declared cohort.
 //
 // NO PAGE IDENTIFIER IS STORED. Not the URL, not the hostname, not the address text.
 //
 // An earlier version kept the URL so a disputed reading could be re-checked against the listing it
-// came from, and argued the case as a bounded exception. That was wrong twice over: it put a
-// browsing trail on disk, and the way it was defended — by writing a carve-out into the rules file —
-// disarmed the reviewer that would have caught the next one. The rule is absolute; the instrument
-// had to change instead. (Codex review round 3, PR #1.)
+// came from, and argued the case as a bounded exception written into the rules file. That was wrong
+// twice over: it put a browsing trail on disk, and changing the rules to permit it would have
+// disarmed the reviewer for every later change. The rule is absolute; the instrument changed.
 //
-// What replaced it:
-//   • nothing derived from the URL is persisted at all, not even a hash (see below);
-//   • the site is a label chosen from OUR OWN allowlist, not `location.hostname`, so no page can put
-//     text into it;
+// There is also no "current reading" here any more. Readings used to be published into session
+// storage for the popup to collect, which is what made a reading able to describe a page you had
+// already left. The popup now asks the content script to read the page at the moment it opens, so a
+// reading exists only for as long as it takes to display it.
+//
+// What survives:
+//   • nothing derived from the URL is persisted, not even a hash;
+//   • the cohort is DECLARED by the operator and stored as a family and a variant, never a hostname;
 //   • the projection is applied when a record is WRITTEN, not when it is exported, so the trail
 //     never exists on disk in the first place;
 //   • that projection is a strict ALLOWLIST. A denylist fails open — it protects only the fields
@@ -54,60 +57,6 @@ export function siteLabelFor(hostname) {
   );
   if (matches.length === 0) return 'other';
   return matches.sort((a, b) => b.length - a.length)[0];
-}
-
-/**
- * Publish the reading for the page on screen.
- *
- * It goes through the service worker rather than straight to storage, so the reading is keyed by a
- * tab id the content script cannot choose. The projection here is not incidental: the popup used to
- * receive the full extraction, which carried the page URL and, for a tier-3 read, the address text
- * off the page — while the popup told the person no URL or page text was stored. Sending only what
- * the popup renders makes the claim true at the source instead of relying on a later filter.
- * (Codex review round 9, PR #1.)
- */
-export async function publishReading(reading) {
-  const result = reading.result ?? null;
-  await chrome.runtime.sendMessage({
-    type: 'FTNSS_READING',
-    // Which navigation this reading belongs to. Within one document nothing else can tell listing A
-    // apart from listing B, and a reading from a superseded navigation is stale however promptly it
-    // arrives.
-    seq: reading.seq,
-    reading: {
-      // The detected site is sent so the popup can WARN when it disagrees with the cohort the
-      // operator declared. It is never persisted — see COHORTS below.
-      detectedSite: reading.site,
-      // No `identity`, and no address text. The popup renders neither, and the surest way for a
-      // value not to leak is for it never to be sent.
-      result:
-        result == null
-          ? null
-          : {
-              status: result.status,
-              tier: result.tier ?? null,
-              precision: result.precision ?? null,
-              ...(result.status === 'found' ? { lat: result.lat, lon: result.lon } : {}),
-            },
-      tiers: reading.tiers,
-      timing: reading.timing,
-      provisional: reading.provisional,
-      softNavigation: reading.softNavigation,
-      domSettled: reading.domSettled,
-      latencyUncertaintyMs: reading.latencyUncertaintyMs,
-    },
-  });
-}
-
-/**
- * Drop the tab's reading immediately, without waiting to publish a replacement.
- *
- * Called the moment a soft navigation is detected. Remeasuring is asynchronous and a soft navigation
- * fires no browser-level load event, so without this the previous listing's reading stayed live —
- * and recordable — for as long as the settle wait took.
- */
-export async function invalidateReading(seq) {
-  await chrome.runtime.sendMessage({ type: 'FTNSS_INVALIDATE', seq });
 }
 
 /**
@@ -167,18 +116,26 @@ export async function migrateAwayLocalCohort() {
   await chrome.storage.local.remove(COHORT_KEY);
 }
 
-/** The reading for the tab the person is looking at — never a global "last page published". */
-export async function currentReading() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id == null) return null;
-  const bag = await chrome.storage.session.get(`reading:${tab.id}`);
-  return bag?.[`reading:${tab.id}`] ?? null;
-}
-
-export async function clearCurrentReading() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab?.id == null) return;
-  await chrome.storage.session.remove(`reading:${tab.id}`);
+/**
+ * Ask the content script in the active tab to read the page NOW.
+ *
+ * This replaced a stored "current reading". The stored version is what allowed a reading to describe
+ * a page the person had already navigated away from, and no amount of navigation tracking closed
+ * that reliably — reading on demand makes the question moot, because the reading is taken
+ * milliseconds before it is shown.
+ *
+ * No permission is needed: the content script is already injected by the manifest on these hosts,
+ * and messaging our own content script is not a new capability. Returns null when there is no
+ * content script to answer — which is the correct answer for a page we do not measure.
+ */
+export async function readActivePage() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id == null) return null;
+    return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_READ' });
+  } catch {
+    return null;
+  }
 }
 
 export async function loadRecords() {
