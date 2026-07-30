@@ -144,8 +144,8 @@ summarise(records, 'ALL SITES');
 
 const bySite = new Map();
 for (const r of records) {
-  // `site` is already a label from our own allowlist, not a hostname read off the page.
-  const family = String(r.site || 'unknown');
+  // The cohort the operator declared — not a hostname read off the page.
+  const family = String(r.cohort || 'unknown');
   if (!bySite.has(family)) bySite.set(family, []);
   bySite.get(family).push(r);
 }

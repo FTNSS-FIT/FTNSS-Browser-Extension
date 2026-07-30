@@ -231,7 +231,7 @@ test('the export is an allowlist — a field added later is withheld, not shippe
   const { exportableRecords } = await import('../src/lib/storage.js');
   const [out] = exportableRecords([
     {
-      site: 'airbnb.com',
+      cohort: 'airbnb.com',
       verdict: 'correct',
       timing: { totalMs: 12 },
       // None of these may survive. The first three are the fields the harness must never emit;
@@ -245,7 +245,7 @@ test('the export is an allowlist — a field added later is withheld, not shippe
     },
   ]);
 
-  assert.deepEqual(Object.keys(out).sort(), ['result', 'site', 'timing', 'verdict']);
+  assert.deepEqual(Object.keys(out).sort(), ['cohort', 'result', 'timing', 'verdict']);
   // A coordinate is a location. The report is computed from verdicts, so it never needs one.
   assert.equal(out.result.lat, undefined);
   assert.equal(out.result.lon, undefined);
@@ -257,6 +257,14 @@ test('an unrecognised source string cannot smuggle page text into the export', a
   const long = 'x'.repeat(200);
   const [out] = exportableRecords([{ result: { status: 'found', source: long } }]);
   assert.equal(out.result.source, 'other');
+});
+
+test('a page-derived site value can never reach an exported record', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  const [out] = exportableRecords([{ cohort: 'booking.com', site: 'evil.example', detectedSite: 'x' }]);
+  assert.equal(out.cohort, 'booking.com');
+  assert.equal(out.site, undefined);
+  assert.equal(out.detectedSite, undefined);
 });
 
 test('the site label comes from our allowlist, never from the page', async () => {

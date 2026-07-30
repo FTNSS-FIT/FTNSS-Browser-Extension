@@ -71,7 +71,9 @@ export async function publishReading(reading) {
   await chrome.runtime.sendMessage({
     type: 'FTNSS_READING',
     reading: {
-      site: reading.site,
+      // The detected site is sent so the popup can WARN when it disagrees with the cohort the
+      // operator declared. It is never persisted — see COHORTS below.
+      detectedSite: reading.site,
       // No `identity`, and no address text. The popup renders neither, and the surest way for a
       // value not to leak is for it never to be sent.
       result:
@@ -90,6 +92,32 @@ export async function publishReading(reading) {
       latencyUncertaintyMs: reading.latencyUncertaintyMs,
     },
   });
+}
+
+/**
+ * THE COHORT THE OPERATOR DECLARED, and the only site value that is ever persisted.
+ *
+ * The per-site comparison is the point of this phase — Booking against Airbnb is why those two were
+ * chosen — so it has to survive. But deriving that label from `location.hostname` and writing it
+ * into an exported file makes the file a record of which domains were visited, which is the thing
+ * this project's rules say never leaves the browser. Both were true at once, and the review kept
+ * saying so, correctly.
+ *
+ * The operator declares which site they are measuring before they start. That preserves the whole
+ * analysis and is not page-derived at all. Accuracy is protected without weakening it: the content
+ * script still reports what it detected, the popup WARNS if the two disagree, and that detected
+ * value stays in session storage and is never written to a record. (Codex review round 10, PR #1.)
+ */
+const COHORT_KEY = 'phase1_cohort';
+
+export async function currentCohort() {
+  const bag = await chrome.storage.local.get(COHORT_KEY);
+  return typeof bag?.[COHORT_KEY] === 'string' ? bag[COHORT_KEY] : null;
+}
+
+export async function setCurrentCohort(cohort) {
+  if (!SITE_LABELS.includes(cohort)) throw new Error('unknown cohort');
+  await chrome.storage.local.set({ [COHORT_KEY]: cohort });
 }
 
 /** The reading for the tab the person is looking at — never a global "last page published". */
@@ -142,7 +170,7 @@ export async function clearRecords() {
  * Every entry here is either a number we computed or a value chosen from our own vocabulary.
  */
 const EXPORT_FIELDS = [
-  'site', // from SITE_LABELS, never location.hostname
+  'cohort', // declared by the operator; never derived from the page
   'recordedAt',
   'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and
                  // already within the privacy envelope the product itself operates in

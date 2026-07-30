@@ -127,20 +127,25 @@ element, plant a decoy carrying its id, hide it with CSS. Each fix was sound and
 a new variant, because the problem was structural rather than a series of oversights. Browser-owned
 UI is not a hardening of that design; it is the design that does not have the problem.
 
-## 11. The site a reading came from is recorded
+## 11. The site is DECLARED by the operator, not derived from the page
 
-Each record carries which of the listed domains it came from, matched from the extension's own
-allowlist rather than read off the page.
+Each record carries which site was being measured. That value is chosen by the person doing the
+measuring, before they start — it is never read from the page.
 
-This was raised as a privacy concern three times during review and is a deliberate decision, taken by
-the founder rather than by an engineer. The per-site comparison **is** the measurement — the two
-sites were chosen precisely because they are structurally different, and the country-code-domain
-question cannot be answered without knowing which domain a reading came from. Removing the field
-would not make the harness more private so much as stop it being an instrument.
+**Why it exists at all.** The per-site comparison *is* the measurement. The two sites were chosen
+precisely because they are structurally different, and the country-code-domain question cannot be
+answered without knowing which domain a reading came from. Dropping the field would not make the
+harness more private so much as stop it being an instrument.
 
-What bounds it: the value comes from a fixed allowlist on an extension that only runs on those
-domains, so it discloses approximately what installing it already does; and timestamps are date-only,
-so there is no time-correlated trail beside it.
+**Why it is declared rather than detected.** Deriving it from the page's hostname and writing it into
+an exported file makes that file a record of which domains were visited — the thing this project's
+rules say never leaves the browser. Both were true at once: the analysis was necessary and the
+provenance was wrong. Declaring it keeps the entire analysis with nothing page-derived persisted.
+
+**Accuracy is not traded away for it.** The content script still reports what it detected, and the
+popup refuses to record while the declared cohort disagrees with the detected page. That check runs
+in the browser and the detected value is never written to a record — so a mislabelled cohort is
+caught without the label ever being page-derived.
 
 ---
 

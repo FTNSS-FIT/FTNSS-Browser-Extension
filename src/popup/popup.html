@@ -15,11 +15,16 @@
   .warn { color: #ffb26b; }
   .ok { color: #7ee08a; }
   hr { border: 0; border-top: 1px solid #2c3038; margin: 14px 0 10px; }
+  select { font: inherit; width: 100%; background: #0e1013; color: #f2f3f5;
+           border: 1px solid #3a4049; border-radius: 6px; padding: 5px 7px; }
   input { font: inherit; width: 100%; box-sizing: border-box; margin-top: 6px; background: #0e1013;
           color: #f2f3f5; border: 1px solid #3a4049; border-radius: 6px; padding: 5px 7px; }
 </style>
 
-<h1>Current page</h1>
+<h1>Measuring</h1>
+<div id="cohort"></div>
+
+<h1 style="margin-top:14px">Current page</h1>
 <div id="reading" class="muted">Loading…</div>
 <div id="controls"></div>
 <div id="status" class="row"></div>
@@ -34,6 +39,7 @@
 </div>
 <p class="muted">
   Saves to your machine; nothing is ever transmitted. Records carry verdicts, tiers, timings and the
-  ~1km point the product would send — no URL, hostname path, address or page text is stored.
+  ~1km point the product would send, and the site you declared above — no URL, hostname, address or
+  page text is stored.
 </p>
 <script type="module" src="popup.js"></script>

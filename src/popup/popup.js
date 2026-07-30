@@ -14,6 +14,9 @@ import {
   exportableRecords,
   currentReading,
   clearCurrentReading,
+  currentCohort,
+  setCurrentCohort,
+  SITE_LABELS,
 } from '../lib/storage.js';
 import { toTransmittablePoint, distanceMetres } from '../lib/geo.js';
 
@@ -45,9 +48,35 @@ async function refreshCount() {
   countEl.textContent = `${records.length} recorded`;
 }
 
+async function renderCohort() {
+  const cohortEl = document.getElementById('cohort');
+  cohortEl.replaceChildren();
+  const selected = await currentCohort();
+
+  const select = document.createElement('select');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = 'Choose the site you are measuring…';
+  select.appendChild(blank);
+  for (const label of SITE_LABELS) {
+    const option = document.createElement('option');
+    option.value = label;
+    option.textContent = label;
+    if (label === selected) option.selected = true;
+    select.appendChild(option);
+  }
+  select.addEventListener('change', async () => {
+    if (select.value) await setCurrentCohort(select.value);
+    await render();
+  });
+  cohortEl.appendChild(select);
+  return selected;
+}
+
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();
+  const cohort = await renderCohort();
   const reading = await currentReading();
 
   if (reading == null) {
@@ -68,12 +97,22 @@ async function render() {
   readingEl.appendChild(
     el(
       'div',
-      `${reading.site}   t1 ${t.tier1 === 'found' ? '✓' : '·'}  t2 ${t.tier2 === 'found' ? '✓' : '·'}  t3 ${
+      `t1 ${t.tier1 === 'found' ? '✓' : '·'}  t2 ${t.tier2 === 'found' ? '✓' : '·'}  t3 ${
         t.tier3 === 'found_address' ? '✓' : '·'
       }`,
       'muted',
     ),
   );
+
+  // The declared cohort is what gets recorded, so a mismatch would silently file this reading under
+  // the wrong site — which would corrupt the one comparison the phase exists to make. The check is
+  // done here, in the browser, and the detected value is never written anywhere.
+  const mismatch = cohort != null && reading.detectedSite !== 'other' && reading.detectedSite !== cohort;
+  if (mismatch) {
+    readingEl.appendChild(
+      el('div', `⚠ this page looks like ${reading.detectedSite}, not ${cohort}`, 'warn'),
+    );
+  }
 
   // NOT "time until the person saw it". The popup opens whenever it is clicked, which could be
   // seconds later, and folding that in would measure the operator rather than the page. This is
@@ -123,6 +162,16 @@ async function render() {
   if (hasCoordinate) controlsEl.appendChild(truth);
 
   async function record(verdict) {
+    if (cohort == null) {
+      statusEl.replaceChildren(el('span', 'Choose the site you are measuring first.', 'warn'));
+      return;
+    }
+    if (mismatch) {
+      statusEl.replaceChildren(
+        el('span', 'Cohort does not match this page — fix it before recording.', 'warn'),
+      );
+      return;
+    }
     if (verdict === 'not_a_listing') {
       // A dismissal, not a datum — a non-listing must not enter the denominator.
       await clearCurrentReading();
@@ -142,7 +191,8 @@ async function render() {
     }
 
     await saveRecord({
-      site: reading.site,
+      // The cohort the operator DECLARED — never the hostname the page happens to have.
+      cohort,
       // Date only. A precise time beside a site label is the makings of a browsing log, and nothing
       // in the report groups more finely than a day.
       recordedAt: new Date().toISOString().slice(0, 10),

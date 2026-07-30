@@ -86,15 +86,18 @@ Load `src/` as an unpacked extension. There is no build step and no dependencies
 written, which is also the easiest thing to audit.
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
-2. Browse listings. **Open the toolbar popup on each one** — that is the recorder. It shows what was
+2. In the popup, **choose the site you are measuring**. That declaration is what gets recorded; the
+   site is never read off the page. If the page you are on disagrees with it, the popup says so and
+   refuses to record until you fix it.
+3. Browse listings. **Open the toolbar popup on each one** — that is the recorder. It shows what was
    read and takes your verdict.
 
    The popup, not an in-page panel: the page cannot hide it, click-jack it, or watch what you type
    into it, which matters because it displays the "could not read this page" state and captures the
    ground truth the whole measurement rests on. Press **Not a listing** on search and help pages; it
    records nothing and enters no denominator.
-3. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
-4. `npm run report measurements/<file>.json`
+4. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
+5. `npm run report measurements/<file>.json`
 
 The recorder re-reads the page when you navigate between listings without a reload, and each reading
 is bound to the URL it was taken on — so a verdict can never be attributed to a listing you have
@@ -114,7 +117,8 @@ Deliberately, **no page identifier**: not the URL, not the hostname, not the add
   short list of sites is walkable, so cross-session dedup was dropped rather than kept as a token
   gesture. Recording the same listing in two sessions counts it twice; the panel guards the
   realistic mistake, which is a double click on one page view.
-- The site is a label chosen from the harness's own allowlist, not read off the page.
+- The site is **declared by the operator**, not derived from the page. Nothing hostname-derived is
+  ever persisted or exported.
 - **The projection is applied when a record is written**, not when it is exported, so the trail never
   exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
   decides it belongs, where a denylist protects only the fields somebody remembered.
