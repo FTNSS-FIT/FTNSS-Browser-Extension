@@ -259,26 +259,26 @@ test('an unrecognised source string cannot smuggle page text into the export', a
   assert.equal(out.result.source, 'other');
 });
 
-test('nothing about the site reaches an exported record — not even a coarse label', async () => {
-  const { exportableRecords } = await import('../src/lib/storage.js');
+test('the harness records family and variant, and never a hostname', async () => {
+  const { exportableRecords, cohortRecordFor } = await import('../src/lib/storage.js');
+  // DECISIONS 11: the harness labels its own operator's browsing, which the product never will. What
+  // it must still never carry is a hostname — `airbnb` is a cohort, `airbnb.jp` is a location.
   const [out] = exportableRecords([
-    {
-      verdict: 'correct',
-      // Every shape this has taken across the review, all of which must now be dropped. The last
-      // pair looked anonymous and was not: recording is refused unless the declared cohort matches
-      // the page, so `airbnb`+`primary` plus a date proves a visit to airbnb.com that day.
-      site: 'airbnb.jp',
-      cohort: 'airbnb.jp',
-      detectedSite: 'airbnb.jp',
-      family: 'airbnb',
-      variant: 'primary',
-    },
+    { verdict: 'correct', ...cohortRecordFor('airbnb.jp'), site: 'airbnb.jp', detectedSite: 'airbnb.jp' },
   ]);
-  assert.deepEqual(Object.keys(out).sort(), ['result', 'verdict']);
+  assert.equal(out.family, 'airbnb');
+  assert.equal(out.variant, 'cctld');
   const serialised = JSON.stringify(out);
-  for (const leak of ['airbnb', 'booking', '.jp', '.com', 'primary', 'cctld']) {
+  for (const leak of ['.jp', '.com', '.co.uk', 'http']) {
     assert.ok(!serialised.includes(leak), `exported record leaked "${leak}"`);
   }
+});
+
+test('the ccTLD question is answerable without naming the country', async () => {
+  const { cohortRecordFor } = await import('../src/lib/storage.js');
+  assert.deepEqual(cohortRecordFor('airbnb.com'), { family: 'airbnb', variant: 'primary' });
+  assert.deepEqual(cohortRecordFor('airbnb.co.uk'), { family: 'airbnb', variant: 'cctld' });
+  assert.deepEqual(cohortRecordFor('booking.de'), { family: 'booking', variant: 'cctld' });
 });
 
 test('the site label comes from our allowlist, never from the page', async () => {

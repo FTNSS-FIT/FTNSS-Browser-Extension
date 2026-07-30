@@ -82,55 +82,11 @@ async function refreshCount() {
   countEl.textContent = `${records.length} recorded`;
 }
 
-async function renderCohort() {
-  const cohortEl = document.getElementById('cohort');
-  cohortEl.replaceChildren();
-  const selected = await currentCohort();
-
-  const select = document.createElement('select');
-  const blank = document.createElement('option');
-  blank.value = '';
-  blank.textContent = 'Choose the site you are measuring…';
-  select.appendChild(blank);
-  for (const label of SITE_LABELS) {
-    const option = document.createElement('option');
-    option.value = label;
-    option.textContent = label;
-    if (label === selected) option.selected = true;
-    select.appendChild(option);
-  }
-  select.addEventListener('change', async () => {
-    if (select.value) await setCurrentCohort(select.value);
-    await render();
-  });
-  cohortEl.appendChild(select);
-  return selected;
-}
-
-/** Bounded re-checks while a reading is provisional. ~8 seconds, then it stops and says so. */
-let pollsRemaining = 20;
-
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();
-  const cohort = await renderCohort();
-
   // Read the page as it is right now.
   const reading = await readActivePage();
-
-  // Records outlive a browser restart; the batch label does not, because it is session-scoped so no
-  // site string is ever written to disk. That combination would let a new cohort's readings be mixed
-  // into an old batch that can no longer be identified — so recording stops until the batch is
-  // exported and cleared. Exporting still works, which is the way out. (Codex review round 22, PR #1.)
-  const orphanedBatch = (await loadRecords()).length > 0 && (await batchCohortLabel()) == null;
-  if (orphanedBatch) {
-    readingEl.className = 'warn';
-    readingEl.textContent =
-      'There are records from a previous session whose cohort label is gone. Export and clear them before recording more.';
-    controlsEl.replaceChildren();
-    await refreshCount();
-    return;
-  }
 
   if (reading == null) {
     readingEl.className = 'muted';
@@ -180,14 +136,13 @@ async function render() {
     ),
   );
 
-  // The declared cohort is what gets recorded, so a mismatch would file this reading under the wrong
-  // site and corrupt the one comparison this phase exists to make. Checked here, in the browser; the
-  // detected host is never written anywhere.
+  // DETECTED, not declared. Asking the operator to select the site, then export, clear and switch
+  // between sites, was the most error-prone part of the protocol — every step a chance to mislabel
+  // or lose a batch — and an instrument whose workflow is annoying produces worse data than one
+  // whose workflow is boring. The page already knows which site it is. (DECISIONS 11.)
   const detected = reading.detectedHost ? siteLabelFor(reading.detectedHost) : 'other';
-  const mismatch = cohort != null && detected !== 'other' && detected !== cohort;
-  if (mismatch) {
-    readingEl.appendChild(el('div', `⚠ this page looks like ${detected}, not ${cohort}`, 'warn'));
-  }
+  const cohortEl = document.getElementById('cohort');
+  cohortEl.replaceChildren(el('div', detected === 'other' ? 'not a listed site' : detected, 'muted'));
 
   if (reading.provisional === true) {
     // Still working out whether the page is readable. Shown, so the operator knows the extension is
@@ -264,14 +219,8 @@ async function render() {
       await render();
       return;
     }
-    if (cohort == null) {
-      statusEl.replaceChildren(el('span', 'Choose the site you are measuring first.', 'warn'));
-      return;
-    }
-    if (mismatch) {
-      statusEl.replaceChildren(
-        el('span', 'Cohort does not match this page — fix it before recording.', 'warn'),
-      );
+    if (detected === 'other') {
+      statusEl.replaceChildren(el('span', 'This is not one of the listed sites.', 'warn'));
       return;
     }
     if (verdict === 'not_a_listing') {
@@ -299,10 +248,9 @@ async function render() {
 
     try {
       await saveRecord({
-        // NOTHING about the site. Not the hostname, not a family, not a variant — a coarse label
-        // beside a date still proves which domain was visited, because recording is refused unless
-        // the declared cohort matches the page. The cohort lives in the export filename instead.
-        // (Codex review round 21, PR #1.)
+        // Family and variant, DETECTED from the page. Harness only — the shipped product records
+        // nothing of the sort, and that boundary is what makes this safe. See DECISIONS 11.
+        ...cohortRecordFor(detected),
         // Date only. A precise time beside a site label is the makings of a browsing log, and
         // nothing in the report groups more finely than a day.
         recordedAt: new Date().toISOString().slice(0, 10),
@@ -332,16 +280,36 @@ async function render() {
     await refreshCount();
   }
 
-  const options = hasCoordinate
-    ? [
-        ['Correct', 'correct', true],
-        ['Wrong', 'wrong', false],
-        ["Can't tell", 'unverifiable', false],
-      ]
-    : [
-        ['Confirm no read', 'no_read', true],
-        ["Can't tell", 'unverifiable', false],
-      ];
+  // THE VERDICTS HAVE TO MATCH WHAT WAS FOUND.
+  //
+  // A tier-3 address-only read could previously only be marked "no read" or "can't tell" — there was
+  // no way to say "yes, it got the address, and it is right". So every tier-3 success was recorded
+  // as a failure or discarded, which makes tier 3 look useless in exactly the data meant to tell us
+  // whether it is. That is the same bias every other defect here has had: it flatters nothing, it
+  // just quietly removes a category of success. (Jordan, on the first real session.)
+  const status = reading.result?.status;
+  const options =
+    status === 'found'
+      ? [
+          ['Correct', 'correct', true],
+          ['Wrong', 'wrong', false],
+          ["Can't tell", 'unverifiable', false],
+        ]
+      : status === 'found_address'
+        ? [
+            ['Address correct', 'address_correct', true],
+            ['Address wrong', 'address_wrong', false],
+            ["Can't tell", 'unverifiable', false],
+          ]
+        : status === 'ambiguous'
+          ? [
+              ['Confirm ambiguous', 'ambiguous_confirmed', true],
+              ["Can't tell", 'unverifiable', false],
+            ]
+          : [
+              ['Confirm no read', 'no_read', true],
+              ["Can't tell", 'unverifiable', false],
+            ];
   options.push(['Not a listing', 'not_a_listing', false]);
 
   const row = el('div', null, 'row');
@@ -376,12 +344,13 @@ document.getElementById('export').addEventListener('click', async () => {
   // projection exists to prevent, and it is more durable than the rows because it survives being
   // opened, copied and attached. The person exporting knows which batch they just exported; the
   // report takes the label as an argument when they run it. (Codex review round 22, PR #1.)
-  download(exportableRecords(await loadRecords()), 'batch');
+  // ONE FILE for the whole session, both sites. Each record carries its own family and variant, so
+  // the report splits it — no export/clear/switch dance between sites.
+  download(exportableRecords(await loadRecords()), 'session');
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
   await clearRecords();
-  await clearBatchCohortLabel();
   await render();
 });
 

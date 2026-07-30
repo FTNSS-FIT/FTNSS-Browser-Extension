@@ -144,31 +144,31 @@ needed. This deleted the service worker, all the navigation state, and roughly 1
 readable. If it is wrong, a latency is reported as unmeasured. It can no longer misattribute a
 coordinate, which is the property that matters.
 
-## 11. The site is DECLARED by the operator, not derived from the page
+## 11. The harness records which site each reading came from. The PRODUCT never will.
 
-Each record carries which site was being measured. That value is chosen by the person doing the
-measuring, before they start — it is never read from the page.
+Each record carries `{family, variant}` — `airbnb`/`booking`, and primary domain or country-code
+variant — detected automatically from the page.
 
-**Why it exists at all.** The per-site comparison *is* the measurement. The two sites were chosen
-precisely because they are structurally different, and the country-code-domain question cannot be
-answered without knowing which domain a reading came from. Dropping the field would not make the
-harness more private so much as stop it being an instrument.
+**This reverses an earlier decision, and the reversal is the point.** Across three review rounds the
+site label was moved out of the row, then coarsened, then moved out of the filename, on the argument
+that a label plus a date proves which domain was visited. That argument is sound **for the shipped
+product** and was wrongly applied to the instrument.
 
-**Why it is declared rather than detected.** Deriving it from the page's hostname and writing it into
-an exported file makes that file a record of which domains were visited — the thing this project's
-rules say never leaves the browser. Both were true at once: the analysis was necessary and the
-provenance was wrong. Declaring it keeps the entire analysis with nothing page-derived persisted.
+The harness has no users. It has an operator, who is deliberately recording their own browsing, on
+their own machine, into a file that is our internal measurement data. There is no third party whose
+privacy the label protects. What the rule actually protects is *a stranger who installed our
+extension*, and the shipped product will carry nothing of the sort — enforced by a test, not by
+convention.
 
-**And what is recorded is the family, not the hostname.** Fixing the provenance was not enough on its
-own: `airbnb.jp` is still a hostname, and because recording is refused unless the declaration matches
-the page, an export carrying it would still have proved which domain was visited. Records carry
-`{family: 'airbnb', variant: 'cctld'}` — which answers the question the phase actually asks, *do
-country-code domains behave differently from the primary one?*, without recording which country.
+**What the earlier design cost, which is why this matters:** the operator had to declare a cohort,
+export, clear, switch, and re-declare between sites. Every one of those steps is a chance to
+mislabel a batch or lose one, and a measurement instrument whose workflow is annoying produces
+worse data than one whose workflow is boring. We traded real measurement accuracy for a privacy
+property that protected nobody.
 
-**Accuracy is not traded away for it.** The content script still reports what it detected, and the
-popup refuses to record while the declared cohort disagrees with the detected page. That check runs
-in the browser and the detected value is never written to a record — so a mislabelled cohort is
-caught without the label ever being page-derived.
+**The boundary, stated so it survives:** automatic site detection and per-record labelling exist in
+the harness only. Neither may appear in a shipped build. The distinction is not "internal code is
+exempt from the rules" — it is that this rule is about *users*, and the harness has none.
 
 ## 12. What the panel shows: the six nearest gyms, within a maximum radius
 

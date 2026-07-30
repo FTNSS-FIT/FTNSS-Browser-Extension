@@ -81,6 +81,17 @@ export async function currentCohort() {
   return typeof bag?.[COHORT_KEY] === 'string' ? bag[COHORT_KEY] : null;
 }
 
+/**
+ * What gets recorded for a site: the family, and whether it was the primary domain or a
+ * country-code variant. Derived from the page, automatically — see DECISIONS 11 for why the
+ * harness may do this and the product may not.
+ */
+export function cohortRecordFor(label) {
+  const family = siteFamilyFor(label);
+  const primary = family === 'airbnb' ? 'airbnb.com' : family === 'booking' ? 'booking.com' : null;
+  return { family, variant: label === primary ? 'primary' : 'cctld' };
+}
+
 export async function setCurrentCohort(cohort) {
   if (!SITE_LABELS.includes(cohort)) throw new Error('unknown cohort');
   await chrome.storage.session.set({ [COHORT_KEY]: cohort });
@@ -170,18 +181,9 @@ export async function saveRecord(record) {
   // measurements, in collection order, without anyone being told. Losing data silently from a data
   // collection tool is the one failure it cannot have. Refuse instead, visibly.
   // (Codex review round 19, PR #1.)
-  // One batch, one cohort. With no site field on the records, a batch containing two cohorts cannot
-  // be told apart afterwards — so switching cohort with unexported records has to be refused rather
-  // than silently producing a file nobody can interpret.
-  const batchCohort = await batchCohortLabel();
-  const declared = await currentCohort();
-  if (batchCohort != null && declared != null && batchCohort !== declared) {
-    throw new Error(
-      `these ${records.length} records are for ${batchCohort} — export and clear before measuring ${declared}`,
-    );
-  }
-  if (records.length === 0 && declared != null) await setBatchCohortLabel(declared);
-
+  // No batch/cohort constraint any more. Each record carries its own site, so one file can hold a
+  // whole session across both sites and the report splits it — which removes the export/clear/switch
+  // dance that was the most error-prone part of the protocol.
   if (records.length >= MAX_RECORDS) {
     throw new Error(`storage is full (${MAX_RECORDS} records) — export and clear before continuing`);
   }
@@ -219,7 +221,15 @@ export async function clearRecords() {
  * Every entry here is either a number we computed or a value chosen from our own vocabulary.
  */
 const EXPORT_FIELDS = [
-  // NO SITE FIELD AT ALL — not the hostname, not the family, not the variant.
+  // The family and variant, detected from the page. HARNESS ONLY — see DECISIONS 11. The shipped
+  // product records nothing of the sort, and a test enforces that separately.
+  'family',
+  'variant',
+  // Historical note, kept because it explains why this looks like it was fought over: it was.
+  // The label was removed from the row, then coarsened, then removed from the export filename,
+  // on the argument that a label plus a date proves which domain was visited. Sound for a product
+  // with users; wrong for an instrument whose operator is deliberately recording their own
+  // browsing, and it cost enough workflow friction to damage the measurement it was protecting.
   //
   // `{family: 'airbnb', variant: 'primary'}` looked anonymous and is not: recording is refused
   // unless the declared cohort matches the page, so that pair plus the date proves a visit to
