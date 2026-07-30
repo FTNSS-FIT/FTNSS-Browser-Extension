@@ -11,7 +11,7 @@
   const [
     { runExtraction },
     { mountRecorder, unmountRecorder },
-    { saveRecord, urlKey, siteLabelFor },
+    { saveRecord, siteLabelFor },
     { toTransmittablePoint, distanceMetres },
   ] =
     await Promise.all([
@@ -50,6 +50,18 @@
    *      the read and the click.
    */
   let generation = 0;
+  // A cheap fingerprint of what is currently rendered. Used to tell "the DOM has already been
+  // replaced" from "the DOM has not changed yet", which a mutation observer alone cannot do
+  // because it only sees changes that happen AFTER it starts watching.
+  let lastSignature = null;
+
+  function domSignature() {
+    let ldLength = 0;
+    for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
+      ldLength += (script.textContent || '').length;
+    }
+    return `${location.pathname}|${ldLength}|${document.title.length}`;
+  }
 
   /**
    * Wait until the DOM stops changing, rather than for a fixed delay.
@@ -95,7 +107,11 @@
     });
   }
 
-  async function measureCurrentPage({ softNavigation = false, navDetectedAt = null } = {}) {
+  async function measureCurrentPage({
+    softNavigation = false,
+    navDetectedAt = null,
+    latencyUncertaintyMs = 0,
+  } = {}) {
     const myGeneration = (generation += 1);
 
     let domSettled = true;
@@ -103,13 +119,20 @@
       // Nothing may remain on screen while we wait — a panel from the previous listing on a page
       // that is no longer that listing is worse than an empty corner.
       unmountRecorder();
-      const stability = await waitForStableDom();
-      domSettled = stability.settled;
-      // A newer navigation started while we waited; that one owns the page now.
-      if (myGeneration !== generation) return;
-      // The URL changed but the DOM never did. Whatever is on screen still belongs to the previous
-      // listing, so measuring it would attribute that listing's reading to this one. Record nothing.
-      if (!stability.mutated) return;
+      // If the DOM has ALREADY been replaced, there is nothing to wait for. Without this check a
+      // fast soft navigation — one that completed before the poll noticed the URL change — produced
+      // no mutations, waited out the full ceiling, and then returned having recorded nothing and
+      // shown nothing. The person got silence on a page that was perfectly readable.
+      // (Codex review round 4, PR #1.)
+      if (domSignature() === lastSignature) {
+        const stability = await waitForStableDom();
+        domSettled = stability.settled;
+        // A newer navigation started while we waited; that one owns the page now.
+        if (myGeneration !== generation) return;
+        // The URL changed and the DOM still has not. Whatever is on screen belongs to the previous
+        // listing, so measuring it would attribute that listing's reading to this one.
+        if (!stability.mutated) return;
+      }
     }
 
     // Captured AFTER the wait, so the URL and the DOM we are about to read belong to the same
@@ -117,6 +140,7 @@
     const capturedUrl = location.href;
 
     const extraction = runExtraction(document);
+    lastSignature = domSignature();
 
     // The URL moved while we were extracting — this reading cannot be attributed to either page.
     if (location.href !== capturedUrl || myGeneration !== generation) return;
@@ -154,7 +178,7 @@
       extraction,
       readyToPanelMs,
       capturedUrl,
-      onSave: async ({ verdict, precisionVerdict, groundTruthRaw, note }) => {
+      onSave: async ({ verdict, precisionVerdict, groundTruthRaw }) => {
         // Refuse to save a reading that belongs to a page the browser has already left. Without
         // this, a slow verdict on listing A lands on listing B's record.
         if (location.href !== capturedUrl) {
@@ -174,12 +198,16 @@
         }
 
         await saveRecord({
-          // A non-reversible key for dedup, NOT the URL. The URL itself is never stored.
-          urlKey: urlKey(capturedUrl),
           // Chosen from our own allowlist, not read off the page.
           site: siteLabelFor(location.hostname),
           recordedAt: new Date().toISOString(),
           softNavigation: isSoftNavigation,
+          // How late the navigation may have been NOTICED. A polled detection can be up to one
+          // interval behind the real navigation, so the measured latency is an UNDER-estimate by up
+          // to this much — which would let a panel that really took 1.2s be recorded inside an 800ms
+          // budget and counted as a hit. The report adds this before comparing, so the budget is
+          // judged on the worst case rather than the flattering one. (Codex review round 4, PR #1.)
+          latencyUncertaintyMs: isSoftNavigation ? latencyUncertaintyMs : 0,
           // False when the DOM never went quiet within the ceiling. Such a reading is usable but
           // less trustworthy, and the report can exclude it rather than us pretending otherwise.
           domSettled,
@@ -187,8 +215,6 @@
           // What the person actually saw: whether the point is the building or a fuzzed area. The
           // extractor no longer guesses this, so it has to be observed.
           precisionVerdict: precisionVerdict ?? 'not_assessed',
-          note,
-          groundTruth,
           errorMetres,
           result: extraction.result,
           // What the product WOULD have transmitted. Recorded so the report can show the rounded
@@ -221,15 +247,23 @@
   // in the page's call path, which is exactly the entanglement a content script should avoid. A
   // poll is dumber, cannot be defeated by the page, and costs a string comparison per second.
   let lastUrl = location.href;
-  function onMaybeNavigated() {
+  function onMaybeNavigated(latencyUncertaintyMs) {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
     // Clear immediately and synchronously — the wait happens inside measureCurrentPage, and the
     // previous listing's panel must not survive even that long.
     unmountRecorder();
-    void measureCurrentPage({ softNavigation: true, navDetectedAt: performance.now() });
+    void measureCurrentPage({
+      softNavigation: true,
+      navDetectedAt: performance.now(),
+      latencyUncertaintyMs,
+    });
   }
-  setInterval(onMaybeNavigated, 1000);
-  addEventListener('popstate', onMaybeNavigated);
-  addEventListener('hashchange', onMaybeNavigated);
+  // 250ms rather than 1000ms: the poll interval IS the latency measurement's error bar, so a slower
+  // poll buys nothing and costs accuracy in the number this phase exists to produce.
+  const POLL_MS = 250;
+  setInterval(() => onMaybeNavigated(POLL_MS), POLL_MS);
+  // These fire synchronously with the navigation, so a detection through them has no uncertainty.
+  addEventListener('popstate', () => onMaybeNavigated(0));
+  addEventListener('hashchange', () => onMaybeNavigated(0));
 })();

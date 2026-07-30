@@ -9,11 +9,13 @@
 // had to change instead. (Codex review round 3, PR #1.)
 //
 // What replaced it:
-//   • dedup uses a non-reversible hash of the URL, never the URL;
+//   • nothing derived from the URL is persisted at all, not even a hash (see below);
 //   • the site is a label chosen from OUR OWN allowlist, not `location.hostname`, so no page can put
 //     text into it;
-//   • the export is built from a strict ALLOWLIST of fields. A denylist fails open — it protects
-//     only the fields someone remembered, and every new field is exposed by default.
+//   • the projection is applied when a record is WRITTEN, not when it is exported, so the trail
+//     never exists on disk in the first place;
+//   • that projection is a strict ALLOWLIST. A denylist fails open — it protects only the fields
+//     someone remembered, and every new field is exposed by default.
 
 const KEY = 'phase1_records';
 const MAX_RECORDS = 500;
@@ -22,26 +24,42 @@ const MAX_RECORDS = 500;
  * The only sites this harness runs on. The stored label comes from here, so it is a value we chose
  * rather than one the page supplied.
  */
-export const SITE_LABELS = ['booking.com', 'airbnb.com'];
+export const SITE_LABELS = [
+  'booking.com',
+  'booking.co.uk',
+  'booking.fr',
+  'booking.de',
+  ...['com','co.uk','fr','de','es','it','nl','pt','ca','com.au','ie','at','ch','be','dk','se','no','fi','pl','gr','cz','com.br','mx','jp'].map(
+    (tld) => `airbnb.${tld}`,
+  ),
+];
 
-export function siteLabelFor(hostname) {
-  const match = SITE_LABELS.find((label) => hostname === label || hostname.endsWith(`.${label}`));
-  return match ?? 'other';
+/** Which family a label belongs to, for the headline per-site breakdown. */
+export function siteFamilyFor(label) {
+  if (label.startsWith('airbnb.')) return 'airbnb';
+  if (label.startsWith('booking.')) return 'booking';
+  return 'other';
 }
 
 /**
- * FNV-1a. Used ONLY to notice that a listing has already been recorded, so re-recording replaces
- * rather than double-counting it. It is not a security primitive and does not need to be: it exists
- * so we never have to keep the URL itself.
+ * Longest match wins, so `airbnb.com.au` is not mistaken for `airbnb.com`. Anything not on the list
+ * becomes 'other' — a host we never listed can never introduce a new label.
  */
-export function urlKey(url) {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < url.length; i += 1) {
-    hash ^= url.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, '0');
+export function siteLabelFor(hostname) {
+  const matches = SITE_LABELS.filter(
+    (label) => hostname === label || hostname.endsWith(`.${label}`),
+  );
+  if (matches.length === 0) return 'other';
+  return matches.sort((a, b) => b.length - a.length)[0];
 }
+
+// NO URL-DERIVED VALUE IS PERSISTED, not even a hash. A 32-bit hash of a URL from one of two known
+// sites is not a one-way function in any useful sense — the candidate space is small enough to walk
+// — so storing one still left a reconstructable trail on disk. Cross-session dedup is not worth
+// that, so it is gone: recording the same listing twice in different sessions counts it twice, and
+// the person doing the measuring is working through a list and can avoid it. Double-clicking Save
+// on one page view is guarded in the panel, which is the realistic mistake.
+// (Codex review round 4, PR #1.)
 
 export async function loadRecords() {
   const bag = await chrome.storage.local.get(KEY);
@@ -49,16 +67,25 @@ export async function loadRecords() {
   return Array.isArray(records) ? records : [];
 }
 
+/**
+ * THE PROJECTION IS APPLIED ON THE WAY IN, not on the way out.
+ *
+ * Sanitising only at export was half a fix: storage still held the address text, the free-text note
+ * and exact coordinates, so the trail existed on disk regardless of what any export did — and the
+ * popup told the person those things were not stored, which made it a false statement to the user
+ * as well as a privacy defect. What is never written cannot leak, cannot be exported by a future
+ * code path, and cannot make the UI a liar. (Codex review round 4, PR #1.)
+ */
 export async function saveRecord(record) {
   const records = await loadRecords();
-  // One record per listing. Re-recording a page you have already done replaces the old entry rather
-  // than counting the same listing twice, which would quietly weight the sample.
-  const withoutDuplicate = records.filter((r) => r.urlKey !== record.urlKey);
-  withoutDuplicate.push(record);
-  const trimmed = withoutDuplicate.slice(-MAX_RECORDS);
+  const [stored] = exportableRecords([record]);
+  const trimmed = [...records, stored].slice(-MAX_RECORDS);
   await chrome.storage.local.set({ [KEY]: trimmed });
   return trimmed.length;
 }
+
+// exportableRecords is defined below and used by saveRecord above — the SAME projection on both
+// sides, so what is stored and what is exported can never drift apart.
 
 export async function clearRecords() {
   await chrome.storage.local.remove(KEY);
@@ -72,6 +99,9 @@ export async function clearRecords() {
 const EXPORT_FIELDS = [
   'site', // from SITE_LABELS, never location.hostname
   'recordedAt',
+  'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and
+                 // already within the privacy envelope the product itself operates in
+  'latencyUncertaintyMs',
   'verdict',
   'precisionVerdict',
   'softNavigation',

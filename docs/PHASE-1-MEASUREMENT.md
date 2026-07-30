@@ -20,16 +20,14 @@ Two sites: **Booking.com** and **Airbnb**. They are the two structurally most di
 pure OTA with search-critical structured data, versus a marketplace that withholds exact addresses by
 design. Measuring the two *easiest* sites is how a 90% proof-of-concept becomes a 60% product.
 
-**The ccTLD question is deliberately left open, not half-answered.** An earlier version matched
-`airbnb.co.uk` and `airbnb.es` as probes, to test whether a site's country-code domains serve
-different markup. That was partial coverage of a listed site, which is the repository's own
-definition of a bug — and the justification lived in this document, which is not where a rule gets
-changed. The harness now covers each listed site completely.
+**ccTLD coverage is enumerated, not guessed.** Both sites operate country-code domains, so a match
+list covering only `.com` would silently give nothing to exactly the users a 57-locale product
+exists to serve. The domains in the manifest were checked by DNS resolution on 2026-07-30 rather
+than recalled — 24 Airbnb ccTLDs and several Booking ones resolve, and all are listed explicitly.
+No wildcard TLD is used.
 
-Whether ccTLD variants differ therefore remains **an open requirement for v1**, and it has to be
-answered before the shipped site list is fixed: a match list covering only `.com` would silently fail
-for exactly the users a 57-locale product exists to serve. It is a question about which domains
-exist, which is verified by looking, not by an extension.
+What DNS establishes is that the domains *exist*, not that they serve listing pages or serve the
+same markup. That is one of the things this phase measures.
 
 ## What counts as a hit
 
@@ -99,17 +97,27 @@ Tests: `npm test`. They cover the extractors against hostile input, and they ass
 
 Deliberately, **no page identifier**: not the URL, not the hostname, not the address text.
 
-- Dedup uses a non-reversible hash of the URL, so re-recording a listing replaces it rather than
-  double-counting, without the URL ever being kept.
+- **Nothing derived from the URL is kept, not even a hash.** A 32-bit hash of a URL from a known
+  short list of sites is walkable, so cross-session dedup was dropped rather than kept as a token
+  gesture. Recording the same listing in two sessions counts it twice; the panel guards the
+  realistic mistake, which is a double click on one page view.
 - The site is a label chosen from the harness's own allowlist, not read off the page.
-- The export is built from a strict **allowlist** of fields, so a field added later is withheld until
-  someone decides it belongs. A denylist protects only the fields somebody remembered.
+- **The projection is applied when a record is written**, not when it is exported, so the trail never
+  exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
+  decides it belongs, where a denylist protects only the fields somebody remembered.
+- Coordinates are stored only as the ~1km point the product would itself transmit, which is inside
+  the privacy envelope the product already operates in.
 
 An earlier version stored the URL so a disputed reading could be re-checked, and argued it as a
 bounded exception written into `AGENTS.md`. That was wrong in two ways: it put a browsing trail on
 disk, and changing the rules to permit it would have disarmed the reviewer for every later change.
 The rule is absolute; the instrument changed instead.
 
-**What this costs:** a reading cannot be re-audited after the session. Verification happens at the
-moment of recording, by the person looking at the page — which is when they have the best evidence
-anyway. It does mean a disputed number cannot be re-litigated from the export alone.
+**What this costs:** a reading cannot be re-audited afterwards at all. Verification happens at the
+moment of recording, by the person looking at the page — which is when the evidence is best — but a
+disputed number cannot be re-litigated from the export.
+
+**On latency:** a soft navigation is noticed by polling, so the measurement can be up to one poll
+interval late and therefore understates the real latency. That error bar is recorded on each row and
+**added before the budget comparison**, so a panel is never counted as a hit on the strength of how
+it happened to be measured.

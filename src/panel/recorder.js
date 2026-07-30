@@ -8,16 +8,22 @@
 // this file, and there must never be: this panel displays strings taken straight out of a hostile
 // page, inside an extension context.
 
-const HOST_ID = 'ftnss-phase1-recorder';
+// A PRIVATE REFERENCE to the node we mounted — never a lookup by id.
+//
+// getElementById returns the FIRST match, and the page controls the document: a hostile page can
+// plant its own element carrying our id, so an id lookup removes the decoy and leaves the real,
+// stale panel standing. Anything that finds our own DOM by searching a document the attacker writes
+// is defeated the same way. (Codex review round 4, PR #1.)
+let mountedHost = null;
 
 /**
- * Remove any panel currently on screen. Called the instant a navigation is detected, BEFORE anything
+ * Remove the panel currently on screen. Called the instant a navigation is detected, BEFORE anything
  * else: a panel showing the previous listing's reading, on a page that is no longer that listing, is
  * the stale-reading bug wearing a different hat. Nothing on screen beats something wrong on screen.
- * (Codex review round 2, PR #1.)
  */
 export function unmountRecorder() {
-  document.getElementById(HOST_ID)?.remove();
+  mountedHost?.remove();
+  mountedHost = null;
 }
 
 function el(tag, text, style) {
@@ -89,7 +95,7 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
   unmountRecorder();
 
   const host = el('div');
-  host.id = HOST_ID;
+  mountedHost = host;
   // Closed shadow root: the page cannot reach into the panel's DOM, and the page's CSS cannot
   // restyle it into something misleading.
   const root = host.attachShadow({ mode: 'closed' });
@@ -169,14 +175,12 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
   truth.placeholder = 'Ground truth "lat, lon" (optional)';
   box.appendChild(truth);
 
-  const note = el('input');
-  note.placeholder = 'Note (optional)';
-  box.appendChild(note);
-
   const status = el('div', '');
   status.className = 'saved';
 
+  let saved = false;
   async function record(verdict) {
+    if (saved) return; // one reading per page view; the realistic double-count is a double click
     status.className = 'saved muted';
     status.textContent = 'Saving…';
     try {
@@ -184,8 +188,8 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
         verdict,
         precisionVerdict,
         groundTruthRaw: truth.value.trim(),
-        note: note.value.trim(),
       });
+      saved = true;
       status.className = 'saved ok';
       status.textContent = `Recorded: ${verdict}`;
     } catch (err) {

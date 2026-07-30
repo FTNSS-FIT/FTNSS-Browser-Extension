@@ -207,6 +207,7 @@ test('the export is an allowlist — a field added later is withheld, not shippe
       // None of these may survive. The first three are the fields the harness must never emit;
       // the last is the case an allowlist exists for — something nobody thought about yet.
       urlKey: 'deadbeef',
+      url: 'https://www.airbnb.com/rooms/12345',
       note: 'the Smiths, 14 Acacia Ave',
       groundTruth: { lat: 1, lon: 2 },
       somethingAddedNextMonth: 'page text',
@@ -236,10 +237,19 @@ test('the site label comes from our allowlist, never from the page', async () =>
   assert.equal(siteLabelFor('airbnb.com.evil.example'), 'other');
 });
 
-test('dedup uses a hash, and the URL is not recoverable from a record', async () => {
-  const { urlKey } = await import('../src/lib/storage.js');
-  const a = urlKey('https://www.airbnb.com/rooms/12345');
-  assert.equal(a, urlKey('https://www.airbnb.com/rooms/12345'));
-  assert.notEqual(a, urlKey('https://www.airbnb.com/rooms/12346'));
-  assert.ok(!a.includes('airbnb'));
+test('nothing derived from the URL is persisted, not even a hash', async () => {
+  const storage = await import('../src/lib/storage.js');
+  // A 32-bit hash of a URL from a known site is walkable, so it was removed rather than kept as a
+  // token gesture. If a future change reintroduces one, this fails.
+  assert.equal(storage.urlKey, undefined);
+  const [out] = storage.exportableRecords([{ urlKey: 'deadbeef', url: 'https://x/y', verdict: 'correct' }]);
+  assert.equal(out.urlKey, undefined);
+  assert.equal(out.url, undefined);
+});
+
+test('a longer site label wins, so airbnb.com.au is not read as airbnb.com', async () => {
+  const { siteLabelFor, siteFamilyFor } = await import('../src/lib/storage.js');
+  assert.equal(siteLabelFor('www.airbnb.com.au'), 'airbnb.com.au');
+  assert.equal(siteFamilyFor('airbnb.com.au'), 'airbnb');
+  assert.equal(siteFamilyFor('other'), 'other');
 });

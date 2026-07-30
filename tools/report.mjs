@@ -64,13 +64,19 @@ function summarise(rows, label) {
   // with no latency is counted on correctness and reported separately as unmeasured, never
   // silently failed. (Codex review round 3, PR #1.)
   const latencyOf = (r) => r.timing?.readyToPanelMs;
+  // WORST CASE, not the flattering one: a polled detection can be up to one interval late, so the
+  // measured latency understates the real one by `latencyUncertaintyMs`. Adding it before the
+  // comparison means a panel that may really have taken longer than the budget is not counted as a
+  // hit on the strength of how it was measured. (Codex review round 4, PR #1.)
+  const worstCaseLatency = (r) =>
+    Number.isFinite(latencyOf(r)) ? latencyOf(r) + (r.latencyUncertaintyMs ?? 0) : NaN;
   const overBudget = (r) =>
-    (Number.isFinite(latencyOf(r)) && latencyOf(r) > LATENCY_BUDGET_MS) ||
+    (Number.isFinite(worstCaseLatency(r)) && worstCaseLatency(r) > LATENCY_BUDGET_MS) ||
     (Number.isFinite(r.timing?.totalMs) && r.timing.totalMs > EXTRACT_BUDGET_MS);
   const withinBudget = correct.filter((r) => !overBudget(r)).length;
   const unmeasuredLatency = correct.filter((r) => !Number.isFinite(latencyOf(r))).length;
 
-  const readyTimes = rows.map((r) => r.timing?.readyToPanelMs).filter(Number.isFinite);
+  const readyTimes = rows.map(worstCaseLatency).filter(Number.isFinite);
   const extractTimes = rows.map((r) => r.timing?.totalMs).filter(Number.isFinite);
 
   console.log(`\n${label}  (n=${total})`);
