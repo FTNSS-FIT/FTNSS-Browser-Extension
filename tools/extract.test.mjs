@@ -232,8 +232,6 @@ test('the export is an allowlist — a field added later is withheld, not shippe
   const { exportableRecords } = await import('../src/lib/storage.js');
   const [out] = exportableRecords([
     {
-      family: 'airbnb',
-      variant: 'primary',
       verdict: 'correct',
       timing: { totalMs: 12 },
       // None of these may survive. The first three are the fields the harness must never emit;
@@ -247,7 +245,7 @@ test('the export is an allowlist — a field added later is withheld, not shippe
     },
   ]);
 
-  assert.deepEqual(Object.keys(out).sort(), ['family', 'result', 'timing', 'variant', 'verdict']);
+  assert.deepEqual(Object.keys(out).sort(), ['result', 'timing', 'verdict']);
   // A coordinate is a location. The report is computed from verdicts, so it never needs one.
   assert.equal(out.result.lat, undefined);
   assert.equal(out.result.lon, undefined);
@@ -261,27 +259,26 @@ test('an unrecognised source string cannot smuggle page text into the export', a
   assert.equal(out.result.source, 'other');
 });
 
-test('no hostname of any kind can reach an exported record', async () => {
-  const { exportableRecords, cohortRecordFor } = await import('../src/lib/storage.js');
+test('nothing about the site reaches an exported record — not even a coarse label', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
   const [out] = exportableRecords([
-    { ...cohortRecordFor('airbnb.jp'), cohort: 'airbnb.jp', site: 'evil.example', detectedSite: 'x' },
+    {
+      verdict: 'correct',
+      // Every shape this has taken across the review, all of which must now be dropped. The last
+      // pair looked anonymous and was not: recording is refused unless the declared cohort matches
+      // the page, so `airbnb`+`primary` plus a date proves a visit to airbnb.com that day.
+      site: 'airbnb.jp',
+      cohort: 'airbnb.jp',
+      detectedSite: 'airbnb.jp',
+      family: 'airbnb',
+      variant: 'primary',
+    },
   ]);
-  // The family and variant survive; every hostname-shaped value is dropped. `airbnb.jp` would have
-  // proved which domain was visited even though the operator chose it, because recording is blocked
-  // unless the declaration matches the page.
-  assert.deepEqual(out.family, 'airbnb');
-  assert.deepEqual(out.variant, 'cctld');
-  for (const key of ['cohort', 'site', 'detectedSite']) assert.equal(out[key], undefined);
-  assert.ok(!JSON.stringify(out).includes('.jp'));
-  assert.ok(!JSON.stringify(out).includes('.com'));
-});
-
-test('the ccTLD question is answerable without naming the country', async () => {
-  const { cohortRecordFor } = await import('../src/lib/storage.js');
-  assert.deepEqual(cohortRecordFor('airbnb.com'), { family: 'airbnb', variant: 'primary' });
-  assert.deepEqual(cohortRecordFor('airbnb.co.uk'), { family: 'airbnb', variant: 'cctld' });
-  assert.deepEqual(cohortRecordFor('booking.com'), { family: 'booking', variant: 'primary' });
-  assert.deepEqual(cohortRecordFor('booking.de'), { family: 'booking', variant: 'cctld' });
+  assert.deepEqual(Object.keys(out).sort(), ['result', 'verdict']);
+  const serialised = JSON.stringify(out);
+  for (const leak of ['airbnb', 'booking', '.jp', '.com', 'primary', 'cctld']) {
+    assert.ok(!serialised.includes(leak), `exported record leaked "${leak}"`);
+  }
 });
 
 test('the site label comes from our allowlist, never from the page', async () => {

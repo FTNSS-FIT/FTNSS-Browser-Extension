@@ -19,7 +19,8 @@ import {
   readActivePage,
   currentCohort,
   setCurrentCohort,
-  cohortRecordFor,
+  batchCohortLabel,
+  clearBatchCohortLabel,
   siteLabelFor,
   migrateAwayLocalCohort,
   SITE_LABELS,
@@ -185,7 +186,9 @@ async function render() {
   truth.placeholder = 'Ground truth "lat, lon" (optional)';
   if (hasCoordinate) controlsEl.appendChild(truth);
 
+  let recorded = false;
   async function record(verdict) {
+    if (recorded) return; // one record per popup opening
     if (cohort == null) {
       statusEl.replaceChildren(el('span', 'Choose the site you are measuring first.', 'warn'));
       return;
@@ -221,8 +224,10 @@ async function render() {
 
     try {
       await saveRecord({
-        // The family and variant the operator DECLARED — never a hostname.
-        ...cohortRecordFor(cohort),
+        // NOTHING about the site. Not the hostname, not a family, not a variant — a coarse label
+        // beside a date still proves which domain was visited, because recording is refused unless
+        // the declared cohort matches the page. The cohort lives in the export filename instead.
+        // (Codex review round 21, PR #1.)
         // Date only. A precise time beside a site label is the makings of a browsing log, and
         // nothing in the report groups more finely than a day.
         recordedAt: new Date().toISOString().slice(0, 10),
@@ -241,7 +246,14 @@ async function render() {
       return;
     }
 
-    statusEl.replaceChildren(el('span', `Recorded: ${verdict}`, 'ok'));
+    // Records carry no identifier by design, so a duplicate cannot be detected or removed later.
+    // The controls therefore have to stop being clickable rather than the data being cleaned up
+    // afterwards — there is no afterwards. (Codex review round 21, PR #1.)
+    recorded = true;
+    controlsEl.replaceChildren(el('div', `Recorded: ${verdict}`, 'ok'));
+    statusEl.replaceChildren(
+      el('span', 'Open the popup again to record the next listing.', 'muted'),
+    );
     await refreshCount();
   }
 
@@ -284,11 +296,14 @@ function download(records, suffix) {
 }
 
 document.getElementById('export').addEventListener('click', async () => {
-  download(exportableRecords(await loadRecords()), 'measurements');
+  // The cohort is in the FILENAME, not in the rows. `npm run report` reads it from there.
+  const label = (await batchCohortLabel()) ?? 'unlabelled';
+  download(exportableRecords(await loadRecords()), label.replace(/[^a-z0-9.]/gi, '-'));
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
   await clearRecords();
+  await clearBatchCohortLabel();
   await render();
 });
 

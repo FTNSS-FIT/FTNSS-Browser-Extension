@@ -136,7 +136,8 @@ The privacy claim is the product, so four properties are enforced rather than pr
 1. **Narrow, named host permissions.** Never `<all_urls>`, never a wildcard TLD. A test fails the
    build otherwise.
 2. **Nothing identifying the page leaves the browser.** No URL, hostname, title, or content — in any
-   request, log, or export. A test fails the build if any source file even contains `fetch(`.
+   request, log, or export. A test fails the build if any source file even contains `fetch(`, and
+   another asserts that no exported record carries a site label of any kind, however coarse.
 3. **Coordinates are rounded to ~1km at a single outbound boundary** that no caller can bypass. The
    grid is latitude-aware, because a fixed number of decimal places is only ~1km near the equator.
 4. **The source is published**, so all of the above can be checked rather than believed.

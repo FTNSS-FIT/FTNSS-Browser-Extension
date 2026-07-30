@@ -69,7 +69,9 @@ function summarise(rows, label) {
   // comparison means a panel that may really have taken longer than the budget is not counted as a
   // hit on the strength of how it was measured. (Codex review round 4, PR #1.)
   const worstCaseLatency = (r) =>
-    Number.isFinite(latencyOf(r)) ? latencyOf(r) + (r.latencyUncertaintyMs ?? 0) : NaN;
+    Number.isFinite(latencyOf(r))
+      ? latencyOf(r) + (r.timing?.readinessUncertaintyMs ?? r.latencyUncertaintyMs ?? 0)
+      : NaN;
   // A hit needs latency that was MEASURED and inside the budget. Round 3 fixed missing-latency being
   // treated as too slow; the fix over-corrected into treating it as fast enough, which inflates the
   // headline number instead of deflating it. Neither is right: an unmeasured record is not evidence
@@ -119,7 +121,7 @@ function summarise(rows, label) {
   );
 
   const precisionOf = (v) => rows.filter((r) => r.precisionVerdict === v).length;
-  const assessed = total - precisionOf('not_assessed');
+  const assessed = precisionOf('building') + precisionOf('area') + precisionOf('unclear');
   if (assessed > 0) {
     console.log(
       `  precision (of ${assessed} assessed)  building: ${pct(precisionOf('building'), assessed)}` +
@@ -140,28 +142,24 @@ function summarise(rows, label) {
   }
 }
 
-summarise(records, 'ALL SITES');
+// The cohort comes from the FILENAME, not from the rows — see the note below.
+const cohort = path
+  .split('/')
+  .pop()
+  .replace(/^ftnss-phase1-/, '')
+  .replace(/-\d{4}-\d{2}-\d{2}\.json$/, '')
+  .replace(/\.json$/, '');
 
-const bySite = new Map();
-for (const r of records) {
-  // The family the operator declared — not a hostname read off the page.
-  const family = String(r.family || 'unknown');
-  if (!bySite.has(family)) bySite.set(family, []);
-  bySite.get(family).push(r);
-}
-for (const [family, rows] of bySite) summarise(rows, family.toUpperCase());
+summarise(records, `COHORT: ${cohort}`);
 
-// Does a country-code domain behave differently from the primary one? Answerable without any record
-// naming which country it was.
-const byVariant = new Map();
-for (const r of records) {
-  const v = String(r.variant || 'unknown');
-  if (!byVariant.has(v)) byVariant.set(v, []);
-  byVariant.get(v).push(r);
-}
-if (byVariant.size > 1) {
-  for (const [variant, rows] of byVariant) summarise(rows, `VARIANT: ${variant}`);
-}
+
+
+console.log(`
+COMPARING SITES
+  Run this once per exported file. Each file is one cohort — one site, one primary-or-ccTLD variant —
+  named in its filename. The comparison is made ACROSS reports rather than within one, because no row
+  carries anything that would let you split a mixed file afterwards. The harness refuses to mix
+  cohorts in one batch for that reason.`);
 
 console.log(`
 NOT MEASURED BY THIS REPORT

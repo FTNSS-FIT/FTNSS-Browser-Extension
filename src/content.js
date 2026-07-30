@@ -40,25 +40,48 @@
   let readinessIdentity = identityOf();
   let readingReadyMs = null;
   let readinessSettled = false;
-
-  function pageReadyAt() {
+  /**
+   * When the CURRENT page became ready, on the performance timeline.
+   *
+   * For the initial load this is the navigation entry. For a same-document navigation there is no
+   * new navigation entry, and using the old one is not merely imprecise — it is wrong by however
+   * long the tab has been open. A listing opened twenty minutes into a session was being credited
+   * with a twenty-minute readiness time, which does not fail the budget by a little; it corrupts the
+   * latency distribution outright. (Codex review round 21, PR #1.)
+   */
+  let pageReadyAt = (() => {
     const nav = performance.getEntriesByType('navigation')[0];
     return nav ? nav.domContentLoadedEventEnd : null;
-  }
+  })();
+  /** How late the navigation may have been NOTICED. Added before any budget comparison. */
+  let readinessUncertaintyMs = 0;
+  /** When address text (tier 3) first appeared. A different event from a coordinate appearing. */
+  let addressReadyMs = null;
 
   async function watchForReadiness() {
     const startedFor = readinessIdentity;
-    const readyAt = pageReadyAt();
+    const readyAt = pageReadyAt;
     // Poll briefly for the page to become readable. Both measured sites render asynchronously, so a
     // listing whose data lands just after load is readable rather than absent — and calling it
     // absent would bias the hit rate upward, because the pages that do this are the slow, heavy
     // ones the product will find hardest.
     for (let attempt = 0; attempt < 20; attempt += 1) {
       if (readinessIdentity !== startedFor) return; // navigated; this measurement is void
-      if (runExtraction(document).result.status !== 'not_found') {
+      // ONLY a coordinate settles this timer.
+      //
+      // `found_address` used to settle it, and a hit requires coordinates — so if address text
+      // appeared at 100ms and the coordinate at 1000ms, the coordinate was credited with the
+      // address's timing and passed an 800ms budget it had actually missed. The two are measured
+      // separately because they are different events.
+      // (Codex review round 21, PR #1.)
+      const status = runExtraction(document).result.status;
+      if (status === 'found') {
         readingReadyMs = readyAt == null ? null : Math.max(0, performance.now() - readyAt);
         readinessSettled = true;
         return;
+      }
+      if (status === 'found_address' && addressReadyMs == null) {
+        addressReadyMs = readyAt == null ? null : Math.max(0, performance.now() - readyAt);
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
@@ -69,11 +92,16 @@
 
   void watchForReadiness();
 
-  function onNavigated() {
+  function onNavigated(uncertaintyMs) {
     if (identityOf() === readinessIdentity) return;
     readinessIdentity = identityOf();
     readingReadyMs = null;
+    addressReadyMs = null;
     readinessSettled = false;
+    // A same-document navigation has no navigation entry, so NOW is the baseline. This is the fix
+    // for readiness times measured from a document loaded minutes earlier.
+    pageReadyAt = performance.now();
+    readinessUncertaintyMs = uncertaintyMs;
     void watchForReadiness();
   }
 
@@ -81,11 +109,15 @@
   // covers pushState where the browser has the Navigation API; the rest are fallbacks for browsers
   // that do not. A missed signal costs an unmeasured latency, not a wrong coordinate.
   if (typeof navigation !== 'undefined' && typeof navigation.addEventListener === 'function') {
-    navigation.addEventListener('navigate', () => queueMicrotask(onNavigated));
+    // Fires synchronously with the navigation, so detection through it carries no uncertainty.
+    navigation.addEventListener('navigate', () => queueMicrotask(() => onNavigated(0)));
   }
-  addEventListener('popstate', onNavigated);
-  addEventListener('hashchange', onNavigated);
-  setInterval(onNavigated, 500);
+  addEventListener('popstate', () => onNavigated(0));
+  addEventListener('hashchange', () => onNavigated(0));
+  // Fallback for browsers without the Navigation API. The interval IS the error bar on the readiness
+  // figure, which is why it is carried on the reading rather than quietly ignored.
+  const POLL_MS = 500;
+  setInterval(() => onNavigated(POLL_MS), POLL_MS);
 
   // ── The only thing this script exposes ──────────────────────────────────────
 
@@ -110,6 +142,10 @@
         // Null when this page has not yet become readable, or when a navigation voided the
         // measurement. Null means unmeasured; the report counts it separately and never as a pass.
         readingReadyMs: readinessSettled && readingReadyMs != null ? Math.round(readingReadyMs) : null,
+        // Measured separately, because address text appearing is not the same event as a coordinate
+        // appearing and only the latter can satisfy the hit definition.
+        addressReadyMs: addressReadyMs == null ? null : Math.round(addressReadyMs),
+        readinessUncertaintyMs,
       },
       // Still working out whether this page is readable. Shown to the operator, never recordable:
       // confirming "no read" on a page whose coordinates are about to appear writes a false miss,

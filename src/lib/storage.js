@@ -14,7 +14,8 @@
 //
 // What survives:
 //   • nothing derived from the URL is persisted, not even a hash;
-//   • the cohort is DECLARED by the operator and stored as a family and a variant, never a hostname;
+//   • no record carries anything about the site at all — the cohort lives outside the records, in
+//     the export filename, because a coarse label plus a date still proves which domain was visited;
 //   • the projection is applied when a record is WRITTEN, not when it is exported, so the trail
 //     never exists on disk in the first place;
 //   • that projection is a strict ALLOWLIST. A denylist fails open — it protects only the fields
@@ -80,26 +81,6 @@ export async function currentCohort() {
   return typeof bag?.[COHORT_KEY] === 'string' ? bag[COHORT_KEY] : null;
 }
 
-/**
- * What actually gets RECORDED for a cohort: the family, and whether it was the primary domain or a
- * country-code variant. Never the hostname itself.
- *
- * Making the operator declare the cohort fixed its provenance but not its CONTENT: `airbnb.jp` is
- * still a hostname, and because recording is blocked unless the declaration matches the page, an
- * export carrying it still proves which domain was visited. The popup's "no hostname is stored" was
- * therefore false, which is a claim defect on top of the privacy one.
- *
- * `{family: 'airbnb', variant: 'cctld'}` answers the question this phase actually asks — *do
- * country-code domains behave differently from the primary one?* — without recording which country.
- * The specific domain is only ever compared in the browser and never written down.
- * (Codex review round 12, PR #1.)
- */
-export function cohortRecordFor(label) {
-  const family = siteFamilyFor(label);
-  const primary = family === 'airbnb' ? 'airbnb.com' : family === 'booking' ? 'booking.com' : null;
-  return { family, variant: label === primary ? 'primary' : 'cctld' };
-}
-
 export async function setCurrentCohort(cohort) {
   if (!SITE_LABELS.includes(cohort)) throw new Error('unknown cohort');
   await chrome.storage.session.set({ [COHORT_KEY]: cohort });
@@ -112,6 +93,28 @@ export async function setCurrentCohort(cohort) {
  * old copy simply stops being read, which looks identical to being gone and is not. This is also the
  * function the popup imported for two commits while it did not exist — see the note in popup.js.
  */
+/**
+ * Which cohort the CURRENT unexported batch belongs to.
+ *
+ * Session-scoped and stored once per batch, not once per record: it exists so a batch cannot be
+ * silently mixed, and it goes no further than the export filename. It is never written into a
+ * record.
+ */
+const BATCH_KEY = 'phase1_batch_cohort';
+
+export async function batchCohortLabel() {
+  const bag = await chrome.storage.session.get(BATCH_KEY);
+  return typeof bag?.[BATCH_KEY] === 'string' ? bag[BATCH_KEY] : null;
+}
+
+export async function setBatchCohortLabel(label) {
+  await chrome.storage.session.set({ [BATCH_KEY]: label });
+}
+
+export async function clearBatchCohortLabel() {
+  await chrome.storage.session.remove(BATCH_KEY);
+}
+
 export async function migrateAwayLocalCohort() {
   await chrome.storage.local.remove(COHORT_KEY);
 }
@@ -167,6 +170,18 @@ export async function saveRecord(record) {
   // measurements, in collection order, without anyone being told. Losing data silently from a data
   // collection tool is the one failure it cannot have. Refuse instead, visibly.
   // (Codex review round 19, PR #1.)
+  // One batch, one cohort. With no site field on the records, a batch containing two cohorts cannot
+  // be told apart afterwards — so switching cohort with unexported records has to be refused rather
+  // than silently producing a file nobody can interpret.
+  const batchCohort = await batchCohortLabel();
+  const declared = await currentCohort();
+  if (batchCohort != null && declared != null && batchCohort !== declared) {
+    throw new Error(
+      `these ${records.length} records are for ${batchCohort} — export and clear before measuring ${declared}`,
+    );
+  }
+  if (records.length === 0 && declared != null) await setBatchCohortLabel(declared);
+
   if (records.length >= MAX_RECORDS) {
     throw new Error(`storage is full (${MAX_RECORDS} records) — export and clear before continuing`);
   }
@@ -188,8 +203,17 @@ export async function clearRecords() {
  * Every entry here is either a number we computed or a value chosen from our own vocabulary.
  */
 const EXPORT_FIELDS = [
-  'family', // 'airbnb' | 'booking' — declared by the operator, never a hostname
-  'variant', // 'primary' | 'cctld' — answers the ccTLD question without naming the country
+  // NO SITE FIELD AT ALL — not the hostname, not the family, not the variant.
+  //
+  // `{family: 'airbnb', variant: 'primary'}` looked anonymous and is not: recording is refused
+  // unless the declared cohort matches the page, so that pair plus the date proves a visit to
+  // airbnb.com on that day. Coarsening the value did not help, because the constraint that keeps the
+  // data honest is exactly what makes it identifying.
+  //
+  // The cohort now lives OUTSIDE the records. One export per cohort, with the cohort in the
+  // filename, and the report takes it from there. The comparison this phase exists to make survives
+  // intact; what disappears is any row that says where somebody was.
+  // (Codex review round 21, PR #1.)
   'recordedAt',
   'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and
                  // already within the privacy envelope the product itself operates in
