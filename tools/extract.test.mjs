@@ -470,3 +470,31 @@ test('tier 1 applies the same tolerance as tier 2', () => {
   );
   assert.equal(extractFromStructuredData(doc).status, 'not_found');
 });
+
+test('rounding is idempotent everywhere, including across the antimeridian', async () => {
+  const { isInRange } = await import('../src/lib/geo.js');
+  // Longitude is circular; a step that does not divide 360 leaves cell boundaries misaligned at the
+  // antimeridian. Because the storage boundary deliberately re-rounds, that second pass moved stored
+  // points by up to a full cell — (49.97, -179.997) landed 1136m from its input, outside the
+  // guarantee. Re-rounding must be a no-op, or the grid an outside reader derives is not ours.
+  let worstDrift = 0;
+  for (const lat of [0, 38.71, 49.97, 51.5, 60, 69.65, 80, 89, 89.9]) {
+    for (let i = 0; i < 360; i += 1) {
+      const point = { lat, lon: -180 + i * 1.0003 };
+      const once = toTransmittablePoint(point.lat, point.lon);
+      assert.ok(once && isInRange(once.lat, once.lon));
+      const twice = toTransmittablePoint(once.lat, once.lon);
+      assert.deepEqual(twice, once, `not idempotent at ${lat},${point.lon}`);
+      worstDrift = Math.max(worstDrift, distanceMetres(point, once));
+    }
+  }
+  assert.ok(worstDrift < 1200, `rounding error too large: ${Math.round(worstDrift)}m`);
+});
+
+test('the reported antimeridian case stays inside the guarantee', () => {
+  const input = { lat: 49.97, lon: -179.997 };
+  const once = toTransmittablePoint(input.lat, input.lon);
+  const twice = toTransmittablePoint(once.lat, once.lon);
+  assert.deepEqual(twice, once);
+  assert.ok(distanceMetres(input, twice) < 1200);
+});

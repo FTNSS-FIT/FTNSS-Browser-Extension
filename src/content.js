@@ -37,6 +37,12 @@
   // Measured once per page: how long from the page being ready until an extraction first succeeds.
   // That is the latency the product's own panel would inherit. It deliberately excludes how long the
   // person took to open the popup, which would measure the operator rather than the page.
+  /**
+   * An opaque token for the page currently loaded. Random, meaningless, and regenerated on every
+   * navigation — it says nothing about where anyone is, and exists only so the popup can ask "is
+   * this still the same page you read?" without either side handling a URL.
+   */
+  let pageToken = crypto.randomUUID();
   let readinessIdentity = identityOf();
   let readingReadyMs = null;
   let readinessSettled = false;
@@ -95,6 +101,7 @@
   function onNavigated(uncertaintyMs) {
     if (identityOf() === readinessIdentity) return;
     readinessIdentity = identityOf();
+    pageToken = crypto.randomUUID();
     readingReadyMs = null;
     addressReadyMs = null;
     readinessSettled = false;
@@ -150,7 +157,15 @@
       // Still working out whether this page is readable. Shown to the operator, never recordable:
       // confirming "no read" on a page whose coordinates are about to appear writes a false miss,
       // and false misses are not randomly distributed — they fall on the slow pages.
-      provisional: !readinessSettled && extraction.result.status === 'not_found',
+      // ANY non-coordinate result is provisional while polling continues, not just `not_found`.
+      //
+      // Address text often appears before the JSON-LD block or the map does. Treating only
+      // `not_found` as provisional meant a `found_address` was immediately offered for a verdict —
+      // and the only verdicts available without a coordinate are "no read" and "can't tell", so a
+      // page whose coordinate was one second away could be recorded as a miss.
+      // (Codex review round 22, PR #1.)
+      provisional: !readinessSettled && extraction.result.status !== 'found',
+      pageToken,
       // Compared against the operator's declared cohort IN THE BROWSER, to catch a mislabelled
       // session. Never persisted, never exported.
       detectedHost: location.hostname,

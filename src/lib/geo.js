@@ -37,7 +37,21 @@ function longitudeStepAt(latitude) {
   // failing hardest exactly where the correction was supposed to be doing the most work.
   // (Codex review round 15, PR #1.)
   if (cos <= 0) return Infinity;
-  return LATITUDE_STEP / cos;
+  const ideal = LATITUDE_STEP / cos;
+
+  // SNAP THE STEP TO ONE THAT DIVIDES 360° EXACTLY.
+  //
+  // Longitude is circular; an arbitrary step is not. With a step that does not divide the circle,
+  // the cell boundaries do not line up across the antimeridian, so rounding an ALREADY-ROUNDED point
+  // moves it — and because the storage boundary deliberately re-rounds (so no caller can bypass the
+  // guarantee), that second pass shifted stored points by up to a full cell. Measured: (49.97,
+  // -179.997) landed 1136m from its input, outside the ~1.11km the guarantee promises.
+  //
+  // Dividing the circle into a whole number of cells makes the grid genuinely circular and rounding
+  // idempotent, which is also what lets an outside reader recompute our grid from a published point.
+  // (Codex review round 22, PR #1.)
+  const cells = Math.max(1, Math.round(360 / ideal));
+  return 360 / cells;
 }
 
 /** A coordinate is only usable if it is a real number in range. Pages publish junk; some publish 0,0. */

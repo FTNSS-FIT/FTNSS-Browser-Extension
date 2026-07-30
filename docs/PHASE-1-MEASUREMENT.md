@@ -104,7 +104,8 @@ written, which is also the easiest thing to audit.
    ground truth the whole measurement rests on. Press **Not a listing** on search and help pages; it
    records nothing and enters no denominator.
 4. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
-5. `npm run report measurements/<file>.json` — once **per file**, and each file is one cohort.
+5. `npm run report measurements/<file>.json <cohort>` — once **per file**, each file being one
+   cohort, and you supply the label. Nothing on disk names a site.
 
 Switching cohort with unexported records is refused: export and clear first. A batch is one site.
 
@@ -132,10 +133,12 @@ Deliberately, **no page identifier**: not the URL, not the hostname, not the add
   value could not fix it, because the constraint that keeps the data honest is exactly what makes it
   identifying.
 
-  The cohort lives **outside** the records instead: one export per cohort, named for it, and the
-  report reads it from the filename. The per-site and ccTLD comparisons are made **across** reports
-  rather than within one. The harness refuses to mix cohorts in a single batch, because a mixed file
-  could not be split afterwards.
+  The cohort lives **outside everything the extension writes**: not in the rows, and not in the
+  filename either — a file called `ftnss-phase1-airbnb.jp-….json` is itself a browsing record, and a
+  more durable one than the rows, because it survives being copied and attached. You pass the cohort
+  to the report when you run it. The per-site and ccTLD comparisons are made **across** reports
+  rather than within one, and the harness refuses to mix cohorts in a single batch because a mixed
+  file could not be split afterwards.
 - **The projection is applied when a record is written**, not when it is exported, so the trail never
   exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
   decides it belongs, where a denylist protects only the fields somebody remembered.

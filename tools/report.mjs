@@ -15,7 +15,8 @@ const EXTRACT_BUDGET_MS = 150;
 
 const path = process.argv[2];
 if (!path) {
-  console.error('usage: node tools/report.mjs <exported-measurements.json>');
+  console.error('usage: node tools/report.mjs <exported-measurements.json> [cohort-label]');
+  console.error('  e.g. node tools/report.mjs measurements/ftnss-phase1-batch-2026-08-04.json airbnb.com');
   process.exit(2);
 }
 
@@ -142,13 +143,13 @@ function summarise(rows, label) {
   }
 }
 
-// The cohort comes from the FILENAME, not from the rows — see the note below.
-const cohort = path
-  .split('/')
-  .pop()
-  .replace(/^ftnss-phase1-/, '')
-  .replace(/-\d{4}-\d{2}-\d{2}\.json$/, '')
-  .replace(/\.json$/, '');
+// THE COHORT IS AN ARGUMENT, not something read from the file or its name.
+//
+// It lived in the filename briefly, which moved the leak rather than removing it: a file called
+// `ftnss-phase1-airbnb.jp-….json` is itself a browsing record, and a more durable one than the rows,
+// because it survives being copied and attached. Nothing on disk names a site now. The person who
+// exported the batch knows which it was and says so here.
+const cohort = process.argv[3] ?? '(unlabelled — pass the cohort as the second argument)';
 
 summarise(records, `COHORT: ${cohort}`);
 

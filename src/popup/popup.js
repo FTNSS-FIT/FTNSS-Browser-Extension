@@ -104,6 +104,20 @@ async function render() {
   // Read the page as it is right now.
   const reading = await readActivePage();
 
+  // Records outlive a browser restart; the batch label does not, because it is session-scoped so no
+  // site string is ever written to disk. That combination would let a new cohort's readings be mixed
+  // into an old batch that can no longer be identified — so recording stops until the batch is
+  // exported and cleared. Exporting still works, which is the way out. (Codex review round 22, PR #1.)
+  const orphanedBatch = (await loadRecords()).length > 0 && (await batchCohortLabel()) == null;
+  if (orphanedBatch) {
+    readingEl.className = 'warn';
+    readingEl.textContent =
+      'There are records from a previous session whose cohort label is gone. Export and clear them before recording more.';
+    controlsEl.replaceChildren();
+    await refreshCount();
+    return;
+  }
+
   if (reading == null) {
     readingEl.className = 'muted';
     readingEl.textContent =
@@ -189,6 +203,24 @@ async function render() {
   let recorded = false;
   async function record(verdict) {
     if (recorded) return; // one record per popup opening
+
+    // RE-READ IMMEDIATELY BEFORE SAVING.
+    //
+    // The popup stays open while the person decides, and the page underneath it can navigate in that
+    // time — `pushState` needs no reload and announces nothing. Reading on demand removed the stale
+    // STORED reading, but the reading held in this closure is a snapshot too, and a verdict formed
+    // for listing A must not be written against whatever is on screen now.
+    //
+    // The comparison is on an opaque per-page token, so neither side handles a URL.
+    // (Codex review round 22, PR #1.)
+    const fresh = await readActivePage();
+    if (fresh == null || fresh.pageToken !== reading.pageToken) {
+      statusEl.replaceChildren(
+        el('span', 'This page changed while the popup was open — nothing recorded.', 'warn'),
+      );
+      await render();
+      return;
+    }
     if (cohort == null) {
       statusEl.replaceChildren(el('span', 'Choose the site you are measuring first.', 'warn'));
       return;
@@ -296,9 +328,12 @@ function download(records, suffix) {
 }
 
 document.getElementById('export').addEventListener('click', async () => {
-  // The cohort is in the FILENAME, not in the rows. `npm run report` reads it from there.
-  const label = (await batchCohortLabel()) ?? 'unlabelled';
-  download(exportableRecords(await loadRecords()), label.replace(/[^a-z0-9.]/gi, '-'));
+  // NEUTRAL FILENAME. Putting the cohort here moved the leak rather than removing it: a file called
+  // `ftnss-phase1-airbnb.jp-...json` sitting in a directory IS the browsing record the row
+  // projection exists to prevent, and it is more durable than the rows because it survives being
+  // opened, copied and attached. The person exporting knows which batch they just exported; the
+  // report takes the label as an argument when they run it. (Codex review round 22, PR #1.)
+  download(exportableRecords(await loadRecords()), 'batch');
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
