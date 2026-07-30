@@ -37,11 +37,16 @@ looking at, on your machine, and the reading does not leave it.
 
 ## Reproducible builds
 
-Every published version is tagged at the exact commit it was built from, and the build is a single
-documented command, so anyone can build it and compare the result against what is in the store.
+Every published version will be tagged at the exact commit it was built from, and the build will be a
+single documented command, so anyone can build it and compare the result against what is in the
+store.
+
+Today there is **no build step at all**: the extension loads unpacked and runs exactly as written,
+which is easier to audit than any build we could document. A bundler arrives when the product needs
+one, not before.
 
 ```bash
-npm ci && npm run build
+npm test    # extractors against hostile input, plus the no-network and permission assertions
 ```
 
 ## Configuration

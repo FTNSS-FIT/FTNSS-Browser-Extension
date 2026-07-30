@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>FTNSS measurement harness</title>
+<style>
+  body { font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; width: 280px; margin: 0; padding: 14px;
+         background: #14161a; color: #f2f3f5; }
+  h1 { font-size: 12px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .04em; color: #8b93a1; }
+  button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid #3a4049;
+           background: #1e2229; color: #f2f3f5; padding: 6px 10px; margin-right: 6px; }
+  button.primary { background: #FF4D1C; border-color: #FF4D1C; color: #fff; }
+  .count { font-size: 22px; margin-bottom: 10px; }
+  .muted { color: #8b93a1; }
+</style>
+<h1>FTNSS phase 1 — measurement</h1>
+<div class="count" id="count">…</div>
+<div>
+  <button class="primary" id="export">Export JSON</button>
+  <button id="clear">Clear</button>
+</div>
+<p class="muted">Export saves to your machine. Nothing here is ever transmitted.</p>
+<script type="module" src="popup.js"></script>
