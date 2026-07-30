@@ -17,7 +17,7 @@
 // NOTHING IN THIS FILE OR ANYTHING IT IMPORTS MAKES A NETWORK REQUEST. A test asserts it.
 
 (async () => {
-  const [{ runExtraction }, { publishReading, siteLabelFor }] = await Promise.all([
+  const [{ runExtraction }, { publishReading, invalidateReading, siteLabelFor }] = await Promise.all([
     import(chrome.runtime.getURL('extract/index.js')),
     import(chrome.runtime.getURL('lib/storage.js')),
   ]);
@@ -67,7 +67,18 @@
         observer.disconnect();
         resolve({ settled: !hitCeiling, mutated });
       }
-      observer.observe(document.documentElement, { childList: true, subtree: true });
+      // childList alone was not enough. A soft navigation that rewrites text and attributes in
+      // place — same number of elements, same number of images — produced no childList records, so
+      // the observer saw nothing, the wait ran to the ceiling, and a perfectly readable listing was
+      // published as `not_found`. Watching text and attributes costs more callbacks and buys the
+      // difference between measuring a page and inventing a failure for it.
+      // (Codex review round 11, PR #1.)
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        characterData: true,
+      });
       // Start the quiet timer ONLY when the change is already established. Without this, a soft
       // navigation that completed before the poll noticed it produced no further mutations, so the
       // wait ran to the full ceiling — five seconds added to the measured latency of exactly the
@@ -151,6 +162,13 @@
     const current = pageIdentity(location.href);
     if (current === lastIdentity) return;
     lastIdentity = current;
+    // INVALIDATE FIRST, synchronously. Remeasuring is asynchronous — it waits for the DOM to settle,
+    // which can take up to the ceiling — and for that whole window the previous listing's reading
+    // was still the tab's "current page". A soft navigation does not fire the browser-level load
+    // event the service worker watches, so nothing else would have cleared it: the popup could show
+    // and record listing A's coordinates while the person was looking at listing B, for seconds.
+    // (Codex review round 11, PR #1.)
+    void invalidateReading();
     void measureCurrentPage({
       softNavigation: true,
       navDetectedAt: performance.now(),

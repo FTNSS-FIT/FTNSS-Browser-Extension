@@ -7,6 +7,7 @@ import {
   distanceMetres,
   parseCoordinate,
 } from '../src/lib/geo.js';
+
 import { extractFromStructuredData } from '../src/extract/tier1-structured-data.js';
 import { extractFromMapLinks } from '../src/extract/tier2-map-links.js';
 import { extractFromAddressText } from '../src/extract/tier3-address-text.js';
@@ -305,4 +306,49 @@ test('the export boundary rejects an unusable point rather than passing it throu
   const { exportableRecords } = await import('../src/lib/storage.js');
   assert.equal(exportableRecords([{ transmitted: { lat: 0, lon: 0 } }])[0].transmitted, null);
   assert.equal(exportableRecords([{ transmitted: 'not a point' }])[0].transmitted, null);
+});
+
+test('rounding never produces an out-of-range point at the edges of the world', () => {
+  // 179.999 rounded UP is 180.001, which is not a longitude. The storage boundary then rejected the
+  // point and stored null, so a listing in Fiji or eastern Russia silently lost its coordinate and
+  // the loss looked like an extraction failure rather than an arithmetic one.
+  for (const [lat, lon] of [
+    [0, 179.999], [0, -179.999], [0, 180], [45, 179.997],
+    [89.999, 10], [-89.999, 10], [90, -180], [-90, 180],
+  ]) {
+    const rounded = toTransmittablePoint(lat, lon);
+    assert.ok(rounded !== null, `refused a valid input: ${lat},${lon}`);
+    assert.ok(
+      isUsableCoordinate(rounded.lat, rounded.lon),
+      `produced an out-of-range point for ${lat},${lon}: ${JSON.stringify(rounded)}`,
+    );
+  }
+});
+
+test('longitude wraps across the antimeridian rather than clamping', () => {
+  // Clamping 180.001 to 180 would be wrong by a whole grid cell; wrapping puts it where it belongs.
+  const rounded = toTransmittablePoint(0, 179.999);
+  assert.ok(rounded.lon < 0, 'should have wrapped to the western hemisphere');
+  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < 1200);
+});
+
+test('tier 2 fails closed when map urls disagree about where the listing is', () => {
+  // Taking the first map-shaped URL assumed the listing's own map comes first. A city-overview map,
+  // a "hotels near here" widget or an advert can come earlier — and a confident wrong coordinate is
+  // worse than an honest failure, because it pins a gym next to a hotel nobody is looking at.
+  const doc = linkDocument(
+    'https://maps.example/?ll=38.7115,-9.1287',
+    'https://maps.example/?ll=51.5074,-0.1278',
+  );
+  const r = extractFromMapLinks(doc);
+  assert.equal(r.status, 'not_found');
+  assert.match(r.reason, /disagree/);
+});
+
+test('tier 2 still answers when several map urls agree', () => {
+  const doc = linkDocument(
+    'https://maps.example/?ll=38.7115,-9.1287',
+    'https://maps.example/?ll=38.7118,-9.1290',
+  );
+  assert.equal(extractFromMapLinks(doc).status, 'found');
 });

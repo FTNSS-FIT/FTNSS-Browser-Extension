@@ -8,9 +8,15 @@
 // rather than by hand, we never navigate to them, and we never send them anywhere.
 
 import { found, notFound } from './result.js';
-import { isUsableCoordinate, parseCoordinate } from '../lib/geo.js';
+import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
-const MAX_ELEMENTS = 400;
+// Nodes VISITED, not nodes that looked map-shaped. Counting only the ones that passed the prefilter
+// meant a page full of ordinary links forced an unbounded walk while staying inside a cap that
+// claimed to prevent exactly that. (Codex review round 11, PR #1.)
+const MAX_ELEMENTS = 1500;
+const MAX_URL_CHARS = 2000;
+/** Two candidates further apart than this are not the same place, so we cannot pick between them. */
+const CONFLICT_METRES = 2000;
 
 /** `?ll=38.71,-9.12`, `?center=…`, `?q=…` — a lat,lon pair in a single query parameter. */
 const PAIR_PARAMS = ['ll', 'center', 'sll', 'cbll', 'q', 'query', 'markers', 'location'];
@@ -84,31 +90,52 @@ function readUrl(raw) {
  */
 export function extractFromMapLinks(doc) {
   const nodes = doc.querySelectorAll('a[href], img[src], iframe[src]');
-  let examined = 0;
+  let visited = 0;
+  const candidates = [];
 
   for (const node of nodes) {
-    if (examined >= MAX_ELEMENTS) break;
+    if (visited >= MAX_ELEMENTS) break;
+    visited += 1;
     const raw = node.getAttribute('href') || node.getAttribute('src');
-    if (!raw) continue;
+    if (!raw || raw.length > MAX_URL_CHARS) continue;
     // Cheap pre-filter: only URLs that look map-ish are worth parsing. Without it a page with
     // thousands of links makes this the slowest thing on the page.
     if (!/map|maps|geo|marker|\bll=|@-?\d/i.test(raw)) continue;
-    examined += 1;
 
     const hit = readUrl(raw);
     if (hit != null) {
-      return found({
-        lat: hit.lat,
-        lon: hit.lon,
-        tier: 2,
-        source: hit.source,
-        // A map pin is drawn where the site wants it shown. On a site that fuzzes location by
-        // design, the pin is the centre of the fuzzed area — so this tier can never be assumed
-        // building-accurate.
-        precision: 'approximate',
-      });
+      candidates.push(hit);
+      // Two is enough to know whether they agree; collecting every one on the page is work we do not
+      // need in order to answer that.
+      if (candidates.length >= 8) break;
     }
   }
 
-  return notFound(examined === 0 ? 'no map-shaped urls on page' : 'map urls carried no usable coordinate');
+  if (candidates.length === 0) {
+    return notFound(visited === 0 ? 'no elements to examine' : 'no map url carried a usable coordinate');
+  }
+
+  // FAIL CLOSED WHEN THE PAGE DISAGREES WITH ITSELF.
+  //
+  // Taking the first map-shaped URL in document order assumed the listing's own map comes first.
+  // Nothing enforces that: a page can carry a city-overview map, a "hotels near here" widget, or an
+  // advert, any of which may appear earlier. The result was a confident coordinate for the wrong
+  // place — and a wrong answer is worse here than no answer, because tier 3 or an honest failure
+  // both beat pinning a gym next to a hotel the person is not looking at.
+  // (Codex review round 11, PR #1.)
+  const first = candidates[0];
+  const disagreement = candidates.find((c) => distanceMetres(first, c) > CONFLICT_METRES);
+  if (disagreement != null) {
+    return notFound('map urls disagreed about the location — refusing to guess');
+  }
+
+  return found({
+    lat: first.lat,
+    lon: first.lon,
+    tier: 2,
+    source: first.source,
+    // A map pin is drawn where the site wants it shown. On a site that fuzzes location by design the
+    // pin is the centre of the fuzzed area, so this tier is never building-accurate.
+    precision: 'approximate',
+  });
 }

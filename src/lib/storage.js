@@ -95,6 +95,17 @@ export async function publishReading(reading) {
 }
 
 /**
+ * Drop the tab's reading immediately, without waiting to publish a replacement.
+ *
+ * Called the moment a soft navigation is detected. Remeasuring is asynchronous and a soft navigation
+ * fires no browser-level load event, so without this the previous listing's reading stayed live —
+ * and recordable — for as long as the settle wait took.
+ */
+export async function invalidateReading() {
+  await chrome.runtime.sendMessage({ type: 'FTNSS_INVALIDATE' });
+}
+
+/**
  * THE COHORT THE OPERATOR DECLARED, and the only site value that is ever persisted.
  *
  * The per-site comparison is the point of this phase — Booking against Airbnb is why those two were

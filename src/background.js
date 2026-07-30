@@ -88,6 +88,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // though it described the top-level page the operator is looking at.
   if (sender.id !== chrome.runtime.id) return false;
   if (sender.tab?.id == null || sender.frameId !== 0) return false;
+  // A content script telling us its page is gone needs no payload and no validation beyond the
+  // sender checks above — it can only ever discard its OWN tab's reading.
+  if (message?.type === 'FTNSS_INVALIDATE') {
+    navigationIds.set(sender.tab.id, (navigationIds.get(sender.tab.id) ?? 0) + 1);
+    chrome.storage.session
+      .remove(key(sender.tab.id))
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   if (message?.type !== 'FTNSS_READING') return false;
 
   const reading = validateReading(message.reading);

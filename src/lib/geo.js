@@ -64,12 +64,30 @@ export function isUsableCoordinate(lat, lon) {
  */
 export function toTransmittablePoint(lat, lon) {
   if (!isUsableCoordinate(lat, lon)) return null;
-  const roundedLat = Math.round(lat / LATITUDE_STEP) * LATITUDE_STEP;
+
+  // Rounding can push a point OUT of range at the edges of the coordinate system: 179.999 rounds up
+  // to 180.001, and 89.999 to 90.0005. The storage boundary then re-rounds, finds the point
+  // unusable, and stores `transmitted: null` — so a listing near the antimeridian (Fiji, New
+  // Zealand, eastern Russia) or at extreme latitude silently lost its coordinate, and the loss
+  // looked like an extraction failure rather than an arithmetic one.
+  //
+  // Latitude CLAMPS: there is nothing past the pole. Longitude WRAPS: 180.001°E is 179.999°W, a real
+  // place, and clamping it there would move the point by two degrees.
+  // (Codex review round 11, PR #1.)
+  const clampLatitude = (value) => Math.min(90, Math.max(-90, value));
+  const wrapLongitude = (value) => ((((value + 180) % 360) + 360) % 360) - 180;
+
+  const roundedLat = clampLatitude(Math.round(lat / LATITUDE_STEP) * LATITUDE_STEP);
   const lonStep = longitudeStepAt(roundedLat);
-  const roundedLon = Math.round(lon / lonStep) * lonStep;
+  const roundedLon = wrapLongitude(Math.round(lon / lonStep) * lonStep);
+
   // Trim floating-point noise. 6dp is far finer than any step above, so it never adds precision.
   const trim = (n) => Math.round(n * 1e6) / 1e6;
-  return { lat: trim(roundedLat), lon: trim(roundedLon) };
+  const point = { lat: trim(roundedLat), lon: trim(wrapLongitude(trim(roundedLon))) };
+
+  // Assert the postcondition rather than assume it. This function's output feeds a boundary that
+  // rejects unusable points, and an unusable point produced HERE would be discarded silently there.
+  return isUsableCoordinate(point.lat, point.lon) ? point : null;
 }
 
 /**
