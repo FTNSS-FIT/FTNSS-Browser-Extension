@@ -540,3 +540,39 @@ test('an ambiguous tier is never rescued by a lower tier', async () => {
   });
   assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
+
+test('the export allowlist is exact values, not "short enough"', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  // A length check is not an allowlist: it accepted any string under 41 characters, so a legacy
+  // record carrying an old interpolated @type — attacker-controlled page text — exported verbatim.
+  const [out] = exportableRecords([
+    { result: { status: 'found', tier: 1, source: 'ld+json <script>evil</script>.geo' } },
+  ]);
+  assert.equal(out.result.source, 'other');
+});
+
+test('nested objects are rebuilt, not carried over', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  // Copying `timing` and `tiers` wholesale meant the allowlist stopped at the top level.
+  const [out] = exportableRecords([
+    {
+      timing: { totalMs: 12, smuggled: 'page text', readingReadyMs: -5 },
+      tiers: { tier1: 'found', tier2: 'evil', smuggled: 'page text' },
+    },
+  ]);
+  assert.equal(out.timing.smuggled, undefined);
+  assert.equal(out.timing.readingReadyMs, null, 'a negative duration is not a duration');
+  assert.equal(out.tiers.smuggled, undefined);
+  assert.equal(out.tiers.tier2, 'not_found', 'an unknown tier status falls back, it does not pass');
+});
+
+test('tier 3 bounds how much work a page can commission', () => {
+  // textContent materialises the whole subtree before any cap applies, and readiness probes re-run
+  // extraction every 250ms — so an unbounded read is work a page can ask for repeatedly.
+  const huge = 'x '.repeat(500_000) + '27 Travessa das Merceeiras';
+  const many = Array.from({ length: 5000 }, () => textNode(huge));
+  const doc = fakeDocument({ '[class*="address" i]': many });
+  const started = Date.now();
+  extractFromAddressText(doc);
+  assert.ok(Date.now() - started < 2000, 'tier 3 took too long on a hostile page');
+});

@@ -106,6 +106,9 @@ async function renderCohort() {
   return selected;
 }
 
+/** Bounded re-checks while a reading is provisional. ~8 seconds, then it stops and says so. */
+let pollsRemaining = 20;
+
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();

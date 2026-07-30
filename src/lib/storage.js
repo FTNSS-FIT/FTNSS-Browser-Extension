@@ -227,18 +227,64 @@ const EXPORT_FIELDS = [
   'errorMetres', // a distance we computed; carries no position
 ];
 
+/**
+ * The exact `source` strings the extractors may emit. An EXACT-VALUE allowlist, not a length check.
+ *
+ * The length check was not an allowlist at all: it accepted any string under 41 characters, so a
+ * legacy record carrying an old interpolated `@type` — which was attacker-controlled page text —
+ * would have been exported verbatim. "Short enough" is not a property that makes text safe.
+ * (Codex review round 24, PR #1.)
+ */
+const KNOWN_SOURCES = new Set([
+  'ld+json.geo',
+  'map url ?ll',
+  'map url ?center',
+  'map url ?sll',
+  'map url ?cbll',
+  'map url ?q',
+  'map url ?query',
+  'map url ?markers',
+  'map url ?location',
+  'map url @lat,lon',
+  'other',
+]);
+
+const STATUSES = new Set(['found', 'found_address', 'not_found', 'ambiguous']);
+const PRECISIONS = new Set(['approximate', 'unknown']);
+const TIER_STATUSES = new Set(['found', 'found_address', 'not_found', 'ambiguous']);
+
+/** A finite, non-negative duration, or null. Anything else is a bug or page-derived; drop it. */
+const asDuration = (value) =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 600_000 ? value : null;
+
 /** The result, reduced to what the report reads: never a coordinate, never page text. */
 function exportableResult(result) {
   if (result == null) return null;
+  const source =
+    typeof result.source === 'string' && KNOWN_SOURCES.has(result.source) ? result.source : 'other';
   return {
-    status: result.status,
-    tier: result.tier ?? null,
-    precision: result.precision ?? null,
-    // `source` is a fixed vocabulary set by the extractors, but it is rebuilt here rather than
-    // copied so that a future extractor cannot widen what leaves this module by widening its own
-    // string. Anything unrecognised becomes 'other'.
-    source: typeof result.source === 'string' && result.source.length <= 40 ? result.source : 'other',
+    status: STATUSES.has(result.status) ? result.status : 'not_found',
+    tier: [1, 2, 3].includes(result.tier) ? result.tier : null,
+    precision: PRECISIONS.has(result.precision) ? result.precision : null,
+    source: source.startsWith('map url ') ? 'map url' : source,
   };
+}
+
+/** Rebuilt field by field, never copied. A wholesale copy exports whatever a caller put there. */
+function exportableTiming(timing) {
+  if (timing == null || typeof timing !== 'object') return null;
+  return {
+    totalMs: asDuration(timing.totalMs),
+    readingReadyMs: asDuration(timing.readingReadyMs),
+    addressReadyMs: asDuration(timing.addressReadyMs),
+    readinessUncertaintyMs: asDuration(timing.readinessUncertaintyMs) ?? 0,
+  };
+}
+
+function exportableTiers(tiers) {
+  if (tiers == null || typeof tiers !== 'object') return null;
+  const tier = (value) => (TIER_STATUSES.has(value) ? value : 'not_found');
+  return { tier1: tier(tiers.tier1), tier2: tier(tiers.tier2), tier3: tier(tiers.tier3) };
 }
 
 /**
@@ -261,6 +307,11 @@ export function exportableRecords(records) {
       if (record[field] !== undefined) out[field] = record[field];
     }
     if (out.transmitted !== undefined) out.transmitted = boundaryPoint(out.transmitted);
+    // Nested objects are REBUILT, not carried over. Copying `timing` and `tiers` wholesale meant the
+    // allowlist stopped at the top level: anything a caller nested inside them travelled out
+    // untouched, which is the same failure the allowlist exists to prevent, one level down.
+    if (out.timing !== undefined) out.timing = exportableTiming(out.timing);
+    if (out.tiers !== undefined) out.tiers = exportableTiers(out.tiers);
     out.result = exportableResult(record.result);
     return out;
   });
