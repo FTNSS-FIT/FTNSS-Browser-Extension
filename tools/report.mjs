@@ -70,21 +70,27 @@ function summarise(rows, label) {
   // hit on the strength of how it was measured. (Codex review round 4, PR #1.)
   const worstCaseLatency = (r) =>
     Number.isFinite(latencyOf(r)) ? latencyOf(r) + (r.latencyUncertaintyMs ?? 0) : NaN;
-  const overBudget = (r) =>
-    (Number.isFinite(worstCaseLatency(r)) && worstCaseLatency(r) > LATENCY_BUDGET_MS) ||
-    (Number.isFinite(r.timing?.totalMs) && r.timing.totalMs > EXTRACT_BUDGET_MS);
-  const withinBudget = correct.filter((r) => !overBudget(r)).length;
-  const unmeasuredLatency = correct.filter((r) => !Number.isFinite(latencyOf(r))).length;
+  // A hit needs latency that was MEASURED and inside the budget. Round 3 fixed missing-latency being
+  // treated as too slow; the fix over-corrected into treating it as fast enough, which inflates the
+  // headline number instead of deflating it. Neither is right: an unmeasured record is not evidence
+  // of meeting a budget, so it is excluded from hits and reported on its own line.
+  // (Codex review round 5, PR #1.)
+  const measured = (r) => Number.isFinite(worstCaseLatency(r)) && Number.isFinite(r.timing?.totalMs);
+  const inBudget = (r) =>
+    worstCaseLatency(r) <= LATENCY_BUDGET_MS && r.timing.totalMs <= EXTRACT_BUDGET_MS;
+  const withinBudget = correct.filter((r) => measured(r) && inBudget(r)).length;
+  const unmeasuredLatency = correct.filter((r) => !measured(r)).length;
+  const correctButSlow = correct.filter((r) => measured(r) && !inBudget(r)).length;
 
   const readyTimes = rows.map(worstCaseLatency).filter(Number.isFinite);
   const extractTimes = rows.map((r) => r.timing?.totalMs).filter(Number.isFinite);
 
   console.log(`\n${label}  (n=${total})`);
   console.log(`  HIT (correct + in budget)  ${pct(withinBudget, total)}   ${withinBudget}/${total}`);
-  console.log(`  correct, over budget       ${pct(correct.length - withinBudget, total)}`);
+  console.log(`  correct, over budget       ${pct(correctButSlow, total)}`);
   if (unmeasuredLatency > 0) {
     console.log(
-      `  (of the hits, ${unmeasuredLatency} had no latency measurement — counted on correctness only)`,
+      `  correct, latency UNMEASURED ${pct(unmeasuredLatency, total)}  — not counted as hits either way`,
     );
   }
   console.log(`  WRONG                      ${pct(wrong, total)}   ${wrong}/${total}   <- must be ~0`);

@@ -79,7 +79,10 @@ Load `src/` as an unpacked extension. There is no build step and no dependencies
 written, which is also the easiest thing to audit.
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
-2. Browse listings. The recorder appears on listing pages; record a verdict on each.
+2. Browse listings. **The recorder appears on every page of a listed site**, not only on pages we
+   think are listings — any heuristic for that suppressed the panel on precisely the pages where
+   every extractor failed, which is the population most in need of counting. Press **Not a listing**
+   on search and help pages; it records nothing.
 3. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
 4. `npm run report measurements/<file>.json`
 
@@ -106,7 +109,10 @@ Deliberately, **no page identifier**: not the URL, not the hostname, not the add
   exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
   decides it belongs, where a denylist protects only the fields somebody remembered.
 - Coordinates are stored only as the ~1km point the product would itself transmit, which is inside
-  the privacy envelope the product already operates in.
+  the privacy envelope the product already operates in — and that rounding is **re-applied at the
+  storage boundary**, so it does not depend on the caller having remembered.
+- Timestamps are **date-only**. A precise time beside a site label is the makings of a browsing log,
+  and nothing in the report groups more finely than a day.
 
 An earlier version stored the URL so a disputed reading could be re-checked, and argued it as a
 bounded exception written into `AGENTS.md`. That was wrong in two ways: it put a browsing trail on

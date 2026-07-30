@@ -22,20 +22,6 @@
     ]);
 
   /**
-   * Is this page worth measuring at all? Deliberately INCLUSIVE: a page wrongly measured costs the
-   * person one "not a listing" click, whereas a listing wrongly skipped is invisible to the sample —
-   * and it is invisible in a biased way, because the pages we fail to recognise are correlated with
-   * the pages we fail to read. That would flatter the hit rate, which is the one number this whole
-   * phase exists to produce. (Widened after Codex review, PR #1.)
-   */
-  function worthMeasuring(extraction) {
-    if (extraction.result.status !== 'not_found') return true;
-    if (extraction.tiers.tier1.status !== 'not_found') return true;
-    if (/\/(hotel|hotels|rooms|stays|property|accommodation|h)\//i.test(location.pathname)) return true;
-    return document.querySelector('script[type="application/ld+json"]') != null;
-  }
-
-  /**
    * Booking.com and Airbnb are both pushState applications: moving from listing A to listing B does
    * not reload the page. Extracting once at document_idle and reading location.href later meant the
    * panel kept showing A's coordinates while the URL said B — and, far worse, SAVING recorded A's
@@ -56,11 +42,19 @@
   let lastSignature = null;
 
   function domSignature() {
+    // DOM ONLY. This included location.pathname, which defeated the entire purpose: on a pushState
+    // navigation the path changes BEFORE the DOM does, so the signature differed on a document that
+    // had not been touched yet, the stabilisation wait was skipped, and listing A's markup was read
+    // as listing B. A URL change is the QUESTION, never the evidence.
+    // (Codex review round 5, PR #1.)
     let ldLength = 0;
     for (const script of document.querySelectorAll('script[type="application/ld+json"]')) {
       ldLength += (script.textContent || '').length;
     }
-    return `${location.pathname}|${ldLength}|${document.title.length}`;
+    const main = document.querySelector('main') ?? document.body;
+    return `${ldLength}|${document.title}|${main ? main.childElementCount : 0}|${
+      document.querySelectorAll('img').length
+    }`;
   }
 
   /**
@@ -145,12 +139,16 @@
     // The URL moved while we were extracting — this reading cannot be attributed to either page.
     if (location.href !== capturedUrl || myGeneration !== generation) return;
 
-    if (!worthMeasuring(extraction)) {
-      // Do NOT leave a previous panel standing. Returning early here is what let listing A's reading
-      // stay on screen after navigating to a page we decided not to measure.
-      unmountRecorder();
-      return;
-    }
+    // THE PANEL ALWAYS MOUNTS on a matched host. There is no longer a heuristic deciding which pages
+    // are worth measuring, because every version of that heuristic suppressed the recorder on
+    // exactly the pages where every extractor failed — which is the population we most need counted.
+    // Skipping them makes them invisible to the sample, and invisible in a BIASED direction, since
+    // pages we cannot classify correlate with pages we cannot read. The measured hit rate would have
+    // come out higher than the truth, which is the one failure this phase cannot afford.
+    //
+    // The cost is that the panel also appears on search and help pages. That costs the person one
+    // click on "Not a listing", which records nothing. A wasted click is recoverable; a silently
+    // flattered headline number is not. (Codex review round 5, PR #1.)
 
     // Latency the user would actually feel: from the page being ready to the panel being on screen.
     // Only meaningful for the initial load — after a soft navigation there is no new navigation
@@ -179,6 +177,13 @@
       readyToPanelMs,
       capturedUrl,
       onSave: async ({ verdict, precisionVerdict, groundTruthRaw }) => {
+        // "Not a listing" is a dismissal, not a datum — the page was never a measurement candidate,
+        // so recording it would put non-listings in the denominator.
+        if (verdict === 'not_a_listing') {
+          unmountRecorder();
+          return;
+        }
+
         // Refuse to save a reading that belongs to a page the browser has already left. Without
         // this, a slow verdict on listing A lands on listing B's record.
         if (location.href !== capturedUrl) {
@@ -200,7 +205,11 @@
         await saveRecord({
           // Chosen from our own allowlist, not read off the page.
           site: siteLabelFor(location.hostname),
-          recordedAt: new Date().toISOString(),
+          // DATE ONLY, deliberately. A precise timestamp beside a site label is the makings of a
+          // browsing log — "this person was on booking.com at 21:04". The report never groups by
+          // time finer than a day, so the precision bought nothing and cost exactly that.
+          // (Codex review round 5, PR #1.)
+          recordedAt: new Date().toISOString().slice(0, 10),
           softNavigation: isSoftNavigation,
           // How late the navigation may have been NOTICED. A polled detection can be up to one
           // interval behind the real navigation, so the measured latency is an UNDER-estimate by up

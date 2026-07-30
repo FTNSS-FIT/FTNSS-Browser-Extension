@@ -72,7 +72,11 @@ const CSS = `
  */
 function describe(result) {
   if (result.status === 'found') {
-    const decimals = result.precision === 'approximate' ? 2 : 3;
+    // TWO decimals for BOTH. Three decimals is ~100m, which is a precision claim — and it was being
+    // made on reads explicitly classified 'unknown', i.e. the ones where we have the least basis for
+    // any claim at all. Unknown cannot be rendered finer than approximate; if anything it deserves
+    // less. (Codex review round 5, PR #1.)
+    const decimals = 2;
     const tag = result.precision === 'approximate' ? 'approximate' : 'precision unverified';
     return (
       `Tier ${result.tier} · ~${result.lat.toFixed(decimals)}, ${result.lon.toFixed(decimals)} · ${tag}`
@@ -214,6 +218,9 @@ export function mountRecorder({ extraction, readyToPanelMs, onSave }) {
         ['Confirm no read', 'no_read', true],
         ["Can't tell", 'unverifiable', false],
       ];
+  // Always available: the panel now mounts on every page of a matched host, so there has to be a way
+  // to say "this was never a listing" that records nothing rather than a failure.
+  options.push(['Not a listing', 'not_a_listing', false]);
   for (const [label, verdict, primary] of options) {
     const button = el('button', label);
     if (primary) button.className = 'primary';

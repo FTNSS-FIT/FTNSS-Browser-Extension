@@ -253,3 +253,16 @@ test('a longer site label wins, so airbnb.com.au is not read as airbnb.com', asy
   assert.equal(siteFamilyFor('airbnb.com.au'), 'airbnb');
   assert.equal(siteFamilyFor('other'), 'other');
 });
+
+test('the export boundary re-rounds a coordinate the caller did not round', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  // A caller handing over a full-precision point must not be able to put one in the record.
+  const [out] = exportableRecords([{ transmitted: { lat: 38.711503, lon: -9.128744 } }]);
+  assert.deepEqual(out.transmitted, { lat: 38.71, lon: -9.13 });
+});
+
+test('the export boundary rejects an unusable point rather than passing it through', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  assert.equal(exportableRecords([{ transmitted: { lat: 0, lon: 0 } }])[0].transmitted, null);
+  assert.equal(exportableRecords([{ transmitted: 'not a point' }])[0].transmitted, null);
+});

@@ -17,6 +17,8 @@
 //   • that projection is a strict ALLOWLIST. A denylist fails open — it protects only the fields
 //     someone remembered, and every new field is exposed by default.
 
+import { toTransmittablePoint } from './geo.js';
+
 const KEY = 'phase1_records';
 const MAX_RECORDS = 500;
 
@@ -125,12 +127,26 @@ function exportableResult(result) {
   };
 }
 
+/**
+ * Re-round at the boundary rather than trusting what the caller handed us.
+ *
+ * `transmitted` was copied through verbatim, so the rounding guarantee lived in the ONE caller that
+ * happened to apply it — which is precisely the "rounding performed by each caller" shape this
+ * repo's own rules call a defect even while every current caller is correct. Rounding here means no
+ * caller can bypass it, present or future. (Codex review round 5, PR #1.)
+ */
+function boundaryPoint(value) {
+  if (value == null || typeof value !== 'object') return null;
+  return toTransmittablePoint(Number(value.lat), Number(value.lon));
+}
+
 export function exportableRecords(records) {
   return records.map((record) => {
     const out = {};
     for (const field of EXPORT_FIELDS) {
       if (record[field] !== undefined) out[field] = record[field];
     }
+    if (out.transmitted !== undefined) out.transmitted = boundaryPoint(out.transmitted);
     out.result = exportableResult(record.result);
     return out;
   });
