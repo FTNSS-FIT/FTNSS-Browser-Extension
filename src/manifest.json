@@ -1,0 +1,89 @@
+{
+  "manifest_version": 3,
+  "name": "FTNSS phase 1 measurement harness (internal)",
+  "version": "0.1.0",
+  "description": "Internal measurement tool. Records how often a listing page's location can be read. Not for publication.",
+  "permissions": [
+    "storage"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.booking.com/*",
+        "*://*.booking.co.uk/*",
+        "*://*.booking.fr/*",
+        "*://*.booking.de/*",
+        "*://*.airbnb.com/*",
+        "*://*.airbnb.co.uk/*",
+        "*://*.airbnb.fr/*",
+        "*://*.airbnb.de/*",
+        "*://*.airbnb.es/*",
+        "*://*.airbnb.it/*",
+        "*://*.airbnb.nl/*",
+        "*://*.airbnb.pt/*",
+        "*://*.airbnb.ca/*",
+        "*://*.airbnb.com.au/*",
+        "*://*.airbnb.ie/*",
+        "*://*.airbnb.at/*",
+        "*://*.airbnb.ch/*",
+        "*://*.airbnb.be/*",
+        "*://*.airbnb.dk/*",
+        "*://*.airbnb.se/*",
+        "*://*.airbnb.no/*",
+        "*://*.airbnb.fi/*",
+        "*://*.airbnb.pl/*",
+        "*://*.airbnb.gr/*",
+        "*://*.airbnb.cz/*",
+        "*://*.airbnb.com.br/*",
+        "*://*.airbnb.mx/*",
+        "*://*.airbnb.jp/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "extract/*.js",
+        "lib/*.js"
+      ],
+      "matches": [
+        "*://*.booking.com/*",
+        "*://*.booking.co.uk/*",
+        "*://*.booking.fr/*",
+        "*://*.booking.de/*",
+        "*://*.airbnb.com/*",
+        "*://*.airbnb.co.uk/*",
+        "*://*.airbnb.fr/*",
+        "*://*.airbnb.de/*",
+        "*://*.airbnb.es/*",
+        "*://*.airbnb.it/*",
+        "*://*.airbnb.nl/*",
+        "*://*.airbnb.pt/*",
+        "*://*.airbnb.ca/*",
+        "*://*.airbnb.com.au/*",
+        "*://*.airbnb.ie/*",
+        "*://*.airbnb.at/*",
+        "*://*.airbnb.ch/*",
+        "*://*.airbnb.be/*",
+        "*://*.airbnb.dk/*",
+        "*://*.airbnb.se/*",
+        "*://*.airbnb.no/*",
+        "*://*.airbnb.fi/*",
+        "*://*.airbnb.pl/*",
+        "*://*.airbnb.gr/*",
+        "*://*.airbnb.cz/*",
+        "*://*.airbnb.com.br/*",
+        "*://*.airbnb.mx/*",
+        "*://*.airbnb.jp/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "FTNSS measurement harness"
+  }
+}

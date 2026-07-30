@@ -59,6 +59,12 @@ record, because widening permissions forces every existing user to re-accept.
 Match patterns must cover a listed site's **country-code domain variants**. A list covering only `.com`
 silently fails for users outside the English-speaking market, which is a bug, not a gap in coverage.
 
+The permission list is `storage`, and nothing else. `activeTab` was added at one point so the popup
+could ask the content script a question, and removed again once it was clear that messaging a content
+script the manifest already injects needs no permission at all — it bought nothing and widened the
+boundary to every tab the toolbar is clicked on. A test pins the full list, so growth is a decision
+rather than a detail.
+
 ## 5. Reading a page is tiered, and failure is always visible
 
 The extension tries, in order: published structured data (the machine-readable block sites maintain
@@ -110,6 +116,86 @@ cadence (store review runs on someone else's timetable), and a different runtime
 It shares **contracts, not code**: the design tokens, the address and country-code conventions, and
 the endpoint. Those were settled across several applications, and a new surface reinventing them is
 how the same bug lands a fourth time.
+
+## 10. The UI lives in the extension, and the page is read ON DEMAND
+
+The harness renders nothing into the listing page, and it stores no reading between navigations. The
+popup asks the content script to read the page at the moment it opens.
+
+**Why the UI is not in the page.** A panel mounted in the page sits in a document the page controls,
+so the page can hide it, move it, swallow its clicks, or observe what is typed into it. The two
+things that UI exists for are displaying "we could not read this page" — whose entire value is that
+its absence cannot be arranged by the page — and capturing the person's verdict, which is the ground
+truth the whole measurement rests on. Neither can live where the subject of the measurement can
+interfere.
+
+**Why the reading is taken on demand.** The earlier design published readings into shared storage for
+the popup to collect later, which made it possible for a stored reading to describe a page the person
+had already left. Booking and Airbnb are both `pushState` applications: the URL changes with no page
+load and no reliable event. Polling, mutation observers, DOM fingerprints, document ids, sequence
+numbers and service-worker navigation epochs were each tried; each closed one gap and opened another,
+and the failure was always the same — listing A's coordinates presented as listing B's.
+
+Reading on demand removes the question rather than answering it. The reading is taken milliseconds
+before it is shown, from the page on screen. It cannot go stale because it does not exist until it is
+needed. This deleted the service worker, all the navigation state, and roughly 1,000 lines.
+
+**What remains** is a small navigation signal governing one timer — how long until the page became
+readable. If it is wrong, a latency is reported as unmeasured. It can no longer misattribute a
+coordinate, which is the property that matters.
+
+## 11. The site is DECLARED by the operator, not derived from the page
+
+Each record carries which site was being measured. That value is chosen by the person doing the
+measuring, before they start — it is never read from the page.
+
+**Why it exists at all.** The per-site comparison *is* the measurement. The two sites were chosen
+precisely because they are structurally different, and the country-code-domain question cannot be
+answered without knowing which domain a reading came from. Dropping the field would not make the
+harness more private so much as stop it being an instrument.
+
+**Why it is declared rather than detected.** Deriving it from the page's hostname and writing it into
+an exported file makes that file a record of which domains were visited — the thing this project's
+rules say never leaves the browser. Both were true at once: the analysis was necessary and the
+provenance was wrong. Declaring it keeps the entire analysis with nothing page-derived persisted.
+
+**And what is recorded is the family, not the hostname.** Fixing the provenance was not enough on its
+own: `airbnb.jp` is still a hostname, and because recording is refused unless the declaration matches
+the page, an export carrying it would still have proved which domain was visited. Records carry
+`{family: 'airbnb', variant: 'cctld'}` — which answers the question the phase actually asks, *do
+country-code domains behave differently from the primary one?*, without recording which country.
+
+**Accuracy is not traded away for it.** The content script still reports what it detected, and the
+popup refuses to record while the declared cohort disagrees with the detected page. That check runs
+in the browser and the detected value is never written to a record — so a mislabelled cohort is
+caught without the label ever being page-derived.
+
+## 12. What the panel shows: the six nearest gyms, within a maximum radius
+
+**Decided (Jordan, 2026-07-30):** the panel shows the **six nearest** published gyms to the queried
+point, and nothing beyond a maximum radius. Ranking is by distance.
+
+**Why a cap on both.** Six is about what a small panel can show without becoming a directory, and a
+traveller deciding "can I train here?" needs the nearest few rather than all of them. The radius
+matters more: without one, the sixth result in a thin market could be in another city, and a gym
+nobody could realistically reach is worse than an honest "nothing near here" — it makes the panel
+look like it is padding.
+
+**Proposed radius: 5km**, pending confirmation. The reasoning: under about 2km the result set would
+be mostly empty at current supply, and beyond about 5km a gym stops being somewhere you would go from
+a hotel. 5km is a short taxi or metro ride in a city, which is still a usable answer.
+
+**How this interacts with the ~1km rounding — they are different things.** The rounding is about
+*precision of the query point*: we are told roughly where, to about 1.1km. The radius is about *how
+far we then look*. They are unrelated numbers, but the first constrains what the second can claim:
+because the query point carries about 1.1km of uncertainty, **a displayed distance cannot be more
+precise than that**. The panel says "about 2km" or "a short walk", never "400m from this hotel",
+which the spec's own mock-up shows and which is not a claim the architecture can support.
+
+**The empty case is a result, not a failure**, and must read that way: "no FTNSS gyms within 5km"
+is true, useful, and — per §1 of the spec — the market-expansion signal worth collecting. It must
+never be confused with "we could not read this page", which is the different failure the panel also
+has to be able to state.
 
 ---
 
