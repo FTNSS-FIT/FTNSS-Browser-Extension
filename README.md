@@ -62,3 +62,5 @@ vulnerability.
 ## Licence
 
 [MIT](LICENSE).
+
+<!-- smoke test: verifying the deploy-notify webhook reaches the consumer deployments channel -->
