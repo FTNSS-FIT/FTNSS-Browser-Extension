@@ -30,13 +30,32 @@ const LATITUDE_STEP = TRANSMIT_KM / KM_PER_DEGREE_LATITUDE; // ~0.01°
  */
 function longitudeStepAt(latitude) {
   const cos = Math.cos((latitude * Math.PI) / 180);
-  // Near the poles the step tends to infinity. Clamp to 1°, coarser than anything the product needs,
-  // which keeps the output finite and comparable.
-  if (cos < LATITUDE_STEP) return 1;
-  return Math.min(1, LATITUDE_STEP / cos);
+  // NO UPPER CAP ON THE STEP. There was a `Math.min(1, …)` here, on the reasoning that a step of a
+  // whole degree is coarser than anything the product needs. That reasoning is backwards: near the
+  // pole you need a LARGER step in degrees to span the same distance, because the degrees themselves
+  // are short. Capping at 1° produced 194m cells at 89.9° and 19m cells at 89.99° — the guarantee
+  // failing hardest exactly where the correction was supposed to be doing the most work.
+  // (Codex review round 15, PR #1.)
+  if (cos <= 0) return Infinity;
+  return LATITUDE_STEP / cos;
 }
 
 /** A coordinate is only usable if it is a real number in range. Pages publish junk; some publish 0,0. */
+/**
+ * In range, and nothing more. Separate from `isUsableCoordinate` because the two questions differ:
+ * whether a page's value is worth believing, and whether our own arithmetic produced a coordinate.
+ *
+ * Conflating them cost a real case. A listing genuinely near (0, 0) — the Gulf of Guinea, but also
+ * anything within half a cell of the equator or the prime meridian — rounds ONTO Null Island, and
+ * the Null Island heuristic then discarded it as though the input had been junk. The guard that
+ * exists to catch broken page templates was throwing away correctly-rounded points.
+ */
+export function isInRange(lat, lon) {
+  return (
+    Number.isFinite(lat) && Number.isFinite(lon) && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180
+  );
+}
+
 export function isUsableCoordinate(lat, lon) {
   return (
     Number.isFinite(lat) &&
@@ -79,15 +98,23 @@ export function toTransmittablePoint(lat, lon) {
 
   const roundedLat = clampLatitude(Math.round(lat / LATITUDE_STEP) * LATITUDE_STEP);
   const lonStep = longitudeStepAt(roundedLat);
-  const roundedLon = wrapLongitude(Math.round(lon / lonStep) * lonStep);
+
+  // Once one cell spans half the globe, longitude carries no usable information about where someone
+  // is — every value maps to the same place. Canonicalising to 0 says that plainly instead of
+  // publishing an arbitrary survivor of the arithmetic.
+  const roundedLon =
+    !Number.isFinite(lonStep) || lonStep >= 180
+      ? 0
+      : wrapLongitude(Math.round(lon / lonStep) * lonStep);
 
   // Trim floating-point noise. 6dp is far finer than any step above, so it never adds precision.
   const trim = (n) => Math.round(n * 1e6) / 1e6;
   const point = { lat: trim(roundedLat), lon: trim(wrapLongitude(trim(roundedLon))) };
 
-  // Assert the postcondition rather than assume it. This function's output feeds a boundary that
-  // rejects unusable points, and an unusable point produced HERE would be discarded silently there.
-  return isUsableCoordinate(point.lat, point.lon) ? point : null;
+  // Assert the postcondition rather than assume it — but assert the RIGHT one. This checks range
+  // only: the input was already vetted by `isUsableCoordinate`, and re-applying the Null Island
+  // heuristic here silently dropped every point that legitimately rounds onto (0, 0).
+  return isInRange(point.lat, point.lon) ? point : null;
 }
 
 /**

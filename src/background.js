@@ -84,17 +84,36 @@ const navigationIds = new Map();
 const invalidatedDocuments = new Set();
 /** The document currently published for each tab, so we know which one to invalidate. */
 const activeDocuments = new Map();
+/** The newest navigation sequence a tab's content script has reported. */
+const latestSeq = new Map();
 
-function invalidateTab(tabId) {
+/**
+ * Drop a tab's reading.
+ *
+ * `blacklistDocument` is the whole distinction, and getting it wrong broke the harness outright.
+ *
+ * A SOFT navigation keeps the SAME document — that is what same-document navigation means — so
+ * blacklisting the document on a soft invalidate blacklisted the very document about to publish the
+ * replacement. Every subsequent listing on the site was then rejected and silently went unmeasured,
+ * on two sites that are both single-page applications. The harness would have appeared to work,
+ * recorded the first listing of a session, and quietly ignored every one after it.
+ *
+ * Blacklisting is only correct for a FULL navigation, where the old document is genuinely gone and
+ * any message still in flight from it is stale by definition. For a soft navigation the sequence
+ * number below does that job instead. (Codex review round 15, PR #1.)
+ */
+function invalidateTab(tabId, { blacklistDocument }) {
   navigationIds.set(tabId, (navigationIds.get(tabId) ?? 0) + 1);
-  const previous = activeDocuments.get(tabId);
-  if (previous != null) {
-    invalidatedDocuments.add(previous);
-    // Unbounded growth would be a slow leak in a worker that can live for a long time. The set only
-    // needs to outlive messages already in flight, which is milliseconds.
-    setTimeout(() => invalidatedDocuments.delete(previous), 30_000);
+  if (blacklistDocument) {
+    const previous = activeDocuments.get(tabId);
+    if (previous != null) {
+      invalidatedDocuments.add(previous);
+      // Unbounded growth would be a slow leak in a worker that can live a long time. The set only
+      // needs to outlive messages already in flight, which is milliseconds.
+      setTimeout(() => invalidatedDocuments.delete(previous), 30_000);
+    }
+    activeDocuments.delete(tabId);
   }
-  activeDocuments.delete(tabId);
   return chrome.storage.session.remove(key(tabId));
 }
 
@@ -108,7 +127,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // A content script telling us its page is gone needs no payload and no validation beyond the
   // sender checks above — it can only ever discard its OWN tab's reading.
   if (message?.type === 'FTNSS_INVALIDATE') {
-    invalidateTab(sender.tab.id)
+    // A soft navigation: same document, so the document itself stays welcome.
+    if (typeof message.seq === 'number') latestSeq.set(sender.tab.id, message.seq);
+    invalidateTab(sender.tab.id, { blacklistDocument: false })
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;
@@ -133,6 +154,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // (Codex review round 14, PR #1.)
   const documentId = sender.documentId ?? null;
   if (documentId != null && invalidatedDocuments.has(documentId)) return false;
+
+  // Within ONE document, `documentId` cannot distinguish listing A from listing B, so a sequence
+  // number supplied by the content script does. A reading from a superseded navigation is stale
+  // however promptly it arrives.
+  const seq = typeof message.seq === 'number' ? message.seq : 0;
+  if (seq < (latestSeq.get(sender.tab.id) ?? 0)) return false;
+  latestSeq.set(sender.tab.id, seq);
+
   activeDocuments.set(sender.tab.id, documentId);
 
   chrome.storage.session
@@ -155,10 +184,13 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   // `loading` fires for every top-level navigation, including one leaving our site list entirely.
   // It needs no host permission, which is the point: the alternative signals all do.
   if (changeInfo.status !== 'loading') return;
-  void invalidateTab(tabId);
+  // A full navigation: the old document is gone, so its late messages are stale by definition.
+  latestSeq.delete(tabId);
+  void invalidateTab(tabId, { blacklistDocument: true });
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
-  void invalidateTab(tabId);
+  void invalidateTab(tabId, { blacklistDocument: true });
   navigationIds.delete(tabId);
+  latestSeq.delete(tabId);
 });

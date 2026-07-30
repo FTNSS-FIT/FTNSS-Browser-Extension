@@ -144,6 +144,7 @@
         // the same ambiguity the never-show-an-empty-panel rule exists to prevent.
         await publishReading({
           site: siteLabelFor(location.hostname),
+          seq: myGeneration,
           identity: pageIdentity(location.href),
           result: { status: 'not_found', reason: 'page did not settle after navigation' },
           tiers: { tier1: 'not_found', tier2: 'not_found', tier3: 'not_found' },
@@ -174,6 +175,7 @@
 
     await publishReading({
       site: siteLabelFor(location.hostname),
+      seq: myGeneration,
       identity,
       result: extraction.result,
       tiers: {
@@ -211,7 +213,7 @@
     // event the service worker watches, so nothing else would have cleared it: the popup could show
     // and record listing A's coordinates while the person was looking at listing B, for seconds.
     // (Codex review round 11, PR #1.)
-    void invalidateReading();
+    void invalidateReading(generation + 1);
     // Snapshot the mutation counter BEFORE the async work, so "did anything change because of this
     // navigation" is answerable afterwards.
     const mutationCountAtNavigation = mutationCount;

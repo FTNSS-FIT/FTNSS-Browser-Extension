@@ -70,6 +70,10 @@ export async function publishReading(reading) {
   const result = reading.result ?? null;
   await chrome.runtime.sendMessage({
     type: 'FTNSS_READING',
+    // Which navigation this reading belongs to. Within one document nothing else can tell listing A
+    // apart from listing B, and a reading from a superseded navigation is stale however promptly it
+    // arrives.
+    seq: reading.seq,
     reading: {
       // The detected site is sent so the popup can WARN when it disagrees with the cohort the
       // operator declared. It is never persisted — see COHORTS below.
@@ -101,8 +105,8 @@ export async function publishReading(reading) {
  * fires no browser-level load event, so without this the previous listing's reading stayed live —
  * and recordable — for as long as the settle wait took.
  */
-export async function invalidateReading() {
-  await chrome.runtime.sendMessage({ type: 'FTNSS_INVALIDATE' });
+export async function invalidateReading(seq) {
+  await chrome.runtime.sendMessage({ type: 'FTNSS_INVALIDATE', seq });
 }
 
 /**
@@ -193,8 +197,14 @@ export async function loadRecords() {
  */
 export async function saveRecord(record) {
   const records = await loadRecords();
-  const [stored] = exportableRecords([record]);
-  const trimmed = [...records, stored].slice(-MAX_RECORDS);
+  // EXISTING rows go through the projection too, not just the new one.
+  //
+  // They were rewritten to disk unchanged on every save, so anything an earlier build had stored —
+  // URLs, address text, exact coordinates — survived indefinitely while the popup stated that none
+  // of it was kept. Applying the allowlist to the whole set turns each save into a migration, so the
+  // claim becomes true for existing installs rather than only for fresh ones.
+  // (Codex review round 15, PR #1.)
+  const trimmed = exportableRecords([...records, record]).slice(-MAX_RECORDS);
   await chrome.storage.local.set({ [KEY]: trimmed });
   return trimmed.length;
 }

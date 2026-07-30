@@ -386,3 +386,39 @@ test('a partial or out-of-range ground truth is refused, not coerced', async () 
   }
   assert.deepEqual(parse('38.7115, -9.1287'), { lat: 38.7115, lon: -9.1287 });
 });
+
+test('the ~1km guarantee holds at POLAR latitudes too', async () => {
+  const { isInRange } = await import('../src/lib/geo.js');
+  // A `Math.min(1, step)` cap here made cells 194m at 89.9 and 19m at 89.99 — the guarantee failing
+  // hardest exactly where the latitude correction was supposed to be working hardest. Near the pole
+  // you need a LARGER step in degrees, because the degrees themselves are short.
+  for (const lat of [80, 85, 89, 89.43, 89.9, 89.99]) {
+    let worst = 0;
+    for (let i = 0; i < 300; i += 1) {
+      const point = { lat, lon: -180 + i * 1.2 };
+      const rounded = toTransmittablePoint(point.lat, point.lon);
+      assert.ok(rounded && isInRange(rounded.lat, rounded.lon), `out of range at ${lat}`);
+      worst = Math.max(worst, distanceMetres(point, rounded));
+    }
+    assert.ok(worst > 100, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
+    assert.ok(worst < 1200, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
+  }
+});
+
+test('a point that legitimately rounds onto Null Island is kept, while (0,0) input is refused', () => {
+  // These are different questions. Re-applying the broken-template heuristic as a postcondition
+  // discarded every correctly-rounded point within half a cell of the equator or prime meridian.
+  assert.deepEqual(toTransmittablePoint(0.001, 0.001), { lat: 0, lon: 0 });
+  assert.equal(toTransmittablePoint(0, 0), null);
+});
+
+test('saving migrates existing records through the projection', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  // Legacy rows were rewritten to disk untouched on every save, so a URL stored by an earlier build
+  // outlived the change that stopped storing them.
+  const legacy = { url: 'https://www.airbnb.com/rooms/1', note: 'the Smiths', verdict: 'correct' };
+  const [migrated] = exportableRecords([legacy]);
+  assert.equal(migrated.url, undefined);
+  assert.equal(migrated.note, undefined);
+  assert.equal(migrated.verdict, 'correct');
+});
