@@ -86,7 +86,8 @@ Load `src/` as an unpacked extension. There is no build step and no dependencies
 written, which is also the easiest thing to audit.
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
-2. In the popup, **choose the site you are measuring**. That declaration is what gets recorded; the
+2. In the popup, **choose the site you are measuring**. That choice lives in session storage, so
+   it is re-chosen after a browser restart — one click, and nothing hostname-shaped is left on disk. That declaration is what gets recorded; the
    site is never read off the page. If the page you are on disagrees with it, the popup says so and
    refuses to record until you fix it.
 3. Browse listings. **Open the toolbar popup on each one** — that is the recorder. It shows what was

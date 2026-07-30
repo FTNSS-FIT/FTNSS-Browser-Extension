@@ -368,3 +368,21 @@ test('tier 2 still answers when several map urls agree', () => {
   );
   assert.equal(extractFromMapLinks(doc).status, 'found');
 });
+
+test('a partial or out-of-range ground truth is refused, not coerced', async () => {
+  // Number() turned "38.7115," into (38.7115, 0) — Null Island, silently — and accepted "91,0".
+  // Both would have entered the positional-error statistics as though they were real readings.
+  const { parseCoordinate } = await import('../src/lib/geo.js');
+  const { isUsableCoordinate } = await import('../src/lib/geo.js');
+  const parse = (raw) => {
+    const parts = raw.split(',');
+    if (parts.length !== 2) return null;
+    const lat = parseCoordinate(parts[0].trim());
+    const lon = parseCoordinate(parts[1].trim());
+    return isUsableCoordinate(lat, lon) ? { lat, lon } : null;
+  };
+  for (const bad of ['38.7115,', '38.7115', '91,0', '0,181', 'abc,def', '38.7115,-9.12,3', '']) {
+    assert.equal(parse(bad), null, `should have refused: "${bad}"`);
+  }
+  assert.deepEqual(parse('38.7115, -9.1287'), { lat: 38.7115, lon: -9.1287 });
+});

@@ -193,7 +193,17 @@
   let lastIdentity = pageIdentity(location.href);
   function onMaybeNavigated(latencyUncertaintyMs) {
     const current = pageIdentity(location.href);
-    if (current === lastIdentity) return;
+    if (current === lastIdentity) {
+      // `navigate` fires BEFORE the URL updates, so the first look can legitimately see the old one.
+      // Re-check once the navigation has committed rather than dropping the earliest — and cheapest
+      // — signal we get.
+      if (latencyUncertaintyMs === 0) {
+        queueMicrotask(() => {
+          if (pageIdentity(location.href) !== lastIdentity) onMaybeNavigated(0);
+        });
+      }
+      return;
+    }
     lastIdentity = current;
     // INVALIDATE FIRST, synchronously. Remeasuring is asynchronous — it waits for the DOM to settle,
     // which can take up to the ceiling — and for that whole window the previous listing's reading
@@ -213,11 +223,31 @@
     });
   }
 
-  // 250ms: the poll interval IS the latency measurement's error bar, so a slower poll buys nothing
-  // and costs accuracy in the number this phase exists to produce.
+  // THE NAVIGATION API IS THE PRIMARY SIGNAL, where the browser has one.
+  //
+  // `pushState` fires no event of its own: not `popstate`, which only covers history traversal, and
+  // nothing the service worker sees either, because a same-document navigation is not a tab load.
+  // So until the poll came round, listing A's reading was still valid for listing B — a window of up
+  // to a full poll interval in which the popup could show, and record, the wrong page.
+  //
+  // The `navigate` event closes it: it fires synchronously, before the navigation commits, and it
+  // covers pushState and replaceState. The alternative was patching `history.pushState`, which puts
+  // our code in the page's own call path — deliberately avoided, because a content script inside a
+  // hostile page should not become part of how that page works.
+  //
+  // The listeners below remain as a fallback for browsers without the Navigation API. There the
+  // residual window is one poll interval, which is why the popup revalidates a reading before
+  // recording it rather than trusting that detection was timely. (Codex review round 13, PR #1.)
+  if (typeof navigation !== 'undefined' && typeof navigation.addEventListener === 'function') {
+    navigation.addEventListener('navigate', () => onMaybeNavigated(0));
+  }
+
+  // 250ms: the poll interval IS the latency error bar on browsers relying on it, so a slower poll
+  // buys nothing and costs accuracy in the number this phase exists to produce.
   const POLL_MS = 250;
   setInterval(() => onMaybeNavigated(POLL_MS), POLL_MS);
-  // These fire synchronously with the navigation, so detection through them carries no uncertainty.
+  // popstate and hashchange fire synchronously with the navigation, so detection carries no
+  // uncertainty; they cover history traversal, which `navigate` also reports.
   addEventListener('popstate', () => onMaybeNavigated(0));
   addEventListener('hashchange', () => onMaybeNavigated(0));
 })();

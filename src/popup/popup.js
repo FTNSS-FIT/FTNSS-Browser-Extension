@@ -17,9 +17,27 @@ import {
   currentCohort,
   setCurrentCohort,
   cohortRecordFor,
+  migrateAwayLocalCohort,
   SITE_LABELS,
 } from '../lib/storage.js';
-import { toTransmittablePoint, distanceMetres } from '../lib/geo.js';
+import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
+
+/**
+ * Ground truth, parsed strictly.
+ *
+ * `Number()` turned "38.7115," into (38.7115, 0) — Null Island, silently — and accepted "91,0",
+ * which is not a latitude. Both would have gone straight into the positional-error statistics as
+ * though they were readings, corrupting the one number that tells us whether a correct-looking
+ * coordinate is actually correct. Returns null for anything it cannot fully justify.
+ * (Codex review round 13, PR #1.)
+ */
+function parseGroundTruth(raw) {
+  const parts = raw.split(',');
+  if (parts.length !== 2) return null;
+  const lat = parseCoordinate(parts[0].trim());
+  const lon = parseCoordinate(parts[1].trim());
+  return isUsableCoordinate(lat, lon) ? { lat, lon } : null;
+}
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -183,12 +201,18 @@ async function render() {
     let errorMetres = null;
     const raw = truth.value.trim();
     if (raw && hasCoordinate) {
-      const parts = raw.split(',').map((p) => Number(p.trim()));
-      if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
-        errorMetres = Math.round(
-          distanceMetres({ lat: reading.result.lat, lon: reading.result.lon }, { lat: parts[0], lon: parts[1] }),
+      const groundTruth = parseGroundTruth(raw);
+      if (groundTruth == null) {
+        // Refuse VISIBLY rather than dropping it. Silently ignoring unparseable input means the
+        // person believes they supplied ground truth and the statistics quietly disagree.
+        statusEl.replaceChildren(
+          el('span', 'Ground truth must be "lat, lon" and in range — nothing recorded.', 'warn'),
         );
+        return;
       }
+      errorMetres = Math.round(
+        distanceMetres({ lat: reading.result.lat, lon: reading.result.lon }, groundTruth),
+      );
     }
 
     // RE-READ AND REVALIDATE before writing anything.
@@ -280,4 +304,5 @@ document.getElementById('clear').addEventListener('click', async () => {
   await render();
 });
 
+void migrateAwayLocalCohort();
 void render();
