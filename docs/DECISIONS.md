@@ -59,6 +59,12 @@ record, because widening permissions forces every existing user to re-accept.
 Match patterns must cover a listed site's **country-code domain variants**. A list covering only `.com`
 silently fails for users outside the English-speaking market, which is a bug, not a gap in coverage.
 
+The permission list is `storage`, and nothing else. `activeTab` was added at one point so the popup
+could ask the content script a question, and removed again once it was clear that messaging a content
+script the manifest already injects needs no permission at all — it bought nothing and widened the
+boundary to every tab the toolbar is clicked on. A test pins the full list, so growth is a decision
+rather than a detail.
+
 ## 5. Reading a page is tiered, and failure is always visible
 
 The extension tries, in order: published structured data (the machine-readable block sites maintain
@@ -152,25 +158,6 @@ country-code domains behave differently from the primary one?*, without recordin
 popup refuses to record while the declared cohort disagrees with the detected page. That check runs
 in the browser and the detected value is never written to a record — so a mislabelled cohort is
 caught without the label ever being page-derived.
-
-## 12. `activeTab` — the one permission beyond storage
-
-The phase 1 harness requests `activeTab` in addition to `storage`.
-
-**Why.** Before a verdict is recorded, the popup asks the content script whether its reading still
-describes the page on screen. Nothing else can answer that: re-reading stored state cannot detect a
-navigation the content script has not noticed yet, because the stale reading is exactly what gets
-re-read. Only the script running in the page can compare against the live URL.
-
-**Why it is the right permission.** `activeTab` is granted per-invocation, when the person clicks the
-toolbar icon, and only for the tab they clicked on. It cannot be used in the background, on other
-tabs, or without a deliberate action. It shows no additional warning at install.
-
-**What the answer contains.** A boolean and a sequence number. Never the URL — establishing that two
-things are the same does not require transmitting the thing being compared.
-
-This is a harness permission. Whether the product needs it is a separate decision, to be taken on its
-own terms rather than inherited.
 
 ---
 

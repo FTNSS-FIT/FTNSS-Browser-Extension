@@ -422,3 +422,31 @@ test('saving migrates existing records through the projection', async () => {
   assert.equal(migrated.note, undefined);
   assert.equal(migrated.verdict, 'correct');
 });
+
+test('tier 1 fails closed when structured data describes two different places', () => {
+  // A "similar properties" block or a parent chain entry can put a second lodging object on the
+  // page, and the first in document order need not be the listing on screen.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 51.5074, longitude: -0.1278 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'not_found');
+  assert.match(r.reason, /two different places/);
+});
+
+test('tier 1 still answers when several lodging objects agree', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7118, longitude: -9.129 } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+test('a generic schema.org Place is not treated as the listing', () => {
+  // Place is the base type for anything with a location — a landmark, a restaurant, an airport.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Place', name: 'Nearby landmark', geo: { latitude: 1, longitude: 1 } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'not_found');
+});

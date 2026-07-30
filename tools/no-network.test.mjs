@@ -81,11 +81,12 @@ test('the manifest asks for narrow permissions and never <all_urls>', () => {
     assert.ok(!/\*\.\*|\.\*\/|\*:\/\/\*\//.test(pattern), `over-broad host pattern: ${pattern}`);
   }
 
-  // activeTab is granted per-invocation on a toolbar click, for that tab only — see
-  // docs/DECISIONS.md 12. Any addition beyond these two is a decision, not a detail.
+  // STORAGE AND NOTHING ELSE. `activeTab` was added and then removed: messaging a content script
+  // that the manifest already injects needs no permission at all, so it bought nothing and widened
+  // the boundary to every tab the toolbar is clicked on. Any growth here fails the build.
   assert.deepEqual(
     manifest.permissions,
-    ['storage', 'activeTab'],
+    ['storage'],
     'permissions must not grow without a decision record',
   );
 });

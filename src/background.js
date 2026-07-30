@@ -124,11 +124,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // though it described the top-level page the operator is looking at.
   if (sender.id !== chrome.runtime.id) return false;
   if (sender.tab?.id == null || sender.frameId !== 0) return false;
-  // A content script telling us its page is gone needs no payload and no validation beyond the
-  // sender checks above — it can only ever discard its OWN tab's reading.
+
+  // DOCUMENT CHECKS FIRST, for invalidation as well as publication.
+  //
+  // Invalidation used to be handled before them, so a delayed invalidate from a document already
+  // navigated away from could delete the REPLACEMENT document's reading — the stale message doing
+  // precisely the damage the document checks exist to prevent. Its sequence was also written into
+  // `latestSeq` unchecked, which could LOWER the high-water mark and re-admit the stale readings the
+  // mark exists to reject. A guard that runs after the thing it guards is not a guard.
+  // (Codex review round 17, PR #1.)
+  const senderDocumentId = sender.documentId ?? null;
+  if (senderDocumentId != null && invalidatedDocuments.has(senderDocumentId)) return false;
+
+  /** Monotonic only: a sequence may raise the high-water mark, never lower it. */
+  const acceptSeq = (tabId, value) => {
+    if (!Number.isSafeInteger(value) || value < 0) return false;
+    if (value < (latestSeq.get(tabId) ?? 0)) return false;
+    latestSeq.set(tabId, value);
+    return true;
+  };
+
   if (message?.type === 'FTNSS_INVALIDATE') {
     // A soft navigation: same document, so the document itself stays welcome.
-    if (typeof message.seq === 'number') latestSeq.set(sender.tab.id, message.seq);
+    if (!acceptSeq(sender.tab.id, message.seq)) return false;
     invalidateTab(sender.tab.id, { blacklistDocument: false })
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
@@ -152,16 +170,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   // the content script. Binding to it means a late message identifies the document it actually came
   // from rather than whichever one happens to be current when it lands.
   // (Codex review round 14, PR #1.)
-  const documentId = sender.documentId ?? null;
-  if (documentId != null && invalidatedDocuments.has(documentId)) return false;
-
   // Within ONE document, `documentId` cannot distinguish listing A from listing B, so a sequence
   // number supplied by the content script does. A reading from a superseded navigation is stale
   // however promptly it arrives.
-  const seq = typeof message.seq === 'number' ? message.seq : 0;
-  if (seq < (latestSeq.get(sender.tab.id) ?? 0)) return false;
-  latestSeq.set(sender.tab.id, seq);
+  if (!acceptSeq(sender.tab.id, message.seq)) return false;
 
+  const documentId = senderDocumentId;
   activeDocuments.set(sender.tab.id, documentId);
 
   chrome.storage.session

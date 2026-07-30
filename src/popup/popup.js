@@ -225,6 +225,11 @@ async function render() {
     // (Codex review round 12, PR #1.)
     // Ask the content script whether its reading is still for the page on screen.
     //
+    // No permission is needed for this: the content script is already injected by the manifest on
+    // these hosts, and messaging our own content script is not a new capability. `activeTab` was
+    // added here and then removed for exactly that reason — it bought nothing and widened the
+    // boundary to every tab the toolbar is clicked on. (Codex review round 17, PR #1.)
+    //
     // Re-reading storage cannot detect a navigation the content script has not noticed yet — the
     // stale reading IS what gets re-read. Only the content script can compare against the live URL,
     // and it answers with a boolean, never the URL itself. If it cannot be reached, the page is not

@@ -10,7 +10,10 @@
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
 import { found, notFound } from './result.js';
-import { isUsableCoordinate, parseCoordinate } from '../lib/geo.js';
+import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
+
+/** Two lodging objects further apart than this are not the same listing. */
+const CONFLICT_METRES = 2000;
 
 /** Types whose `geo` we will believe. A `geo` on an arbitrary type is not a listing's location. */
 const LODGING_TYPES = new Set([
@@ -27,7 +30,10 @@ const LODGING_TYPES = new Set([
   'Accommodation',
   'VacationRental',
   'Campground',
-  'Place',
+  // NO generic 'Place'. It is schema.org's base type for anything with a location — a landmark, a
+  // restaurant, a city, an airport — so accepting it meant any nearby point of interest the page
+  // happened to describe could be returned as the listing's own position.
+  // (Codex review round 17, PR #1.)
 ]);
 
 const MAX_NODES = 500; // objects examined
@@ -112,10 +118,8 @@ export function extractFromStructuredData(doc) {
 
   let parsedAny = false;
   let sawLodgingWithoutGeo = false;
-  // Count every script VISITED, not every script accepted. Counting only the ones that passed the
-  // size filter meant a page supplying thousands of oversized blocks still forced us to read every
-  // single textContent out of the DOM — the cap advertised a bound it did not enforce.
-  // (Codex review round 2, PR #1.)
+  /** The first usable lodging coordinate; every later one must agree with it. */
+  let best = null;
   let visited = 0;
 
   for (const script of scripts) {
@@ -123,6 +127,7 @@ export function extractFromStructuredData(doc) {
     visited += 1;
     const raw = script.textContent || '';
     if (raw.length === 0 || raw.length > MAX_JSON_CHARS) continue;
+
     let parsed;
     try {
       // textContent, never innerHTML or eval. A JSON-LD block is data; treating it as anything
@@ -141,24 +146,39 @@ export function extractFromStructuredData(doc) {
         sawLodgingWithoutGeo = true;
         continue;
       }
-      return found({
-        lat: geo.lat,
-        lon: geo.lon,
-        tier: 1,
-        // FIXED STRING. This used to interpolate the page's own `@type`, which is attacker
-        // controlled — a page publishing `"@type": ["<anything at all>", "Hotel"]` put its own text
-        // into a field we then wrote into an exported artifact. Diagnostic value is not worth
-        // carrying page content forward. (Codex review round 3, PR #1.)
-        source: 'ld+json.geo',
-        // 'unknown', NOT 'exact'. Whether a published point is the building or a deliberately
-        // fuzzed area is a per-site fact this phase exists to MEASURE. Claiming 'exact' without a
-        // check is the repo's own "never render precision we do not have" rule broken in the one
-        // place it was most likely to matter — a site that fuzzes location would have been recorded
-        // as building-accurate on every single listing. The human records the precision verdict.
-        // (Codex review, PR #1.)
-        precision: 'unknown',
-      });
+
+      // FAIL CLOSED WHEN THE PAGE DESCRIBES TWO PLACES.
+      //
+      // Returning the first lodging object assumed a page describes one listing. A hostile or merely
+      // busy page can publish several — a "similar properties" block, a parent chain entry — and the
+      // first in document order need not be the one on screen. Same reasoning as the map-link tier:
+      // a confident coordinate for the wrong hotel is worse than no coordinate at all.
+      // (Codex review round 17, PR #1.)
+      if (best != null && distanceMetres(best, geo) > CONFLICT_METRES) {
+        return notFound('structured data described two different places — refusing to guess');
+      }
+      if (best == null) best = geo;
     }
+  }
+
+  if (best != null) {
+    return found({
+      lat: best.lat,
+      lon: best.lon,
+      tier: 1,
+      // FIXED STRING. This used to interpolate the page's own `@type`, which is attacker-controlled:
+      // a page publishing `"@type": ["<anything at all>", "Hotel"]` put its own text into a field we
+      // then wrote into an exported artifact. Diagnostic value is not worth carrying page content
+      // forward. (Codex review round 3, PR #1.)
+      source: 'ld+json.geo',
+      // 'unknown', NOT 'exact'. Whether a published point is the building or a deliberately fuzzed
+      // area is a per-site fact this phase exists to MEASURE. Claiming 'exact' without a check is
+      // this repo's own "never render precision we do not have" rule broken in the one place it was
+      // most likely to matter — a site that fuzzes location would have been recorded as
+      // building-accurate on every single listing. The person records the precision verdict.
+      // (Codex review round 1, PR #1.)
+      precision: 'unknown',
+    });
   }
 
   if (!parsedAny) return notFound('ld+json present but none parsed');
