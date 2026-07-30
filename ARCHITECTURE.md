@@ -148,11 +148,28 @@ has no gyms here", which is a false statement about our own supply at the worst 
 
 Full rules for changes: [`AGENTS.md`](AGENTS.md).
 
-## Running it
+## Testing
 
 ```bash
 npm test
 ```
+
+Three layers, and the split matters because the worst two bugs this repo has had were in none of the
+first:
+
+| Layer | File | What it protects |
+|---|---|---|
+| **Unit** | `tools/extract.test.mjs` | The extractors against hostile input — malformed JSON, prototype pollution, deep nesting, Null Island, comma decimals, conflicting candidates, polar and antimeridian rounding |
+| **Invariant** | `tools/no-network.test.mjs`, `tools/module-graph.test.mjs` | The properties the privacy claim rests on: no network call anywhere, no UI injected into the page, permissions that cannot grow, and every named import resolving to a real export |
+| **End-to-end** | `tools/e2e.test.mjs` | A realistic listing page all the way through to a report row — extraction, verdict, storage, projection, export |
+
+The end-to-end layer exists because the two worst defects here lived **between** files: the popup
+imported a function `storage.js` did not export, and a later patch left a reschedule unreachable.
+Both left the extension silently doing nothing, and every unit test still passed, because no test
+crossed a file boundary.
+
+What no test covers, and what the manual protocol is for: the browser shell itself — message
+passing, the manifest, and the DOM of a real site.
 
 To use the harness: `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`. Then
 follow [`docs/PHASE-1-MEASUREMENT.md`](docs/PHASE-1-MEASUREMENT.md).
