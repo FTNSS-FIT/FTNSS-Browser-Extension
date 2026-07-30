@@ -34,3 +34,37 @@ export async function saveRecord(record) {
 export async function clearRecords() {
   await chrome.storage.local.remove(KEY);
 }
+
+/**
+ * Fields that identify or reproduce the page. Everything the phase-1 REPORT needs is outside this
+ * list — the numbers are computed from verdicts, tiers, timings and rounded points, none of which
+ * say which listing anyone looked at.
+ */
+const PAGE_IDENTIFYING = ['url', 'note', 'groundTruth', 'errorMetres'];
+
+/**
+ * A copy with the page-identifying fields removed, and coordinates reduced to what the product would
+ * actually transmit.
+ *
+ * The full export exists because a measurement cannot be verified without being able to return to
+ * the listing. But a file that reproduces a browsing session should not be the one that gets
+ * attached to a message or dropped in a shared folder, and the way to prevent that is to make the
+ * safe artifact the convenient one rather than to rely on everyone remembering which is which.
+ * (Codex review round 2, PR #1.)
+ */
+export function redactRecords(records) {
+  return records.map((record) => {
+    const copy = { ...record };
+    for (const field of PAGE_IDENTIFYING) delete copy[field];
+    if (copy.result?.status === 'found') {
+      // Rounded to transmission precision — the report's accuracy figures come from the verdict,
+      // not from re-deriving position, so nothing is lost that the decision depends on.
+      copy.result = { ...copy.result, lat: undefined, lon: undefined };
+    }
+    if (copy.result?.status === 'found_address') {
+      // The address is page content. The report only needs to know one was present.
+      copy.result = { ...copy.result, address: undefined };
+    }
+    return copy;
+  });
+}

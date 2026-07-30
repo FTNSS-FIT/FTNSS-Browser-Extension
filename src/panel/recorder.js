@@ -10,6 +10,16 @@
 
 const HOST_ID = 'ftnss-phase1-recorder';
 
+/**
+ * Remove any panel currently on screen. Called the instant a navigation is detected, BEFORE anything
+ * else: a panel showing the previous listing's reading, on a page that is no longer that listing, is
+ * the stale-reading bug wearing a different hat. Nothing on screen beats something wrong on screen.
+ * (Codex review round 2, PR #1.)
+ */
+export function unmountRecorder() {
+  document.getElementById(HOST_ID)?.remove();
+}
+
 function el(tag, text, style) {
   const node = document.createElement(tag);
   if (text != null) node.textContent = text;
@@ -46,9 +56,21 @@ const CSS = `
   .saved { margin-top: 8px; }
 `;
 
+/**
+ * Never render precision the read does not have.
+ *
+ * This regressed: when tier 1 stopped claiming 'exact' the precision tag came out of this line with
+ * it, leaving five decimals — metre scale — on reads the code itself classifies as approximate or
+ * unknown. The number looked like a survey point. Formatting IS a claim, so the decimals now follow
+ * the classification and the classification is always shown.
+ */
 function describe(result) {
   if (result.status === 'found') {
-    return `Tier ${result.tier} · ${result.lat.toFixed(5)}, ${result.lon.toFixed(5)}`;
+    const decimals = result.precision === 'approximate' ? 2 : 3;
+    const tag = result.precision === 'approximate' ? 'approximate' : 'precision unverified';
+    return (
+      `Tier ${result.tier} · ~${result.lat.toFixed(decimals)}, ${result.lon.toFixed(decimals)} · ${tag}`
+    );
   }
   if (result.status === 'found_address') {
     return `Tier 3 · address only, not geocoded`;
@@ -65,7 +87,7 @@ function describe(result) {
  * @param {(verdict: object) => Promise<void>} opts.onSave
  */
 export function mountRecorder({ extraction, readyToPanelMs, capturedUrl, onSave }) {
-  document.getElementById(HOST_ID)?.remove();
+  unmountRecorder();
 
   const host = el('div');
   host.id = HOST_ID;

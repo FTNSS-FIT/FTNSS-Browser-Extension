@@ -81,6 +81,27 @@ alike.
   precise distance derived from an approximate read is a confidently-wrong answer, which is worse
   than a visible failure. Approximate reads must be visibly marked as such.
 
+### The one bounded exception: the phase 1 harness
+
+`src/` is currently a **measurement harness**, not the product, and it does one thing the product
+must never do: it stores the listing URL, locally, so a reading can be re-checked against the page it
+came from. A measurement without ground truth is not a measurement.
+
+Written down because an undocumented exception is indistinguishable from a defect — reviewers will
+keep flagging it, and worse, an exception nobody bounded is one that quietly widens. Its limits:
+
+- **Local only.** It lives in `chrome.storage.local` and leaves the machine only by an explicit
+  click, into a gitignored directory. There is no code path that transmits it, and the no-network
+  test proves there is none.
+- **The shareable export is the default.** The redacted artifact carries verdicts, tiers, timings and
+  rounded points, and no URL, address or note. The full export exists for re-checking a disputed
+  reading and stays local.
+- **It does not survive the harness.** When phase 2 begins, the URL storage goes. Anything that
+  reaches a shipped build inherits the ordinary rule above with no exception.
+
+Anything outside these limits is a finding, and so is any *new* exception argued by analogy to this
+one.
+
 ### Secrets and internals
 - No key, token, backend project URL, storage bucket name, database function name, or internal
   hostname in any tracked file — **including in a comment, a fixture, or a test**. The history

@@ -8,7 +8,12 @@
 // because it is the property the whole project rests on and "we didn't add one" is not evidence.
 
 (async () => {
-  const [{ runExtraction }, { mountRecorder }, { saveRecord }, { toTransmittablePoint, distanceMetres }] =
+  const [
+    { runExtraction },
+    { mountRecorder, unmountRecorder },
+    { saveRecord },
+    { toTransmittablePoint, distanceMetres },
+  ] =
     await Promise.all([
       import(chrome.runtime.getURL('extract/index.js')),
       import(chrome.runtime.getURL('panel/recorder.js')),
@@ -46,18 +51,76 @@
    */
   let generation = 0;
 
-  function measureCurrentPage() {
-    const capturedUrl = location.href;
+  /**
+   * Wait until the DOM stops changing, rather than for a fixed delay.
+   *
+   * A fixed timeout was wrong for a reason worth spelling out: it bounds how long we wait, not what
+   * we are waiting FOR. During a slow soft navigation the URL flips to listing B while the DOM still
+   * holds listing A, so extracting after a fixed delay reads A's markup and captures B's URL — and
+   * the save-time URL check cannot catch it, because by then both URLs are B. That reconstructs the
+   * exact mis-attribution round 1 was meant to eliminate, through a race instead of a stale read.
+   * (Codex review round 2, PR #1.)
+   *
+   * Quiet-period detection is not a proof — a page could mutate forever, which is why there is a
+   * ceiling — but it waits on the thing that actually matters, and the ceiling is recorded on the
+   * record so a reading taken under an unsettled DOM is identifiable later rather than silently
+   * mixed in.
+   */
+  function waitForStableDom({ quietMs = 300, maxMs = 3000 } = {}) {
+    return new Promise((resolve) => {
+      let timer;
+      const observer = new MutationObserver(() => {
+        clearTimeout(timer);
+        timer = setTimeout(settle, quietMs);
+      });
+      const ceiling = setTimeout(() => settle(true), maxMs);
+
+      function settle(hitCeiling = false) {
+        clearTimeout(timer);
+        clearTimeout(ceiling);
+        observer.disconnect();
+        resolve({ settled: !hitCeiling });
+      }
+
+      observer.observe(document.documentElement, { childList: true, subtree: true });
+      timer = setTimeout(settle, quietMs);
+    });
+  }
+
+  async function measureCurrentPage({ softNavigation = false } = {}) {
     const myGeneration = (generation += 1);
 
+    let domSettled = true;
+    if (softNavigation) {
+      // Nothing may remain on screen while we wait — a panel from the previous listing on a page
+      // that is no longer that listing is worse than an empty corner.
+      unmountRecorder();
+      ({ settled: domSettled } = await waitForStableDom());
+      // A newer navigation started while we waited; that one owns the page now.
+      if (myGeneration !== generation) return;
+    }
+
+    // Captured AFTER the wait, so the URL and the DOM we are about to read belong to the same
+    // moment as closely as we can establish.
+    const capturedUrl = location.href;
+
     const extraction = runExtraction(document);
-    if (!worthMeasuring(extraction)) return;
+
+    // The URL moved while we were extracting — this reading cannot be attributed to either page.
+    if (location.href !== capturedUrl || myGeneration !== generation) return;
+
+    if (!worthMeasuring(extraction)) {
+      // Do NOT leave a previous panel standing. Returning early here is what let listing A's reading
+      // stay on screen after navigating to a page we decided not to measure.
+      unmountRecorder();
+      return;
+    }
 
     // Latency the user would actually feel: from the page being ready to the panel being on screen.
     // Only meaningful for the initial load — after a soft navigation there is no new navigation
     // entry, so it is reported as null rather than as a number that means something else.
     const nav = performance.getEntriesByType('navigation')[0];
-    const isSoftNavigation = myGeneration > 1;
+    const isSoftNavigation = softNavigation;
     const readyToPanelMs =
       isSoftNavigation || !nav ? null : Math.max(0, performance.now() - nav.domContentLoadedEventEnd);
 
@@ -92,6 +155,9 @@
           site: location.hostname,
           recordedAt: new Date().toISOString(),
           softNavigation: isSoftNavigation,
+          // False when the DOM never went quiet within the ceiling. Such a reading is usable but
+          // less trustworthy, and the report can exclude it rather than us pretending otherwise.
+          domSettled,
           verdict,
           // What the person actually saw: whether the point is the building or a fuzzed area. The
           // extractor no longer guesses this, so it has to be observed.
@@ -133,9 +199,10 @@
   function onMaybeNavigated() {
     if (location.href === lastUrl) return;
     lastUrl = location.href;
-    // Let the framework render the new listing before reading it. Too early and every soft
-    // navigation reads as an unreadable page.
-    setTimeout(measureCurrentPage, 600);
+    // Clear immediately and synchronously — the wait happens inside measureCurrentPage, and the
+    // previous listing's panel must not survive even that long.
+    unmountRecorder();
+    void measureCurrentPage({ softNavigation: true });
   }
   setInterval(onMaybeNavigated, 1000);
   addEventListener('popstate', onMaybeNavigated);

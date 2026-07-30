@@ -92,13 +92,17 @@ export function extractFromStructuredData(doc) {
 
   let parsedAny = false;
   let sawLodgingWithoutGeo = false;
-  let examined = 0;
+  // Count every script VISITED, not every script accepted. Counting only the ones that passed the
+  // size filter meant a page supplying thousands of oversized blocks still forced us to read every
+  // single textContent out of the DOM — the cap advertised a bound it did not enforce.
+  // (Codex review round 2, PR #1.)
+  let visited = 0;
 
   for (const script of scripts) {
-    if (examined >= MAX_SCRIPTS) break;
+    if (visited >= MAX_SCRIPTS) break;
+    visited += 1;
     const raw = script.textContent || '';
     if (raw.length === 0 || raw.length > MAX_JSON_CHARS) continue;
-    examined += 1;
     let parsed;
     try {
       // textContent, never innerHTML or eval. A JSON-LD block is data; treating it as anything
