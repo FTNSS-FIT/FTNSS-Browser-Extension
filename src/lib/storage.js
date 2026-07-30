@@ -328,6 +328,8 @@ const KNOWN_REASONS = new Set([
   'no ld+json blocks on page',
   'ld+json present but none parsed',
   'lodging type found, no usable geo',
+  'lodging type found, no coordinates published',
+  'lodging type found, coordinates present but refused',
   'no lodging type in structured data',
   'structured data described two different places',
   'no elements to examine',

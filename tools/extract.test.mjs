@@ -576,3 +576,39 @@ test('tier 3 bounds how much work a page can commission', () => {
   extractFromAddressText(doc);
   assert.ok(Date.now() - started < 2000, 'tier 3 took too long on a hostile page');
 });
+
+test('coordinates published directly on the Place are found, not only under geo', () => {
+  // schema.org allows both. Looking only under `geo` made a listing that uses the other standard
+  // form read as having no coordinates — indistinguishable in the data from a site that genuinely
+  // withholds them, which is the difference between "a market we cannot serve" and "a bug in our
+  // reader".
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', latitude: 38.7115, longitude: -9.1287 }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.lat, 38.7115);
+});
+
+test('"no coordinates published" and "coordinates refused" are different findings', () => {
+  // The first is a fact about the site; the second is a fact about us. Collapsing them into one
+  // reason means the report cannot tell a market problem from a bug.
+  const absent = extractFromStructuredData(
+    ldJsonDocument(JSON.stringify({ '@type': 'Hotel', name: 'No geo here' })),
+  );
+  assert.equal(absent.reason, 'lodging type found, no coordinates published');
+
+  const refused = extractFromStructuredData(
+    // A comma decimal: indistinguishable from a truncated "lat,lon" pair, so we refuse it rather
+    // than guess — but we must say that is what happened.
+    ldJsonDocument(JSON.stringify({ '@type': 'Hotel', geo: { latitude: '38,7115', longitude: '-9,1287' } })),
+  );
+  assert.equal(refused.reason, 'lodging type found, coordinates present but refused');
+});
+
+test('an array of GeoCoordinates is read', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: [{ latitude: 38.7115, longitude: -9.1287 }] }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
