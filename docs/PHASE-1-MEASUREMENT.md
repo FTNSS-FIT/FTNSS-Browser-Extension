@@ -79,10 +79,13 @@ Load `src/` as an unpacked extension. There is no build step and no dependencies
 written, which is also the easiest thing to audit.
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
-2. Browse listings. **The recorder appears on every page of a listed site**, not only on pages we
-   think are listings — any heuristic for that suppressed the panel on precisely the pages where
-   every extractor failed, which is the population most in need of counting. Press **Not a listing**
-   on search and help pages; it records nothing.
+2. Browse listings. **Open the toolbar popup on each one** — that is the recorder. It shows what was
+   read and takes your verdict.
+
+   The popup, not an in-page panel: the page cannot hide it, click-jack it, or watch what you type
+   into it, which matters because it displays the "could not read this page" state and captures the
+   ground truth the whole measurement rests on. Press **Not a listing** on search and help pages; it
+   records nothing and enters no denominator.
 3. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
 4. `npm run report measurements/<file>.json`
 

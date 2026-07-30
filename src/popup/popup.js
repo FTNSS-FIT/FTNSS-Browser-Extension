@@ -1,45 +1,211 @@
-// Popup — shows how many listings have been recorded, and exports them.
+// The recorder. This is browser-owned extension UI, NOT a panel injected into the listing page.
 //
-// The export is a local file download built from an in-memory blob. There is no upload, no sync,
-// and no network request anywhere in this file.
+// The page cannot hide it, cannot move it, cannot swallow its clicks, and cannot watch what is typed
+// into it. That matters most for the two things this UI is for: displaying the "could not read this
+// page" state, whose whole value is that its absence is not something a page can arrange, and taking
+// the person's verdict, which is the ground truth the entire measurement rests on.
+//
+// No network request is made anywhere in this file.
 
-import { loadRecords, clearRecords, exportableRecords } from '../lib/storage.js';
+import {
+  loadRecords,
+  clearRecords,
+  saveRecord,
+  exportableRecords,
+  currentReading,
+  clearCurrentReading,
+} from '../lib/storage.js';
+import { toTransmittablePoint, distanceMetres } from '../lib/geo.js';
 
+const readingEl = document.getElementById('reading');
+const controlsEl = document.getElementById('controls');
+const statusEl = document.getElementById('status');
 const countEl = document.getElementById('count');
 
-async function refresh() {
-  const records = await loadRecords();
-  countEl.textContent = `${records.length} recorded`;
-  return records;
+function el(tag, text, className) {
+  const node = document.createElement(tag);
+  if (text != null) node.textContent = text;
+  if (className) node.className = className;
+  return node;
 }
 
-async function download(records, suffix) {
+function describe(result) {
+  if (result?.status === 'found') {
+    // Two decimals for every classification. Three is ~100m, which is a precision claim, and no
+    // read here has established that much.
+    const tag = result.precision === 'approximate' ? 'approximate' : 'precision unverified';
+    return `Tier ${result.tier} · ~${result.lat.toFixed(2)}, ${result.lon.toFixed(2)} · ${tag}`;
+  }
+  if (result?.status === 'found_address') return 'Tier 3 · address only, not geocoded';
+  return 'No read — could not read this page';
+}
+
+async function refreshCount() {
+  const records = await loadRecords();
+  countEl.textContent = `${records.length} recorded`;
+}
+
+async function render() {
+  controlsEl.replaceChildren();
+  statusEl.replaceChildren();
+  const reading = await currentReading();
+
+  if (reading == null) {
+    readingEl.className = 'muted';
+    readingEl.textContent =
+      'No reading for this page. Open a listing on a supported site, or reload the tab.';
+    await refreshCount();
+    return;
+  }
+
+  readingEl.replaceChildren();
+  readingEl.className = '';
+  const summary = el('div');
+  summary.appendChild(el('code', describe(reading.result)));
+  readingEl.appendChild(summary);
+
+  const t = reading.tiers ?? {};
+  readingEl.appendChild(
+    el(
+      'div',
+      `${reading.site}   t1 ${t.tier1 === 'found' ? '✓' : '·'}  t2 ${t.tier2 === 'found' ? '✓' : '·'}  t3 ${
+        t.tier3 === 'found_address' ? '✓' : '·'
+      }`,
+      'muted',
+    ),
+  );
+
+  const latency = reading.timing?.readyToPanelMs;
+  const worstCase = latency == null ? null : latency + (reading.latencyUncertaintyMs ?? 0);
+  readingEl.appendChild(
+    el(
+      'div',
+      `extract ${reading.timing?.totalMs ?? '?'}ms · to-panel ${
+        worstCase == null ? 'unmeasured' : `≤${Math.round(worstCase)}ms`
+      }`,
+      worstCase != null && worstCase > 800 ? 'warn' : 'muted',
+    ),
+  );
+  if (reading.domSettled === false) {
+    readingEl.appendChild(el('div', '⚠ page had not settled', 'warn'));
+  }
+
+  const hasCoordinate = reading.result?.status === 'found';
+  let precisionVerdict = 'not_assessed';
+
+  if (hasCoordinate) {
+    const row = el('div', null, 'row');
+    row.appendChild(el('span', 'Point is:', 'muted'));
+    const buttons = [];
+    for (const [label, value] of [
+      ['Building', 'building'],
+      ['Area', 'area'],
+      ['Unclear', 'unclear'],
+    ]) {
+      const b = el('button', label);
+      b.addEventListener('click', () => {
+        precisionVerdict = value;
+        for (const other of buttons) other.className = '';
+        b.className = 'primary';
+      });
+      buttons.push(b);
+      row.appendChild(b);
+    }
+    controlsEl.appendChild(row);
+  }
+
+  const truth = el('input');
+  truth.placeholder = 'Ground truth "lat, lon" (optional)';
+  if (hasCoordinate) controlsEl.appendChild(truth);
+
+  async function record(verdict) {
+    if (verdict === 'not_a_listing') {
+      // A dismissal, not a datum — a non-listing must not enter the denominator.
+      await clearCurrentReading();
+      await render();
+      return;
+    }
+
+    let errorMetres = null;
+    const raw = truth.value.trim();
+    if (raw && hasCoordinate) {
+      const parts = raw.split(',').map((p) => Number(p.trim()));
+      if (parts.length === 2 && Number.isFinite(parts[0]) && Number.isFinite(parts[1])) {
+        errorMetres = Math.round(
+          distanceMetres({ lat: reading.result.lat, lon: reading.result.lon }, { lat: parts[0], lon: parts[1] }),
+        );
+      }
+    }
+
+    await saveRecord({
+      site: reading.site,
+      // Date only. A precise time beside a site label is the makings of a browsing log, and nothing
+      // in the report groups more finely than a day.
+      recordedAt: new Date().toISOString().slice(0, 10),
+      verdict,
+      precisionVerdict,
+      softNavigation: reading.softNavigation === true,
+      domSettled: reading.domSettled !== false,
+      latencyUncertaintyMs: reading.latencyUncertaintyMs ?? 0,
+      timing: reading.timing,
+      tiers: reading.tiers,
+      errorMetres,
+      result: reading.result,
+      transmitted: hasCoordinate ? toTransmittablePoint(reading.result.lat, reading.result.lon) : null,
+    });
+
+    // Clearing the reading is also the dedup: one record per page view, and the popup then reports
+    // that there is nothing to record until the next navigation republishes.
+    await clearCurrentReading();
+    statusEl.replaceChildren(el('span', `Recorded: ${verdict}`, 'ok'));
+    await render();
+  }
+
+  const options = hasCoordinate
+    ? [
+        ['Correct', 'correct', true],
+        ['Wrong', 'wrong', false],
+        ["Can't tell", 'unverifiable', false],
+      ]
+    : [
+        ['Confirm no read', 'no_read', true],
+        ["Can't tell", 'unverifiable', false],
+      ];
+  options.push(['Not a listing', 'not_a_listing', false]);
+
+  const row = el('div', null, 'row');
+  for (const [label, verdict, primary] of options) {
+    const b = el('button', label, primary ? 'primary' : null);
+    b.addEventListener('click', () => void record(verdict));
+    row.appendChild(b);
+  }
+  controlsEl.appendChild(row);
+
+  await refreshCount();
+}
+
+function download(records, suffix) {
   if (records.length === 0) return;
   const blob = new Blob([JSON.stringify(records, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  // Save into the gitignored measurements/ directory. The name carries the date so successive
-  // exports do not silently overwrite one another.
   a.download = `ftnss-phase1-${suffix}-${new Date().toISOString().slice(0, 10)}.json`;
-  // Anchor must be in the document for the click to start a download in every browser, and the
-  // object URL must outlive the click — revoking it synchronously afterwards can cancel the
-  // download that has only just been handed off.
+  // The anchor must be in the document for the click to start a download in every browser, and the
+  // object URL must outlive the click — revoking it synchronously can cancel the handoff.
   document.body.appendChild(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-// ONE export. Nothing page-identifying is stored, so there is no sensitive variant to keep local
-// and no choice for anyone to get wrong. The payload is built from an allowlist in storage.js.
 document.getElementById('export').addEventListener('click', async () => {
   download(exportableRecords(await loadRecords()), 'measurements');
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
   await clearRecords();
-  await refresh();
+  await render();
 });
 
-refresh();
+void render();

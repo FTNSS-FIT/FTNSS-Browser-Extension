@@ -111,6 +111,37 @@ It shares **contracts, not code**: the design tokens, the address and country-co
 the endpoint. Those were settled across several applications, and a new surface reinventing them is
 how the same bug lands a fourth time.
 
+## 10. The measurement UI lives in the extension, not in the page
+
+The phase 1 harness renders nothing into the listing page. The content script reads the page and
+publishes what it read; the recorder is the extension popup.
+
+**Why.** A panel mounted in the page sits in a document the page controls, so the page can hide it,
+move it, swallow its clicks, or observe what is typed into it. The two things that UI exists for are
+displaying "we could not read this page" — whose entire value is that its absence cannot be
+arranged by the page — and capturing the person's verdict, which is the ground truth the whole
+measurement rests on. Neither can live somewhere the subject of the measurement can interfere with.
+
+Three separate review rounds each found a different way to subvert an in-page panel: remove the host
+element, plant a decoy carrying its id, hide it with CSS. Each fix was sound and each was answered by
+a new variant, because the problem was structural rather than a series of oversights. Browser-owned
+UI is not a hardening of that design; it is the design that does not have the problem.
+
+## 11. The site a reading came from is recorded
+
+Each record carries which of the listed domains it came from, matched from the extension's own
+allowlist rather than read off the page.
+
+This was raised as a privacy concern three times during review and is a deliberate decision, taken by
+the founder rather than by an engineer. The per-site comparison **is** the measurement — the two
+sites were chosen precisely because they are structurally different, and the country-code-domain
+question cannot be answered without knowing which domain a reading came from. Removing the field
+would not make the harness more private so much as stop it being an instrument.
+
+What bounds it: the value comes from a fixed allowlist on an extension that only runs on those
+domains, so it discloses approximately what installing it already does; and timestamps are date-only,
+so there is no time-correlated trail beside it.
+
 ---
 
 ## Deliberately not in v1

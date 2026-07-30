@@ -20,7 +20,31 @@
 import { toTransmittablePoint } from './geo.js';
 
 const KEY = 'phase1_records';
+const CURRENT_KEY = 'phase1_current_reading';
 const MAX_RECORDS = 500;
+
+/**
+ * The reading for the page currently on screen, published by the content script and consumed by the
+ * popup.
+ *
+ * It lives in SESSION storage, not local. This is the only place an exact coordinate exists at all,
+ * and it exists only long enough for the popup to show it and compute a distance against ground
+ * truth. Session storage is cleared when the browser closes, so the transient thing is stored
+ * transiently rather than by convention. It is overwritten on every navigation and never enters a
+ * saved record — `saveRecord` puts everything through the projection below.
+ */
+export async function publishReading(reading) {
+  await chrome.storage.session.set({ [CURRENT_KEY]: { ...reading, publishedAt: Date.now() } });
+}
+
+export async function currentReading() {
+  const bag = await chrome.storage.session.get(CURRENT_KEY);
+  return bag?.[CURRENT_KEY] ?? null;
+}
+
+export async function clearCurrentReading() {
+  await chrome.storage.session.remove(CURRENT_KEY);
+}
 
 /**
  * The only sites this harness runs on. The stored label comes from here, so it is a value we chose

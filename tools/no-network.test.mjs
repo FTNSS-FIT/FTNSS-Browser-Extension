@@ -87,3 +87,16 @@ test('the manifest asks for narrow permissions and never <all_urls>', () => {
     'the harness needs local storage and nothing else',
   );
 });
+
+test('no extension UI is injected into the page', () => {
+  // The recorder lives in the popup, which the page cannot hide, move, click-jack or keylog. If a
+  // content script ever starts building UI again, that whole class of problem comes back — three
+  // review rounds found three separate ways to subvert an in-page panel before it was moved out.
+  const content = stripComments(readFileSync(join(SRC, 'content.js'), 'utf8'));
+  for (const pattern of [/createElement/, /attachShadow/, /appendChild/, /\.style\b/]) {
+    assert.ok(!pattern.test(content), `content script must not build UI: ${pattern}`);
+  }
+  const manifest = JSON.parse(readFileSync(join(SRC, 'manifest.json'), 'utf8'));
+  const exposed = manifest.web_accessible_resources.flatMap((w) => w.resources);
+  assert.ok(!exposed.some((r) => r.startsWith('panel/')), 'no panel is exposed to the page');
+});

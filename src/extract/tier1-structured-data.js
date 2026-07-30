@@ -30,7 +30,8 @@ const LODGING_TYPES = new Set([
   'Place',
 ]);
 
-const MAX_NODES = 500; // a page cannot make us walk forever
+const MAX_NODES = 500; // objects examined
+const MAX_ENQUEUED = 5000; // total entries the page can make us queue
 const MAX_DEPTH = 12;
 // Caps applied BEFORE parsing. The node/depth limits above only bound the walk — a single
 // multi-megabyte block still had to be read out of the DOM and run through JSON.parse first, so a
@@ -55,20 +56,39 @@ function typesOf(node) {
  * JSON.parse itself does not assign it, code that later spreads or merges these nodes would.
  */
 function* walk(root) {
+  // Bounded on ENQUEUES and dequeues, not on objects yielded. The previous cap counted only nodes
+  // that turned out to be objects, so a 512KB array of primitives could push hundreds of thousands
+  // of entries that were each dequeued and discarded without ever incrementing the counter. And the
+  // queue was drained with `shift()`, which is O(n) on an array, making that same input quadratic —
+  // a page could freeze the tab while staying inside every limit this function advertised.
+  // An index cursor makes dequeuing O(1); the enqueue cap makes the advertised bound real.
+  // (Codex review round 8, PR #1.)
   const queue = [[root, 0]];
-  let seen = 0;
-  while (queue.length > 0 && seen < MAX_NODES) {
-    const [node, depth] = queue.shift();
+  let cursor = 0;
+  let enqueued = 1;
+  let yielded = 0;
+
+  while (cursor < queue.length && yielded < MAX_NODES) {
+    const [node, depth] = queue[cursor];
+    // Release the reference so a large discarded subtree can be collected while we walk on.
+    queue[cursor] = null;
+    cursor += 1;
+
     if (node == null || typeof node !== 'object' || depth > MAX_DEPTH) continue;
-    seen += 1;
-    if (Array.isArray(node)) {
-      for (const child of node) queue.push([child, depth + 1]);
-      continue;
-    }
-    yield node;
-    for (const key of Object.keys(node)) {
-      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
-      queue.push([node[key], depth + 1]);
+
+    const children = Array.isArray(node)
+      ? node
+      : (yielded += 1, yield node, Object.keys(node)
+          .filter((k) => k !== '__proto__' && k !== 'constructor' && k !== 'prototype')
+          .map((k) => node[k]));
+
+    for (const child of children) {
+      if (enqueued >= MAX_ENQUEUED) return;
+      // Primitives cannot contain anything; not enqueuing them is what makes the bound meaningful
+      // on a large flat array rather than merely eventual.
+      if (child == null || typeof child !== 'object') continue;
+      enqueued += 1;
+      queue.push([child, depth + 1]);
     }
   }
 }

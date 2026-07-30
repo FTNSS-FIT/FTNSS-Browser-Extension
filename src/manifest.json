@@ -48,8 +48,7 @@
     {
       "resources": [
         "extract/*.js",
-        "lib/*.js",
-        "panel/*.js"
+        "lib/*.js"
       ],
       "matches": [
         "*://*.booking.com/*",
@@ -86,5 +85,8 @@
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "FTNSS measurement harness"
+  },
+  "background": {
+    "service_worker": "background.js"
   }
 }
