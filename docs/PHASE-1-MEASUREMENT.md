@@ -62,6 +62,12 @@ that looked fine.
 
 Stated here because a limitation nobody wrote down becomes a result somebody quotes.
 
+- **A page that never becomes readable is measured as unreadable, but not immediately.** Extraction
+  retries for a few seconds after load if nothing was found, because both measured sites render
+  asynchronously and a listing whose data lands just after the page settles is readable, not absent.
+  Without that, the error would fall on slower pages and slower connections — biasing the hit rate
+  upward by exactly the cases the product will find hardest.
+
 - **Tier 3 is an upper bound.** It reports only whether an address *string* was present. Turning one
   into a coordinate needs a geocoder, which is a network call this harness does not make. The real
   tier 3 rate is lower by the geocoder's own error rate on these inputs.

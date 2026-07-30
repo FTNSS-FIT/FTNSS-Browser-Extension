@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "description": "Internal measurement tool. Records how often a listing page's location can be read. Not for publication.",
   "permissions": [
-    "storage"
+    "storage",
+    "activeTab"
   ],
   "content_scripts": [
     {

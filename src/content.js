@@ -34,6 +34,8 @@
   // That error is visible: it costs a possibly-early read on a page the person is looking at and can
   // judge. The other error is invisible. (Codex review rounds 4, 7 and 8, PR #1.)
   let lastSignature = null;
+  /** The page identity the most recent published reading describes. Never leaves this script. */
+  let lastPublishedIdentity = null;
 
   /** Page identity with the fragment excluded — `#photos` is not a different listing. */
   const pageIdentity = (href) => href.split('#')[0];
@@ -113,11 +115,14 @@
     });
   }
 
+  let lastPublishedStatus = null;
+
   async function measureCurrentPage({
     softNavigation = false,
     navDetectedAt = null,
     latencyUncertaintyMs = 0,
     mutationCountAtNavigation = 0,
+    isRetry = false,
   } = {}) {
     const myGeneration = (generation += 1);
     let domSettled = true;
@@ -187,10 +192,65 @@
       softNavigation,
       domSettled,
       latencyUncertaintyMs: softNavigation ? latencyUncertaintyMs : 0,
+      // A retry's latency is measured to the moment the reading actually became available, which is
+      // the honest number: the product would have waited exactly that long too.
+      retried: isRetry,
     });
+    lastPublishedStatus = extraction.result.status;
+    lastPublishedIdentity = identity;
+    return extraction.result;
   }
 
-  measureCurrentPage();
+  /**
+   * Measure on load, then keep trying for a short while if nothing was readable.
+   *
+   * Extraction ran once at `document_idle` and never again unless the URL changed. Both measured
+   * sites render substantial content asynchronously, so a listing whose data lands a moment after
+   * idle produced a `not_found` that stayed recordable while the page sat there perfectly readable.
+   * That error is not random: it falls on slower pages and slower connections, so the measured hit
+   * rate would have been biased upward by exactly the cases the product will find hardest.
+   *
+   * Bounded, and stops as soon as something is found — this retries a failure, it does not poll a
+   * success. (Codex review round 16, PR #1.)
+   */
+  async function measureOnLoad() {
+    const result = await measureCurrentPage();
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (result?.status !== 'not_found' && lastPublishedStatus !== 'not_found') return;
+      const before = generation;
+      await waitForStableDom({ alreadyChanged: false, maxMs: 2500 });
+      // A real navigation happened while we waited; it owns the page now.
+      if (generation !== before) return;
+      const retry = await measureCurrentPage({ isRetry: true });
+      if (retry?.status !== 'not_found') return;
+    }
+  }
+
+  void measureOnLoad();
+
+  /**
+   * Answer "is the reading you published still for the page you are on?" — with a BOOLEAN.
+   *
+   * Where the Navigation API is unavailable, a same-document navigation is only noticed at the next
+   * poll, and during that window the stored reading for listing A is still the tab's current one.
+   * The popup's own revalidation cannot see the problem, because the stale reading is exactly what
+   * it re-reads. Asking the content script closes it, because the content script is the only
+   * component that can compare against `location.href` right now.
+   *
+   * The reply is a boolean and a sequence number. Never the URL: the answer to "are these the same?"
+   * does not require sending the thing being compared. (Codex review round 16, PR #1.)
+   */
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    // From our own extension, and from an extension page rather than another content script —
+    // a popup message has no `sender.tab`.
+    if (sender.id !== chrome.runtime.id || sender.tab != null) return false;
+    if (message?.type !== 'FTNSS_CONFIRM') return false;
+    sendResponse({
+      current: lastPublishedIdentity != null && lastPublishedIdentity === pageIdentity(location.href),
+      seq: generation,
+    });
+    return true;
+  });
 
   let lastIdentity = pageIdentity(location.href);
   function onMaybeNavigated(latencyUncertaintyMs) {

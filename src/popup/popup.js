@@ -223,6 +223,28 @@ async function render() {
     // coordinates. Session storage being invalidated did not help, because the closure still held
     // the old object. Check that the reading is still there AND still the same one.
     // (Codex review round 12, PR #1.)
+    // Ask the content script whether its reading is still for the page on screen.
+    //
+    // Re-reading storage cannot detect a navigation the content script has not noticed yet — the
+    // stale reading IS what gets re-read. Only the content script can compare against the live URL,
+    // and it answers with a boolean, never the URL itself. If it cannot be reached, the page is not
+    // one we measure and nothing should be recorded against it.
+    // (Codex review round 16, PR #1.)
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    let confirmation = null;
+    try {
+      confirmation = await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_CONFIRM' });
+    } catch {
+      confirmation = null;
+    }
+    if (confirmation?.current !== true) {
+      statusEl.replaceChildren(
+        el('span', 'This page is no longer the one that was read — nothing recorded.', 'warn'),
+      );
+      await render();
+      return;
+    }
+
     const live = await currentReading();
     if (
       live == null ||

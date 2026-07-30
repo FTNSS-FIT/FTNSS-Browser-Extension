@@ -81,10 +81,12 @@ test('the manifest asks for narrow permissions and never <all_urls>', () => {
     assert.ok(!/\*\.\*|\.\*\/|\*:\/\/\*\//.test(pattern), `over-broad host pattern: ${pattern}`);
   }
 
+  // activeTab is granted per-invocation on a toolbar click, for that tab only — see
+  // docs/DECISIONS.md 12. Any addition beyond these two is a decision, not a detail.
   assert.deepEqual(
     manifest.permissions,
-    ['storage'],
-    'the harness needs local storage and nothing else',
+    ['storage', 'activeTab'],
+    'permissions must not grow without a decision record',
   );
 });
 
