@@ -16,7 +16,15 @@ storing the results is, by any reasonable definition, the scraping this project 
 and a principle that applies only to the shipped build is not a principle. Doing it by hand keeps
 "we have never crawled these sites" true of **everything we have ever run**.
 
-Two sites: **Booking.com** and **Airbnb**. They are the two structurally most different cases — a
+**Expedia Group added 2026-07-31** — Expedia, Hotels.com and Vrbo. Not for coverage: to answer
+whether Booking or Airbnb is the *typical* shape. Booking publishes no coordinates and Airbnb
+publishes them on every page, so a third family decides whether geocoding is a minority path or the
+main one for most of the market — which is a materially different Phase 2.
+
+They are grouped as one family for reporting (shared owner, probably a shared template) while each
+brand keeps its own label, so a brand behaving differently from its siblings is still visible.
+
+Two sites originally: **Booking.com** and **Airbnb**. They are the two structurally most different cases — a
 pure OTA with search-critical structured data, versus a marketplace that withholds exact addresses by
 design. Measuring the two *easiest* sites is how a 90% proof-of-concept becomes a 60% product.
 

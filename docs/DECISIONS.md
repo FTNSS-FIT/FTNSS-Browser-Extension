@@ -277,6 +277,33 @@ Deliberately excluded from that probing: regex-scanning inline scripts for numbe
 where a confidently-wrong coordinate would come from, and on a site where no other tier produces one
 there would be nothing to cross-check it against.
 
+## 14. Expedia Group added to the harness — 61 hosts, and why that is not the product's list
+
+**Decided 2026-07-31.** The harness matches 61 hosts: Booking (4), Airbnb (24), and Expedia Group
+(53 — 31 Expedia country domains, 6 Hotels.com, 16 Vrbo). 81 hosts in total.
+
+§4 requires a decision record for any growth in the host list. This is it.
+
+**Why.** Booking publishes no coordinates on 48 of 48 pages; Airbnb publishes them on 15 of 15. We
+know two shapes of answer and nothing about which is typical, and that difference is a materially
+different Phase 2: geocoding as a minority path, or as the main path for two-thirds of the market
+with the postcode-precision-by-market caveat attached to most of it. A third family settles it.
+
+**Why every country domain rather than a sample.** A partial list is the exact bug §4's ccTLD rule
+exists to prevent: the content script silently never runs on an omitted domain, and its absence reads
+as *a market with no listings* rather than *a gap in our manifest*. That is a measurement error
+disguised as a finding, and it would be invisible. Every domain listed was confirmed to resolve by
+DNS on 2026-07-31.
+
+**Why this does not set the product's list.** The harness is internal, unpublished, and installed by
+one person who wants it. The shipped extension's site list is a **separate decision with a real
+cost**: every named domain is a permission prompt, growth forces existing users to re-accept, and a
+manifest listing sixty domains reads to a store reviewer as `<all_urls>` written out longhand — which
+is the concern raised when the v1 list was first scoped and remains unresolved.
+
+**Nothing else grew.** Permissions are still `storage` alone, asserted by test. What widened is the
+set of pages a content script may read, on an unpublished internal build.
+
 ---
 
 ## Deliberately not in v1
