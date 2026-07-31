@@ -555,7 +555,19 @@ document.getElementById('clear').addEventListener('click', async () => {
  * The cost is that this is a click away instead of in front of them, which is a product question
  * for a later phase and reversible. The invariant is not reversible once given up.
  */
+/**
+ * Which lookup is current.
+ *
+ * A lookup can take four seconds, and changing or clearing the endpoint starts another immediately
+ * — so the older request would finish last and render gyms from an endpoint that had already been
+ * replaced, or from one that had been cleared entirely. The panel would be showing an answer to a
+ * question nobody was asking any more, which is the same class of error as rendering listing A's
+ * gyms under listing B, arriving from the same direction: time.
+ */
+let lookupGeneration = 0;
+
 async function renderGyms() {
+  const generation = (lookupGeneration += 1);
   const container = document.getElementById('gyms');
   // Defensive for the same reason showVersion() is: this runs unawaited at startup, so anything it
   // throws surfaces as an unhandled rejection with no obvious link to the recorder — and the
@@ -567,7 +579,11 @@ async function renderGyms() {
   // a revoked permission or a change of environment left the feature permanently broken with no way
   // back through the UI. A setting you can write once and never correct is a trap, and the state it
   // traps you in is the one where something is already wrong.
+  // Every write to the panel checks it is still the current lookup. A guard placed only around the
+  // network call would still let a stale error or empty state paint over a fresh one.
+  const stale = () => generation !== lookupGeneration;
   const say = (message, className = 'muted') => {
+    if (stale()) return;
     container.replaceChildren(el('div', message, className));
     const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
     const row = el('div', null, 'row');
@@ -647,6 +663,7 @@ async function renderGyms() {
     return;
   }
 
+  if (stale()) return;
   container.replaceChildren();
   for (const gym of answer.gyms) {
     const row = el('div', null, 'gym');
@@ -694,19 +711,33 @@ async function renderGyms() {
  * to save a working endpoint over it would be worse.
  */
 async function releaseOrigin(previous, next) {
-  const originOf = (value) => {
-    try {
-      return new URL(value).origin;
-    } catch {
-      return null;
-    }
-  };
-  const old = originOf(previous);
-  if (old == null || old === originOf(next)) return;
+  const old = matchPatternFor(previous);
+  if (old == null || old === matchPatternFor(next)) return;
   try {
-    await chrome.permissions.remove({ origins: [`${old}/*`] });
+    await chrome.permissions.remove({ origins: [old] });
   } catch {
     // Nothing to do about it, and nothing that should stop the save.
+  }
+}
+
+/**
+ * A Chrome host match pattern: `scheme://host/*`, with NO PORT.
+ *
+ * `URL.origin` includes the port, so the documented `http://localhost:8787/api/proximity` produced
+ * `http://localhost:8787/*` — which is not a valid match pattern. Chrome would have rejected the
+ * request outright, meaning the local stub, the one path anyone can exercise today, could never
+ * have been authorised at all.
+ *
+ * Ports are also why comparison has to happen here rather than on origins: patterns cover every
+ * port on a host, so moving the stub from 8787 to 8788 is the SAME permission — and comparing
+ * origins would have revoked the permission the new endpoint had just been granted.
+ */
+function matchPatternFor(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname}/*`;
+  } catch {
+    return null;
   }
 }
 
@@ -751,7 +782,7 @@ function endpointForm(current) {
       // that leaves no visible error is the same as no validation.
       let granted = false;
       try {
-        granted = await chrome.permissions.request({ origins: [`${new URL(value).origin}/*`] });
+        granted = await chrome.permissions.request({ origins: [matchPatternFor(value)] });
       } catch (err) {
         note.textContent = `Chrome refused that origin: ${err?.message ?? 'unknown error'}`;
         note.className = 'warn';
