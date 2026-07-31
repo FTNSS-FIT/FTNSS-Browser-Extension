@@ -71,6 +71,9 @@ export function runExtraction(doc) {
   }
 
   return {
+    // Which address components the page published, presence only — the question the geocoding
+    // decision turns on, answerable without transmitting an address. (docs/DECISIONS.md 13.)
+    addressComponents: t1.value.addressComponents ?? null,
     result,
     tiers: { tier1: t1.value, tier2: t2.value, tier3: t3.value },
     timing: {

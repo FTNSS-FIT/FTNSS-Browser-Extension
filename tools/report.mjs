@@ -105,6 +105,50 @@ function summarise(allRows, label) {
     );
   }
 
+  // ── CAN THE PAGES WITHOUT COORDINATES BE GEOCODED, AND HOW SAFELY? ─────────
+  //
+  // The question DECISIONS 13 turns on. Geocoding a street address gives away the listing identity,
+  // which is exactly what the architecture promises we cannot learn — so the only acceptable form is
+  // coarse: postcode plus country, never the street. That is only possible if the page publishes
+  // those components SEPARATELY, which a scraped address string cannot tell us.
+  const needsGeocoding = rows.filter((r) => r.outcome === 'found_address' || r.outcome === 'not_found');
+  if (needsGeocoding.length > 0) {
+    const withComponents = needsGeocoding.filter((r) => r.addressComponents != null);
+    const coarse = withComponents.filter(
+      (r) => r.addressComponents.postalCode && r.addressComponents.country,
+    );
+    const streetOnly = withComponents.filter(
+      (r) => r.addressComponents.street && !(r.addressComponents.postalCode && r.addressComponents.country),
+    );
+
+    console.log(`  GEOCODING VIABILITY (${needsGeocoding.length} pages with no coordinate)`);
+    console.log(
+      `    structured address published   ${pct(withComponents.length, needsGeocoding.length)}`,
+    );
+    console.log(
+      `    COARSE-geocodable (postcode + country, no street)   ${pct(coarse.length, needsGeocoding.length)}`,
+    );
+    if (streetOnly.length > 0) {
+      console.log(
+        `    street only — would require sending the address   ${pct(streetOnly.length, needsGeocoding.length)}`,
+      );
+    }
+
+    // Postcode precision varies enormously by country: a UK or Dutch postcode resolves to a
+    // building, a US ZIP to several square kilometres. "Coarse-geocodable" means something
+    // different in each, so the split matters more than the total.
+    const byCountry = new Map();
+    for (const r of withComponents) {
+      const c = r.addressComponents.country ?? 'unknown';
+      byCountry.set(c, (byCountry.get(c) ?? 0) + 1);
+    }
+    if (byCountry.size > 0) {
+      const parts = [...byCountry].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c}:${n}`);
+      console.log(`    by country                     ${parts.join('  ')}`);
+      console.log('      (postcode precision differs by country — a UK postcode is a building, a US ZIP is a district)');
+    }
+  }
+
   // ── WHETHER IT WAS RIGHT ───────────────────────────────────────────────────
   //
   // A SEPARATE denominator, stated every time. Only a person can say whether a coordinate is the

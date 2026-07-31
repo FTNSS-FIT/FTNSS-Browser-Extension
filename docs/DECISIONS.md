@@ -224,6 +224,23 @@ address. For structured forward geocoding the realistic options are Nominatim or
 which can be **self-hosted** — which matters more than their accuracy difference, because a
 self-hosted geocoder means no third party is in the path at all.
 
+**Measuring it before building it.** The harness now reads the structured `PostalAddress` from the
+same lodging node tier 1 already finds, and records **which components exist** — never their values.
+That answers the question the decision turns on without transmitting anything:
+
+- Does the page publish components *separately*? A scraped address string cannot be split, so coarse
+  geocoding is impossible on a page that only renders one.
+- Is there a postcode **and** a country? That is the minimum that resolves anywhere.
+- Which country? This is the part most likely to be underestimated: **postcode precision is not
+  comparable across countries.** A UK or Dutch postcode identifies a building — finer than the 250m
+  we round to, so geocoding one would be no coarser than sending the street. A US ZIP covers several
+  square kilometres, which is coarser than our search radius is tight. "Coarse-geocodable" means
+  something different in each market, and a single global answer would be wrong in both directions.
+
+The report prints all three. If the answer is that most pages carry a postcode and a country, coarse
+geocoding is viable and the street never has to leave the browser. If most carry only a street, the
+decision is harder and belongs back with Jordan.
+
 **Before any of this, confirm the premise.** Coordinate probing was extended to meta tags
 (`geo.position`, `ICBM`, `og:latitude`, `place:location:*`) and `data-lat`/`data-lng` attributes,
 because a site that renders its map client-side must have the point in the document somewhere. If

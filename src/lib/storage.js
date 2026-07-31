@@ -295,6 +295,10 @@ const EXPORT_FIELDS = [
   'verified',
   // Whether the page had finished settling when the record was taken.
   'settled',
+  // Which address components the page published — presence only, plus a country code. The question
+  // "can we geocode without sending the street?" turns on this, and it is answerable without ever
+  // transmitting an address. (docs/DECISIONS.md 13.)
+  'addressComponents',
   'precisionVerdict',
   'softNavigation',
   'domSettled',
@@ -400,6 +404,22 @@ const KNOWN_REASONS = new Set([
 const knownReason = (value) =>
   typeof value === 'string' && KNOWN_REASONS.has(value) ? value : null;
 
+/** Rebuilt, like every other nested object: an allowlist that stops at the top level is not one. */
+function exportableAddressComponents(components) {
+  if (components == null || typeof components !== 'object') return null;
+  const country =
+    typeof components.country === 'string' && /^[A-Z]{2}$/.test(components.country)
+      ? components.country
+      : null;
+  return {
+    street: components.street === true,
+    locality: components.locality === true,
+    region: components.region === true,
+    postalCode: components.postalCode === true,
+    country,
+  };
+}
+
 function exportableTiers(tiers) {
   if (tiers == null || typeof tiers !== 'object') return null;
   const tier = (value) => (TIER_STATUSES.has(value) ? value : 'not_found');
@@ -439,6 +459,9 @@ export function exportableRecords(records) {
     // untouched, which is the same failure the allowlist exists to prevent, one level down.
     if (out.timing !== undefined) out.timing = exportableTiming(out.timing);
     if (out.tiers !== undefined) out.tiers = exportableTiers(out.tiers);
+    if (out.addressComponents !== undefined) {
+      out.addressComponents = exportableAddressComponents(out.addressComponents);
+    }
     out.result = exportableResult(record.result);
     return out;
   });

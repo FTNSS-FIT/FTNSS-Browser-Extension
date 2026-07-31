@@ -681,3 +681,72 @@ test('a blank or malformed metadata coordinate is refused, not coerced', () => {
     assert.equal(extractFromMapLinks(doc).status, 'not_found', `should have refused "${content}"`);
   }
 });
+
+// ─── structured address components ───────────────────────────────────────────
+
+test('address components are captured from a lodging node with no coordinates', () => {
+  // The case that matters: Booking publishes a Hotel with an address and no point, so this is
+  // exactly the page that would need geocoding — and the only page where knowing which components
+  // exist decides whether geocoding can be done safely.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      name: 'Riu Plaza',
+      address: {
+        '@type': 'PostalAddress',
+        streetAddress: '27 Travessa das Merceeiras',
+        addressLocality: 'Lisboa',
+        postalCode: '1100-348',
+        addressCountry: 'PT',
+      },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'not_found');
+  assert.deepEqual(r.addressComponents, {
+    street: true,
+    locality: true,
+    region: false,
+    postalCode: true,
+    country: 'PT',
+  });
+});
+
+test('components report PRESENCE, never the address itself', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '27 Travessa das Merceeiras', addressLocality: 'Lisboa', addressCountry: 'PT' },
+    }),
+  );
+  const serialised = JSON.stringify(extractFromStructuredData(doc).addressComponents);
+  // A measurement that requires the thing whose safety it is measuring is not worth taking.
+  for (const leak of ['Travessa', 'Merceeiras', 'Lisboa', '27']) {
+    assert.ok(!serialised.includes(leak), `components leaked "${leak}"`);
+  }
+  assert.ok(serialised.includes('PT'), 'the country is carried deliberately — see the module comment');
+});
+
+test('coarse geocodability needs a postcode AND a country', async () => {
+  const { coarselyGeocodable } = await import('../src/extract/address-components.js');
+  assert.equal(coarselyGeocodable({ postalCode: true, country: 'PT' }), true);
+  // A postcode with no country is ambiguous worldwide; a country with no postcode is a nation.
+  assert.equal(coarselyGeocodable({ postalCode: true, country: null }), false);
+  assert.equal(coarselyGeocodable({ postalCode: false, country: 'PT' }), false);
+  assert.equal(coarselyGeocodable(null), false);
+});
+
+test('a nested Country object still yields a country code', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  const components = addressComponentsOf({
+    address: { postalCode: 'M5V 2T6', addressCountry: { '@type': 'Country', name: 'ca' } },
+  });
+  assert.equal(components.country, 'CA');
+});
+
+test('a country field that is not a country code is discarded', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Page-controlled text. "Portugal" is not a code, and we must not carry arbitrary strings.
+  const components = addressComponentsOf({ address: { postalCode: '1100', addressCountry: 'Portugal' } });
+  assert.equal(components.country, null);
+});

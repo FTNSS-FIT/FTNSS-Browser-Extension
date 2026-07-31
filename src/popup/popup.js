@@ -439,6 +439,7 @@ async function render() {
         precisionVerdict,
         timing: reading.timing,
         tiers: reading.tiers,
+        addressComponents: reading.addressComponents ?? null,
         errorMetres,
         result: reading.result,
         // Recomputed from the reading we are actually logging, not from the render-time snapshot.
