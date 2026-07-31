@@ -15,8 +15,7 @@ const EXTRACT_BUDGET_MS = 150;
 
 const path = process.argv[2];
 if (!path) {
-  console.error('usage: node tools/report.mjs <exported-measurements.json> [cohort-label]');
-  console.error('  e.g. node tools/report.mjs measurements/ftnss-phase1-batch-2026-08-04.json airbnb.com');
+  console.error('usage: node tools/report.mjs <exported-measurements.json>');
   process.exit(2);
 }
 
@@ -41,149 +40,228 @@ function quantile(values, q) {
   return sorted[idx];
 }
 
-function summarise(rows, label) {
+function summarise(allRows, label) {
+  // A row logged BEFORE the reader gave up, that found no coordinate, is not evidence of absence:
+  // the coordinate may have appeared a second later. Counting those as completed extraction
+  // failures overstates the failure rate — and the button is deliberately available throughout, so
+  // this has to be handled in the statistics rather than by blocking the click.
+  // (Codex review, PR #6.)
+  const inconclusive = allRows.filter((r) => r.settled === false && r.outcome !== 'found');
+  const rows = allRows.filter((r) => !inconclusive.includes(r));
   const total = rows.length;
-  // A hit REQUIRES an extracted coordinate. A `correct` verdict on a record whose result was
-  // `found_address` or `not_found` is not a hit — tier 3 produces a string, not a location, and
-  // counting one would inflate the single number the phase-1 decision is made on. The recorder no
-  // longer offers those verdicts, but old exports predate that and the report must not trust its
-  // input. (Codex review, PR #1.)
-  const correct = rows.filter((r) => r.verdict === 'correct' && r.result?.status === 'found');
-  const inconsistent = rows.filter(
-    (r) => r.verdict === 'correct' && r.result?.status !== 'found',
-  ).length;
-  const wrong = rows.filter((r) => r.verdict === 'wrong').length;
-  const unverifiable = rows.filter((r) => r.verdict === 'unverifiable').length;
-  const noRead = rows.filter((r) => r.verdict === 'no_read').length;
+  const outcome = (name) => rows.filter((r) => r.outcome === name).length;
 
-  // A hit is correct AND inside the latency budget. A correct read that arrives after the user has
-  // moved on is worth nothing, so it does not count as one.
-  //
-  // A MISSING latency is not an over-budget one. Coercing null to Infinity classified every record
-  // without a timing as too slow — and on SPA sites that was most of the sample, so a measurement
-  // artifact would have driven the headline number down and read as a product failure. A record
-  // with no latency is counted on correctness and reported separately as unmeasured, never
-  // silently failed. (Codex review round 3, PR #1.)
-  const latencyOf = (r) => r.timing?.readingReadyMs;
-  // WORST CASE, not the flattering one: a polled detection can be up to one interval late, so the
-  // measured latency understates the real one by `latencyUncertaintyMs`. Adding it before the
-  // comparison means a panel that may really have taken longer than the budget is not counted as a
-  // hit on the strength of how it was measured. (Codex review round 4, PR #1.)
-  // The two uncertainties bound the true latency from OPPOSITE sides, and were previously summed
-  // into a single "worst case". That inflated every probe-delayed reading: a 750ms read with 250ms
-  // of probe delay is bounded ABOVE by 750ms, and was being reported as possibly 1000ms and dropped
-  // from the hits — the report penalising a reading for how carefully it was measured.
-  // (Codex review round 25, PR #1.)
-  const navigationDelay = (r) => r.timing?.navigationDelayMs ?? r.latencyUncertaintyMs ?? 0;
-  const probeDelay = (r) => r.timing?.probeDelayMs ?? 0;
-  const worstCaseLatency = (r) =>
-    Number.isFinite(latencyOf(r)) ? latencyOf(r) + navigationDelay(r) : NaN;
-  // A hit needs latency that was MEASURED and inside the budget. Round 3 fixed missing-latency being
-  // treated as too slow; the fix over-corrected into treating it as fast enough, which inflates the
-  // headline number instead of deflating it. Neither is right: an unmeasured record is not evidence
-  // of meeting a budget, so it is excluded from hits and reported on its own line.
-  // (Codex review round 5, PR #1.)
-  // A reading whose BEST case is inside the budget and whose WORST case is outside straddles it. We
-  // cannot say which side it fell, and guessing in either direction biases the headline number, so
-  // it is reported on its own line rather than counted. (Codex review round 23, PR #1.)
-  const bestCaseLatency = (r) =>
-    Number.isFinite(latencyOf(r)) ? Math.max(0, latencyOf(r) - probeDelay(r)) : NaN;
-  const straddles = (r) =>
-    Number.isFinite(latencyOf(r)) &&
-    bestCaseLatency(r) <= LATENCY_BUDGET_MS &&
-    worstCaseLatency(r) > LATENCY_BUDGET_MS;
-
-  const measured = (r) => Number.isFinite(worstCaseLatency(r)) && Number.isFinite(r.timing?.totalMs);
-  const inBudget = (r) =>
-    worstCaseLatency(r) <= LATENCY_BUDGET_MS && r.timing.totalMs <= EXTRACT_BUDGET_MS;
-  const withinBudget = correct.filter((r) => measured(r) && inBudget(r) && !straddles(r)).length;
-  const straddling = correct.filter((r) => measured(r) && straddles(r)).length;
-  const unmeasuredLatency = correct.filter((r) => !measured(r)).length;
-  // Straddling readings are reported on their own line, so they must not also appear here — a row
-  // counted in two buckets makes the percentages sum past 100 and reads as worse than it is.
-  const correctButSlow = correct.filter((r) => measured(r) && !inBudget(r) && !straddles(r)).length;
-
-  const readyTimes = rows.map(worstCaseLatency).filter(Number.isFinite);
-  const extractTimes = rows.map((r) => r.timing?.totalMs).filter(Number.isFinite);
-
-  console.log(`\n${label}  (n=${total})`);
-  console.log(`  HIT (correct + in budget)  ${pct(withinBudget, total)}   ${withinBudget}/${total}`);
-  console.log(`  correct, over budget       ${pct(correctButSlow, total)}`);
-  if (straddling > 0) {
+  console.log(`\n${label}  (n=${total} conclusive of ${allRows.length} logged)`);
+  if (inconclusive.length > 0) {
     console.log(
-      `  correct, latency STRADDLES the budget  ${pct(straddling, total)}  — detection error spans it, not counted`,
+      `  ${inconclusive.length} logged before the reader finished, with no coordinate — excluded from every rate below,`,
     );
+    console.log('  because a coordinate may have appeared after the click. Not evidence of absence.');
   }
-  if (unmeasuredLatency > 0) {
-    console.log(
-      `  correct, latency UNMEASURED ${pct(unmeasuredLatency, total)}  — not counted as hits either way`,
-    );
-  }
-  console.log(`  WRONG                      ${pct(wrong, total)}   ${wrong}/${total}   <- must be ~0`);
-  console.log(`  miss (honest failure)      ${pct(noRead, total)}`);
-  console.log(`  unverifiable               ${pct(unverifiable, total)}`);
-  if (inconsistent > 0) {
-    console.log(
-      `  ⚠ ${inconsistent} record(s) marked "correct" with no extracted coordinate — NOT counted as hits`,
-    );
-  }
+
+  // ── WHAT WE COULD EXTRACT ──────────────────────────────────────────────────
+  // Mechanical, measured on every logged page. This is the high-volume number.
+  console.log('  EXTRACTION (conclusive pages only)');
+  console.log(`    coordinate                ${pct(outcome('found'), total)}   ${outcome('found')}/${total}`);
+  console.log(`    address only              ${pct(outcome('found_address'), total)}   — geocodable, no point`);
+  console.log(`    ambiguous (page disagreed) ${pct(outcome('ambiguous'), total)}`);
+  console.log(`    nothing                   ${pct(outcome('not_found'), total)}`);
 
   const tierOf = (n) => rows.filter((r) => r.result?.tier === n).length;
   console.log(
-    `  answered by tier           1: ${pct(tierOf(1), total)}  2: ${pct(tierOf(2), total)}  3: ${pct(tierOf(3), total)}`,
-  );
-  console.log(
-    `  tier availability          1: ${pct(rows.filter((r) => r.tiers?.tier1 === 'found').length, total)}` +
-      `  2: ${pct(rows.filter((r) => r.tiers?.tier2 === 'found').length, total)}` +
-      `  3: ${pct(rows.filter((r) => r.tiers?.tier3 === 'found_address').length, total)}`,
-  );
-  console.log(
-    `  reading ready  p50 ${quantile(readyTimes, 0.5)}ms   p95 ${quantile(readyTimes, 0.95)}ms   (budget ${LATENCY_BUDGET_MS}ms)`,
-  );
-  console.log(
-    `  extraction   p50 ${quantile(extractTimes, 0.5)}ms   p95 ${quantile(extractTimes, 0.95)}ms   (budget ${EXTRACT_BUDGET_MS}ms)`,
+    `    answered by tier          1: ${pct(tierOf(1), total)}  2: ${pct(tierOf(2), total)}  3: ${pct(tierOf(3), total)}`,
   );
 
-  const precisionOf = (v) => rows.filter((r) => r.precisionVerdict === v).length;
-  const assessed = precisionOf('building') + precisionOf('area') + precisionOf('unclear');
-  if (assessed > 0) {
+  // WHY THE TIERS GAVE UP. The most useful output of this phase: "no coordinates published" is a
+  // finding about the site, "coordinates present but refused" is a finding about us, and they call
+  // for opposite responses.
+  for (const [tier, field] of [
+    ['tier 1', 'tier1Reason'],
+    ['tier 2', 'tier2Reason'],
+    ['tier 3', 'tier3Reason'],
+  ]) {
+    const counts = new Map();
+    for (const r of rows) {
+      const reason = r.tiers?.[field];
+      if (!reason) continue;
+      counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    }
+    if (counts.size === 0) continue;
+    console.log(`    why ${tier} gave up:`);
+    for (const [reason, n] of [...counts].sort((a, b) => b[1] - a[1])) {
+      console.log(`        ${pct(n, total).padStart(6)}  ${reason}`);
+    }
+  }
+
+  const unsettled = rows.filter((r) => r.settled === false).length;
+  // NOT a warning by itself. On a site that never publishes a coordinate this is 100% by definition —
+  // the reader keeps looking for something that is not there, and logging before it times out is the
+  // correct thing to do, not a compromised reading. It matters only for `nothing found` outcomes,
+  // where a coordinate genuinely might have been a moment away.
+  if (unsettled > 0) {
     console.log(
-      `  precision (of ${assessed} assessed)  building: ${pct(precisionOf('building'), assessed)}` +
-        `  area: ${pct(precisionOf('area'), assessed)}  unclear: ${pct(precisionOf('unclear'), assessed)}`,
+      `    logged before the reader gave up  ${pct(unsettled, total)}`,
     );
   }
 
-  const unsettled = rows.filter((r) => r.domSettled === false).length;
-  if (unsettled > 0) {
-    console.log(`  ⚠ ${unsettled} record(s) taken before the page settled — treat with suspicion`);
+  // ── WHETHER IT WAS RIGHT ───────────────────────────────────────────────────
+  //
+  // A SEPARATE denominator, stated every time. Only a person can say whether a coordinate is the
+  // right place, so this is measured on a subsample — and an extraction rate over 100 pages beside
+  // a correctness rate over 12 must never read as one number.
+  const withCoordinate = rows.filter((r) => r.outcome === 'found');
+  const verified = withCoordinate.filter((r) => r.verified === 'correct' || r.verified === 'wrong');
+  const correct = verified.filter((r) => r.verified === 'correct');
+  const wrong = verified.filter((r) => r.verified === 'wrong').length;
+
+  console.log(`  CORRECTNESS (verified subsample: n=${verified.length} of ${withCoordinate.length} with a coordinate)`);
+  if (verified.length === 0) {
+    console.log('    NOT MEASURED — nothing was verified, so the wrong-rate is unknown.');
+    console.log('    The wrong-rate is the number that decides this project. Verify some.');
+  } else {
+    console.log(`    correct                   ${pct(correct.length, verified.length)}   ${correct.length}/${verified.length}`);
+    console.log(`    WRONG                     ${pct(wrong, verified.length)}   ${wrong}/${verified.length}   <- must be ~0`);
+    if (verified.length < 10) {
+      console.log(`    ⚠ ${verified.length} verified is too few to trust this rate.`);
+    }
+  }
+
+  // ── LATENCY ────────────────────────────────────────────────────────────────
+  const latencyOf = (r) => r.timing?.readingReadyMs;
+  const navigationDelay = (r) => r.timing?.navigationDelayMs ?? 0;
+  const probeDelay = (r) => r.timing?.probeDelayMs ?? 0;
+  // The two bound the true value from OPPOSITE sides and must not be summed.
+  const worstCase = (r) => (Number.isFinite(latencyOf(r)) ? latencyOf(r) + navigationDelay(r) : NaN);
+  const bestCase = (r) =>
+    Number.isFinite(latencyOf(r)) ? Math.max(0, latencyOf(r) - probeDelay(r)) : NaN;
+
+  const timed = withCoordinate.filter((r) => Number.isFinite(worstCase(r)) && Number.isFinite(r.timing?.totalMs));
+  const inBudget = timed.filter(
+    (r) => worstCase(r) <= LATENCY_BUDGET_MS && r.timing.totalMs <= EXTRACT_BUDGET_MS,
+  ).length;
+  // Best case inside the budget and worst case outside: we cannot say which side it fell, and
+  // guessing either way biases the headline number.
+  const straddling = timed.filter(
+    (r) => bestCase(r) <= LATENCY_BUDGET_MS && worstCase(r) > LATENCY_BUDGET_MS,
+  ).length;
+
+  const readyTimes = timed.map(worstCase).filter(Number.isFinite);
+  const extractTimes = rows.map((r) => r.timing?.totalMs).filter(Number.isFinite);
+  const ms = (v) => (v == null ? 'unmeasured' : `${v}ms`);
+
+  console.log(`  LATENCY (of ${withCoordinate.length} coordinate reads, ${timed.length} timed)`);
+  console.log(`    inside budget             ${pct(inBudget, timed.length)}`);
+  if (straddling > 0) {
+    console.log(`    straddles the budget      ${pct(straddling, timed.length)}  — error bar spans it, not counted`);
+  }
+  console.log(
+    `    reading ready  p50 ${ms(quantile(readyTimes, 0.5))}   p95 ${ms(quantile(readyTimes, 0.95))}   (budget ${LATENCY_BUDGET_MS}ms)`,
+  );
+  console.log(
+    `    extraction     p50 ${ms(quantile(extractTimes, 0.5))}   p95 ${ms(quantile(extractTimes, 0.95))}   (budget ${EXTRACT_BUDGET_MS}ms)`,
+  );
+  // WHOSE FAULT THE LATENCY IS. Without this split, a p50 over budget reads as an extraction problem
+  // when it is usually the page taking its time to reach document_idle — which no change of ours can
+  // fix, and which the product's panel would wait for too.
+  const startTimes = timed.map((r) => r.timing?.scriptStartedMs).filter(Number.isFinite);
+  if (startTimes.length > 0) {
+    console.log(
+      `    of which, waiting for the page  p50 ${ms(quantile(startTimes, 0.5))}   p95 ${ms(quantile(startTimes, 0.95))}`,
+    );
+    console.log('      (time until a content script may run at all — a fact about the site, not us)');
+  }
+
+  // ── THE HIT RATE ───────────────────────────────────────────────────────────
+  //
+  // The INTERSECTION, computed explicitly. Splitting the report into extraction and correctness
+  // sections lost this, and the separate percentages can hide the answer completely: if every
+  // correct coordinate is slow and every fast coordinate is wrong, both lines look healthy and the
+  // true hit rate is zero. A hit is a coordinate that a person verified as correct AND that arrived
+  // inside both budgets, with straddling and unmeasured rows excluded because neither can be shown
+  // to qualify. (Codex review, PR #6.)
+  const hits = verified.filter(
+    (r) =>
+      r.verified === 'correct' &&
+      Number.isFinite(worstCase(r)) &&
+      Number.isFinite(r.timing?.totalMs) &&
+      worstCase(r) <= LATENCY_BUDGET_MS &&
+      r.timing.totalMs <= EXTRACT_BUDGET_MS,
+  ).length;
+
+  // TWO RATES, AND ONLY ONE OF THEM IS THE PHASE 1 NUMBER.
+  //
+  // Dividing hits by the verified subsample gives a rate CONDITIONAL on having got a coordinate and
+  // having checked it. Labelling that "the phase 1 number" was badly wrong: one verified fast
+  // coordinate among a hundred logged pages would have reported 100%, while 99 of those pages
+  // produced no coordinate at all. That is precisely the number that would greenlight phase 2 on a
+  // sample that says the opposite. (Codex review, PR #6.)
+  //
+  // The overall rate is the product of the stages, and the correctness stage is SAMPLED — so it is
+  // an estimate, and is printed as one, with the assumption it rests on stated.
+  console.log('  HIT RATE');
+  if (verified.length === 0) {
+    console.log('    NOT COMPUTABLE — nothing was verified. Extraction alone cannot give a hit rate.');
+  } else {
+    console.log(
+      `    conditional (of verified coordinates)   ${pct(hits, verified.length)}   ${hits}/${verified.length}`,
+    );
+    const correctButUnqualified = correct.length - hits;
+    if (correctButUnqualified > 0) {
+      console.log(
+        `      of which correct but too slow/straddling/untimed  ${pct(correctButUnqualified, verified.length)}`,
+      );
+    }
+    // P(coordinate) x P(hit | verified coordinate). Sound only if the verified rows are
+    // representative of the coordinate rows, which is an assumption about how they were chosen.
+    const coordinateRate = withCoordinate.length / total;
+    const conditional = hits / verified.length;
+    const estimated = coordinateRate * conditional;
+    console.log(
+      `    ESTIMATED overall                      ${(estimated * 100).toFixed(1)}%   = ${pct(withCoordinate.length, total)} with a coordinate x ${pct(hits, verified.length)} of those verified`,
+    );
+    console.log(
+      `      assumes the ${verified.length} verified rows are representative of all ${withCoordinate.length} coordinate rows`,
+    );
+    if (verified.length < withCoordinate.length / 4) {
+      console.log(
+        `      ⚠ only ${verified.length} of ${withCoordinate.length} coordinates checked — verify more before trusting this`,
+      );
+    }
   }
 
   const errors = rows.map((r) => r.errorMetres).filter(Number.isFinite);
   if (errors.length > 0) {
     console.log(
-      `  positional error   p50 ${quantile(errors, 0.5)}m   p95 ${quantile(errors, 0.95)}m   (n=${errors.length})`,
+      `    positional error  p50 ${quantile(errors, 0.5)}m   p95 ${quantile(errors, 0.95)}m   (n=${errors.length})`,
     );
   }
 }
 
-// THE COHORT IS AN ARGUMENT, not something read from the file or its name.
-//
-// It lived in the filename briefly, which moved the leak rather than removing it: a file called
-// `ftnss-phase1-airbnb.jp-….json` is itself a browsing record, and a more durable one than the rows,
-// because it survives being copied and attached. Nothing on disk names a site now. The person who
-// exported the batch knows which it was and says so here.
-const cohort = process.argv[3] ?? '(unlabelled — pass the cohort as the second argument)';
+summarise(records, 'ALL SITES');
 
-summarise(records, `COHORT: ${cohort}`);
+// ONE FILE, SPLIT BY SITE. Each record carries its own family and variant, so a session covering
+// both sites is a single export and the comparison is made here rather than across separate runs.
+const byFamily = new Map();
+for (const r of records) {
+  const key = String(r.family ?? 'unknown');
+  if (!byFamily.has(key)) byFamily.set(key, []);
+  byFamily.get(key).push(r);
+}
+if (byFamily.size > 1) {
+  for (const [family, rows] of byFamily) summarise(rows, family.toUpperCase());
+}
+
+const byVariant = new Map();
+for (const r of records) {
+  const key = String(r.variant ?? 'unknown');
+  if (!byVariant.has(key)) byVariant.set(key, []);
+  byVariant.get(key).push(r);
+}
+if (byVariant.size > 1) {
+  for (const [variant, rows] of byVariant) summarise(rows, `VARIANT: ${variant}`);
+}
 
 
-
-console.log(`
-COMPARING SITES
-  Run this once per exported file. Each file is one cohort — one site, one primary-or-ccTLD variant —
-  named in its filename. The comparison is made ACROSS reports rather than within one, because no row
-  carries anything that would let you split a mixed file afterwards. The harness refuses to mix
-  cohorts in one batch for that reason.`);
 
 console.log(`
 NOT MEASURED BY THIS REPORT

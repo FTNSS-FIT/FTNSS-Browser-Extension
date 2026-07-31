@@ -17,14 +17,10 @@ import {
   saveRecord,
   exportableRecords,
   readActivePage,
-  currentCohort,
-  setCurrentCohort,
-  batchCohortLabel,
-  clearBatchCohortLabel,
+  cohortRecordFor,
   siteLabelFor,
   migrateAwayLocalCohort,
   migrateStoredRecords,
-  SITE_LABELS,
 } from '../lib/storage.js';
 import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
 
@@ -82,55 +78,31 @@ async function refreshCount() {
   countEl.textContent = `${records.length} recorded`;
 }
 
-async function renderCohort() {
-  const cohortEl = document.getElementById('cohort');
-  cohortEl.replaceChildren();
-  const selected = await currentCohort();
+/**
+ * Bounded re-checks while a reading is still settling, with the progress shown as it goes.
+ *
+ * These four were referenced throughout and never declared — the popup threw
+ * `MAX_POLLS is not defined` on every page. Four wiring bugs of this shape have now shipped from
+ * this file, every one of them a scripted edit that silently matched nothing. The executable smoke
+ * test added alongside this is the actual fix; the declarations are just the symptom.
+ */
+const MAX_POLLS = 20;
+const POLL_INTERVAL_MS = 400;
+let pollsRemaining = MAX_POLLS;
+let pollTimer = null;
 
-  const select = document.createElement('select');
-  const blank = document.createElement('option');
-  blank.value = '';
-  blank.textContent = 'Choose the site you are measuring…';
-  select.appendChild(blank);
-  for (const label of SITE_LABELS) {
-    const option = document.createElement('option');
-    option.value = label;
-    option.textContent = label;
-    if (label === selected) option.selected = true;
-    select.appendChild(option);
-  }
-  select.addEventListener('change', async () => {
-    if (select.value) await setCurrentCohort(select.value);
-    await render();
-  });
-  cohortEl.appendChild(select);
-  return selected;
-}
-
-/** Bounded re-checks while a reading is provisional. ~8 seconds, then it stops and says so. */
-let pollsRemaining = 20;
+/** A message that must survive the re-render which follows it. */
+let pendingNotice = null;
 
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();
-  const cohort = await renderCohort();
-
-  // Read the page as it is right now.
-  const reading = await readActivePage();
-
-  // Records outlive a browser restart; the batch label does not, because it is session-scoped so no
-  // site string is ever written to disk. That combination would let a new cohort's readings be mixed
-  // into an old batch that can no longer be identified — so recording stops until the batch is
-  // exported and cleared. Exporting still works, which is the way out. (Codex review round 22, PR #1.)
-  const orphanedBatch = (await loadRecords()).length > 0 && (await batchCohortLabel()) == null;
-  if (orphanedBatch) {
-    readingEl.className = 'warn';
-    readingEl.textContent =
-      'There are records from a previous session whose cohort label is gone. Export and clear them before recording more.';
-    controlsEl.replaceChildren();
-    await refreshCount();
-    return;
+  if (pendingNotice != null) {
+    statusEl.appendChild(el('span', pendingNotice, 'warn'));
+    pendingNotice = null;
   }
+  // Read the page as it is right now.
+  let reading = await readActivePage();
 
   if (reading == null) {
     readingEl.className = 'muted';
@@ -157,6 +129,18 @@ async function render() {
     ),
   );
 
+  // WHY each tier gave up, shown whenever nothing was found. "No read" on its own tells the person
+  // holding the instrument nothing about whether the site is unreadable or the harness is broken,
+  // and they are the one who can tell the difference by looking at the page.
+  if (reading.result?.status !== 'found') {
+    const t1 = reading.tiers?.tier1Reason;
+    const t2 = reading.tiers?.tier2Reason;
+    const t3 = reading.tiers?.tier3Reason;
+    for (const [label, reason] of [['t1', t1], ['t2', t2], ['t3', t3]]) {
+      if (reason) readingEl.appendChild(el('div', `${label}: ${reason}`, 'muted'));
+    }
+  }
+
   const latency = reading.timing?.readingReadyMs;
   readingEl.appendChild(
     el(
@@ -168,43 +152,86 @@ async function render() {
     ),
   );
 
-  // The declared cohort is what gets recorded, so a mismatch would file this reading under the wrong
-  // site and corrupt the one comparison this phase exists to make. Checked here, in the browser; the
-  // detected host is never written anywhere.
+  // DETECTED, not declared. Asking the operator to select the site, then export, clear and switch
+  // between sites, was the most error-prone part of the protocol — every step a chance to mislabel
+  // or lose a batch — and an instrument whose workflow is annoying produces worse data than one
+  // whose workflow is boring. The page already knows which site it is. (DECISIONS 11.)
   const detected = reading.detectedHost ? siteLabelFor(reading.detectedHost) : 'other';
-  const mismatch = cohort != null && detected !== 'other' && detected !== cohort;
-  if (mismatch) {
-    readingEl.appendChild(el('div', `⚠ this page looks like ${detected}, not ${cohort}`, 'warn'));
-  }
+  const cohortEl = document.getElementById('cohort');
+  cohortEl.replaceChildren(el('div', detected === 'other' ? 'not a listed site' : detected, 'muted'));
 
-  if (reading.provisional === true) {
-    // Still working out whether the page is readable. Shown, so the operator knows the extension is
-    // alive, and not recordable — "no read" here would write a false miss for a page whose
-    // coordinates are about to appear.
+  // STILL SETTLING — SHOWN, NOT BLOCKING.
+  //
+  // This used to return before rendering any controls, so while the page was settling there was no
+  // Log button at all. On a site whose address appears at 600ms and whose coordinate never appears,
+  // that is five seconds of an instrument that will not let you record anything, with no indication
+  // of how long it intends to keep you waiting.
+  //
+  // The reason the block existed is still valid — logging "nothing found" on a page whose
+  // coordinate is a second away writes a false miss. But the answer is to SHOW the state and let the
+  // person decide, not to take the button away: they are looking at the page and can see whether it
+  // has finished loading. The record carries whether it had settled, so the report can separate them.
+  let recorded = false;
+  const settling = reading.provisional === true;
+  const progressEl = el('div', null, 'muted');
+  readingEl.appendChild(progressEl);
+
+  if (settling) {
+    // POLL WITHOUT REBUILDING THE CONTROLS.
     //
-    // AND WE COME BACK. Rendering once and returning left the popup saying "still reading" forever:
-    // the content script settled a second later and nothing asked it again, so that listing could
-    // never be recorded at all. The pages that take a moment to settle are the slow, heavy ones, so
-    // silently losing them raises the measured hit rate — the same direction as every other defect
-    // this instrument has had. (Codex review rounds 24 and 25, PR #1.)
-    readingEl.appendChild(el('div', 'still reading this page…', 'muted'));
-    await refreshCount();
-    if (pollsRemaining > 0) {
-      pollsRemaining -= 1;
-      setTimeout(() => void render(), 400);
-    } else {
-      readingEl.appendChild(el('div', 'This page did not settle. Reload it and try again.', 'warn'));
-    }
-    return;
+    // The poll used to call render(), which begins by replacing every child of the controls — so on
+    // a page that never settles, the Log button was destroyed and rebuilt every 400ms, and a click
+    // landing in the wrong 400ms window hit a button that no longer existed. Clicking Log did
+    // nothing, repeatedly, with no error, which is the worst possible failure for a button whose
+    // entire job is to be pressed.
+    //
+    // Only the progress line updates now. A full re-render happens ONLY when the outcome category
+    // changes, because that is when a different set of controls genuinely applies.
+    const startedAt = Date.now();
+    const tick = async () => {
+      if (recorded) return;
+      const latest = await readActivePage();
+      if (latest == null || latest.pageToken !== reading.pageToken) return;
+
+      if (latest.result?.status !== reading.result?.status) {
+        pollsRemaining = MAX_POLLS;
+        await render();
+        return;
+      }
+
+      const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      if (pollsRemaining > 0 && latest.provisional === true) {
+        pollsRemaining -= 1;
+        progressEl.textContent = `still reading… ${seconds}s — a coordinate may still appear`;
+        pollTimer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+      } else {
+        progressEl.className = 'warn';
+        progressEl.textContent = 'stopped waiting — this is what the page gives us. Logging it is fine.';
+      }
+    };
+    progressEl.textContent = 'still reading… 0.0s — a coordinate may still appear';
+    pollTimer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
   }
 
   const hasCoordinate = reading.result?.status === 'found';
   let precisionVerdict = 'not_assessed';
+  let verified = null;
 
+  // LOG IS THE PRIMARY ACTION, AND IT ASKS NOTHING.
+  //
+  // The extractor already knows what it found — a coordinate, an address, a contradiction, nothing.
+  // Making the person restate that was friction carrying no information, and friction in a
+  // measurement instrument costs sample size, which is the one thing this phase cannot buy back.
+  //
+  // What a person uniquely knows is whether a coordinate is the RIGHT PLACE, and that question only
+  // exists when there is a coordinate. So it is optional and separate: log everything cheaply, and
+  // verify a subsample. The report keeps the two apart and states each N, because an extraction rate
+  // measured over 100 pages and a correctness rate measured over 12 are different numbers and must
+  // never be quoted as one. (Jordan, after the first session.)
   if (hasCoordinate) {
-    const row = el('div', null, 'row');
-    row.appendChild(el('span', 'Point is:', 'muted'));
-    const buttons = [];
+    const precisionRow = el('div', null, 'row');
+    precisionRow.appendChild(el('span', 'Optional — point is:', 'muted'));
+    const precisionButtons = [];
     for (const [label, value] of [
       ['Building', 'building'],
       ['Area', 'area'],
@@ -213,60 +240,91 @@ async function render() {
       const button = el('button', label);
       button.addEventListener('click', () => {
         precisionVerdict = value;
-        for (const other of buttons) other.className = '';
+        for (const other of precisionButtons) other.className = '';
         button.className = 'primary';
       });
-      buttons.push(button);
-      row.appendChild(button);
+      precisionButtons.push(button);
+      precisionRow.appendChild(button);
     }
-    controlsEl.appendChild(row);
+    controlsEl.appendChild(precisionRow);
+
+    const verifyRow = el('div', null, 'row');
+    verifyRow.appendChild(el('span', 'Optional — is it right?', 'muted'));
+    const verifyButtons = [];
+    for (const [label, value] of [
+      ['Correct', 'correct'],
+      ['Wrong', 'wrong'],
+    ]) {
+      const button = el('button', label);
+      button.addEventListener('click', () => {
+        verified = value;
+        for (const other of verifyButtons) other.className = '';
+        button.className = 'primary';
+      });
+      verifyButtons.push(button);
+      verifyRow.appendChild(button);
+    }
+    controlsEl.appendChild(verifyRow);
   }
 
   const truth = el('input');
-  truth.placeholder = 'Ground truth "lat, lon" (optional)';
+  truth.placeholder = 'Optional — ground truth "lat, lon"';
   if (hasCoordinate) controlsEl.appendChild(truth);
 
-  let recorded = false;
-  async function record(verdict) {
+  async function log({ notAListing = false } = {}) {
     if (recorded) return; // one record per popup opening
-
-    // RE-READ IMMEDIATELY BEFORE SAVING.
-    //
-    // The popup stays open while the person decides, and the page underneath it can navigate in that
-    // time — `pushState` needs no reload and announces nothing. Reading on demand removed the stale
-    // STORED reading, but the reading held in this closure is a snapshot too, and a verdict formed
-    // for listing A must not be written against whatever is on screen now.
-    //
-    // The comparison is on an opaque per-page token, so neither side handles a URL.
-    // (Codex review round 22, PR #1.)
-    const fresh = await readActivePage();
-    // Compare the READING, not only the token. The token changes with the URL, so a page that
-    // replaces listing A's DOM with listing B at the SAME url kept a valid token while everything
-    // it described had changed — and A's coordinate could be recorded as correct for B. Comparing
-    // what was actually extracted covers both, and needs no URL on either side.
-    // (Codex review round 23, PR #1.)
-    if (fresh == null || fresh.pageToken !== reading.pageToken || !sameReading(fresh, reading)) {
-      statusEl.replaceChildren(
-        el('span', 'This page changed while the popup was open — nothing recorded.', 'warn'),
-      );
-      await render();
+    // Stop re-reading: a refresh mid-log would replace the controls under the person's hands.
+    if (pollTimer != null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    if (detected === 'other') {
+      statusEl.replaceChildren(el('span', 'This is not one of the listed sites.', 'warn'));
       return;
     }
-    if (cohort == null) {
-      statusEl.replaceChildren(el('span', 'Choose the site you are measuring first.', 'warn'));
-      return;
-    }
-    if (mismatch) {
-      statusEl.replaceChildren(
-        el('span', 'Cohort does not match this page — fix it before recording.', 'warn'),
-      );
-      return;
-    }
-    if (verdict === 'not_a_listing') {
+    if (notAListing) {
       // A dismissal, not a datum — a non-listing must not enter the denominator.
+      recorded = true;
+      controlsEl.replaceChildren(el('div', 'Skipped — not a listing.', 'muted'));
+      return;
+    }
+
+    // Re-read immediately before saving: the popup stays open while the person decides, and the page
+    // underneath can navigate in that time.
+    const fresh = await readActivePage();
+    if (fresh == null) {
+      statusEl.replaceChildren(el('span', 'Could not read the page — nothing logged.', 'warn'));
+      return;
+    }
+
+    // NAVIGATION is what must block a save. A DIFFERENT READING IS NOT.
+    //
+    // The check used to refuse whenever the fresh extraction differed from the displayed one, which
+    // made Log do nothing on exactly the pages that need it most: while a page is still settling the
+    // extraction changes every few hundred milliseconds — that is what "still reading" means — so
+    // every click was refused as though the person had navigated. And the refusal called render(),
+    // which clears the status line it had just written, so it failed silently.
+    //
+    // The opaque page token changes only on navigation, so that is the right discriminator. A
+    // changed reading on the SAME page means the page finished loading, and the fresh one is the
+    // truer record — so we log that rather than the stale snapshot.
+    if (fresh.pageToken !== reading.pageToken) {
+      statusEl.replaceChildren(
+        el('span', 'The page changed while the popup was open — nothing logged.', 'warn'),
+      );
+      return;
+    }
+
+    // One exception: if the person judged a coordinate and the coordinate has since moved, their
+    // judgement is about a point that no longer exists. Re-render so they can look again.
+    if (verified != null && !sameReading(fresh, reading)) {
+      pendingNotice = 'The page finished loading and the reading changed — check it and log again.';
       await render();
       return;
     }
+
+    // Log what the page says NOW.
+    reading = fresh;
 
     let errorMetres = null;
     const raw = truth.value.trim();
@@ -276,7 +334,7 @@ async function render() {
         // Refuse VISIBLY. Silently ignoring unparseable input means the person believes they
         // supplied ground truth while the statistics quietly disagree.
         statusEl.replaceChildren(
-          el('span', 'Ground truth must be "lat, lon" and in range — nothing recorded.', 'warn'),
+          el('span', 'Ground truth must be "lat, lon" and in range — nothing logged.', 'warn'),
         );
         return;
       }
@@ -287,57 +345,55 @@ async function render() {
 
     try {
       await saveRecord({
-        // NOTHING about the site. Not the hostname, not a family, not a variant — a coarse label
-        // beside a date still proves which domain was visited, because recording is refused unless
-        // the declared cohort matches the page. The cohort lives in the export filename instead.
-        // (Codex review round 21, PR #1.)
+        // Family and variant, DETECTED from the page. Harness only — see DECISIONS 11.
+        ...cohortRecordFor(detected),
         // Date only. A precise time beside a site label is the makings of a browsing log, and
         // nothing in the report groups more finely than a day.
         recordedAt: new Date().toISOString().slice(0, 10),
-        verdict,
+        // WHAT THE EXTRACTOR FOUND — mechanical, always present, the high-volume measure.
+        outcome: reading.result?.status ?? 'not_found',
+        // WHETHER A PERSON CHECKED IT — null when nobody did, which is the common case by design.
+        verified,
+        // Whether the page had finished settling when this was logged. A reading taken while a
+        // coordinate might still have appeared is usable but weaker, and the report says so rather
+        // than mixing it in silently.
+        // Derived from the read we are ACTUALLY logging, not from the render-time snapshot. The
+        // page may have finished settling between the popup opening and the click — using the
+        // stale value marked those records unsettled when they were not, which is the same class
+        // of error as logging the stale reading itself. (Codex review, PR #6.)
+        settled: fresh.provisional !== true,
         precisionVerdict,
         timing: reading.timing,
         tiers: reading.tiers,
         errorMetres,
         result: reading.result,
-        transmitted: hasCoordinate
-          ? toTransmittablePoint(reading.result.lat, reading.result.lon)
-          : null,
+        // Recomputed from the reading we are actually logging, not from the render-time snapshot.
+        transmitted:
+          reading.result?.status === 'found'
+            ? toTransmittablePoint(reading.result.lat, reading.result.lon)
+            : null,
       });
     } catch (err) {
       statusEl.replaceChildren(el('span', err?.message ?? 'Could not save.', 'warn'));
       return;
     }
 
-    // Records carry no identifier by design, so a duplicate cannot be detected or removed later.
-    // The controls therefore have to stop being clickable rather than the data being cleaned up
-    // afterwards — there is no afterwards. (Codex review round 21, PR #1.)
     recorded = true;
-    controlsEl.replaceChildren(el('div', `Recorded: ${verdict}`, 'ok'));
-    statusEl.replaceChildren(
-      el('span', 'Open the popup again to record the next listing.', 'muted'),
+    const what = reading.result?.status === 'found' ? 'coordinate' : reading.result?.status ?? 'nothing';
+    controlsEl.replaceChildren(
+      el('div', `Logged: ${what}${verified ? ` (${verified})` : ''}${settling ? ' — while still settling' : ''}`, 'ok'),
     );
+    statusEl.replaceChildren(el('span', 'Open the popup again on the next listing.', 'muted'));
     await refreshCount();
   }
 
-  const options = hasCoordinate
-    ? [
-        ['Correct', 'correct', true],
-        ['Wrong', 'wrong', false],
-        ["Can't tell", 'unverifiable', false],
-      ]
-    : [
-        ['Confirm no read', 'no_read', true],
-        ["Can't tell", 'unverifiable', false],
-      ];
-  options.push(['Not a listing', 'not_a_listing', false]);
-
   const row = el('div', null, 'row');
-  for (const [label, verdict, primary] of options) {
-    const button = el('button', label, primary ? 'primary' : null);
-    button.addEventListener('click', () => void record(verdict));
-    row.appendChild(button);
-  }
+  const logButton = el('button', 'Log', 'primary');
+  logButton.addEventListener('click', () => void log());
+  row.appendChild(logButton);
+  const skipButton = el('button', 'Not a listing');
+  skipButton.addEventListener('click', () => void log({ notAListing: true }));
+  row.appendChild(skipButton);
   controlsEl.appendChild(row);
 
   await refreshCount();
@@ -364,12 +420,13 @@ document.getElementById('export').addEventListener('click', async () => {
   // projection exists to prevent, and it is more durable than the rows because it survives being
   // opened, copied and attached. The person exporting knows which batch they just exported; the
   // report takes the label as an argument when they run it. (Codex review round 22, PR #1.)
-  download(exportableRecords(await loadRecords()), 'batch');
+  // ONE FILE for the whole session, both sites. Each record carries its own family and variant, so
+  // the report splits it — no export/clear/switch dance between sites.
+  download(exportableRecords(await loadRecords()), 'session');
 });
 
 document.getElementById('clear').addEventListener('click', async () => {
   await clearRecords();
-  await clearBatchCohortLabel();
   await render();
 });
 

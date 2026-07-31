@@ -138,8 +138,9 @@ The privacy claim is the product, so four properties are enforced rather than pr
 2. **Nothing identifying the page leaves the browser.** No URL, hostname, title, or content — in any
    request, log, or export. A test fails the build if any source file even contains `fetch(`, and
    another asserts that no exported record carries a site label of any kind, however coarse.
-3. **Coordinates are rounded to ~1km at a single outbound boundary** that no caller can bypass. The
-   grid is latitude-aware, because a fixed number of decimal places is only ~1km near the equator.
+3. **Coordinates are rounded to 500m cells at a single outbound boundary** that no caller can
+   bypass, giving a worst-case error of ~320m. The grid is latitude-aware, because a fixed number of
+   decimal places is ~1.1km at the equator and ~190m at 80°N.
 4. **The source is published**, so all of the above can be checked rather than believed.
 
 Plus one behavioural rule that matters as much: **absence is never rendered as a negative.** If a
@@ -147,6 +148,35 @@ read fails, the UI says it could not read the page. An empty panel is indistingu
 has no gyms here", which is a false statement about our own supply at the worst possible moment.
 
 Full rules for changes: [`AGENTS.md`](AGENTS.md).
+
+## Testing
+
+```bash
+npm test
+```
+
+Four layers. The split matters, because every serious bug this repository has shipped was invisible
+to the layer above it.
+
+| Layer | File | What it protects |
+|---|---|---|
+| **Unit** | `tools/extract.test.mjs` | The extractors against hostile input — malformed JSON, prototype pollution, deep nesting, conflicting candidates, polar and antimeridian rounding |
+| **Invariant** | `tools/no-network.test.mjs`, `tools/module-graph.test.mjs` | No network call anywhere, no UI injected into the page, permissions that cannot grow, every named import resolving, every used helper actually imported |
+| **End-to-end** | `tools/e2e.test.mjs` | A realistic listing page all the way to a report row |
+| **Executable** | `tools/popup.test.mjs` | **Runs the popup** — loads it against a mock DOM, renders, clicks Log, asserts a record appears |
+
+The last layer exists because **four wiring bugs shipped from `popup.js`**, and each one looked
+exactly like working code: `cohortRecordFor is not defined` on pressing Log, then `MAX_POLLS is not
+defined` on every page.
+
+A missing import or an undeclared constant is **not a syntax error**, so `node --check` passes it.
+It is **not a resolution error**, so the module-graph test passes it. It is a `ReferenceError` on one
+code path at runtime, and the only thing that finds those is running the code.
+
+Its fixture is the page that broke it every time: a Booking.com listing that yields an address, never
+a coordinate, and therefore never settles.
+
+What still needs a real browser: the manifest, real message passing, and the DOM of a real site.
 
 ## Running it
 

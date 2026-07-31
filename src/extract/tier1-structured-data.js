@@ -110,13 +110,48 @@ function* walk(root) {
   }
 }
 
-function geoFrom(node) {
+/**
+ * Where schema.org allows coordinates to live. We were only looking in one of these places.
+ *
+ * `geo` is the common form, but `latitude`/`longitude` directly on the Place are equally valid and
+ * some sites publish them that way. Looking only under `geo` meant a listing that published its
+ * coordinates in the other standard location read as having none — indistinguishable, in the data,
+ * from a site that genuinely withholds them. That is the difference between "a market we cannot
+ * serve" and "a bug in our reader", which is the most consequential distinction this phase makes.
+ */
+function coordinatesIn(node) {
+  const candidates = [];
   const geo = node.geo;
-  if (geo == null || typeof geo !== 'object' || Array.isArray(geo)) return null;
-  const lat = parseCoordinate(geo.latitude);
-  const lon = parseCoordinate(geo.longitude);
-  if (!isUsableCoordinate(lat, lon)) return null;
-  return { lat, lon };
+  if (geo != null && typeof geo === 'object' && !Array.isArray(geo)) candidates.push(geo);
+  // An array of GeoCoordinates is unusual but valid.
+  if (Array.isArray(geo)) candidates.push(...geo.filter((g) => g != null && typeof g === 'object'));
+  // The node itself, for `"latitude": …, "longitude": …` published directly on the Place.
+  candidates.push(node);
+
+  // EVERY candidate, not the first usable one. Returning early meant two conflicting entries inside
+  // one lodging object — a `geo` array with two different points — bypassed the ambiguity check
+  // entirely, because the check never saw the second. (Codex review, PR #6.)
+  const usable = [];
+  let sawUnusable = false;
+  for (const candidate of candidates) {
+    const lat = parseCoordinate(candidate.latitude);
+    const lon = parseCoordinate(candidate.longitude);
+    if (isUsableCoordinate(lat, lon)) {
+      usable.push({ lat, lon });
+      continue;
+    }
+    // A coordinate-shaped pair that we refused tells us something different from no pair at all.
+    if (candidate.latitude != null || candidate.longitude != null) sawUnusable = true;
+  }
+
+  for (const point of usable.slice(1)) {
+    if (distanceMetres(usable[0], point) > CONFLICT_METRES) {
+      return { found: false, conflicting: true };
+    }
+  }
+
+  if (usable.length > 0) return { found: true, lat: usable[0].lat, lon: usable[0].lon };
+  return { found: false, sawUnusable };
 }
 
 /**
@@ -129,6 +164,7 @@ export function extractFromStructuredData(doc) {
 
   let parsedAny = false;
   let sawLodgingWithoutGeo = false;
+  let sawUnusableGeo = false;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -152,11 +188,19 @@ export function extractFromStructuredData(doc) {
     for (const node of walk(parsed)) {
       const types = typesOf(node);
       if (!types.some((t) => LODGING_TYPES.has(t))) continue;
-      const geo = geoFrom(node);
-      if (geo == null) {
-        sawLodgingWithoutGeo = true;
+      const coordinates = coordinatesIn(node);
+      if (coordinates.conflicting) {
+        return ambiguous('structured data described two different places');
+      }
+      if (!coordinates.found) {
+        // Distinguish "no coordinates published" from "coordinates published in a form we refused".
+        // Reported as separate reasons, because the first is a finding about the site and the second
+        // is a finding about us, and they call for opposite responses.
+        if (coordinates.sawUnusable) sawUnusableGeo = true;
+        else sawLodgingWithoutGeo = true;
         continue;
       }
+      const geo = { lat: coordinates.lat, lon: coordinates.lon };
 
       // FAIL CLOSED WHEN THE PAGE DESCRIBES TWO PLACES.
       //
@@ -193,6 +237,8 @@ export function extractFromStructuredData(doc) {
   }
 
   if (!parsedAny) return notFound('ld+json present but none parsed');
-  if (sawLodgingWithoutGeo) return notFound('lodging type found, no usable geo');
+  // Two different findings, deliberately not collapsed into one reason.
+  if (sawUnusableGeo) return notFound('lodging type found, coordinates present but refused');
+  if (sawLodgingWithoutGeo) return notFound('lodging type found, no coordinates published');
   return notFound('no lodging type in structured data');
 }

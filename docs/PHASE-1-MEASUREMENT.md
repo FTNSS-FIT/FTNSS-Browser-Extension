@@ -29,35 +29,35 @@ No wildcard TLD is used.
 What DNS establishes is that the domains *exist*, not that they serve listing pages or serve the
 same markup. That is one of the things this phase measures.
 
-## What counts as a hit
+## Two numbers, two denominators
 
-A **hit** requires all three:
+The report keeps these apart and states each `n`, because they are measured on different samples and
+must never be quoted as one.
 
-1. A coordinate was extracted.
-2. It is **correct** — checked by the person against the address on the page. Within ~1km counts,
-   because ~1km is the precision the product deliberately rounds to anyway.
-3. It arrived inside the budget: **800ms** from page-ready to the reading being available,
-   extraction **≤150ms**. A correct read that arrives after the user has moved on is worth nothing.
+**Extraction** — what we could read. Mechanical, recorded on **every** logged page, so the sample is
+as large as you care to make it. This is where the tier breakdown and the "why tier N gave up"
+section live, and it is the number that says whether the reading approach works at all.
 
-   **What that clock does and does not include.** It measures the pipeline — page ready until a
-   reading exists — which is the latency the product's own panel would inherit. It does *not* include
-   how long the popup took to open, because the popup opens when the operator clicks it, and folding
-   that in would measure the person rather than the page. On a soft navigation the measurement can
-   also be up to one poll interval late, and readiness itself is sampled rather than observed, so
-   both error bars are recorded per row. A reading whose best case is inside the budget and whose
-   worst case is outside **straddles** it: we cannot say which side it fell, so it is reported
-   separately rather than counted in either direction. Guessing would bias the headline number.
-
-## Why misses and wrongs are counted separately
-
-They are different failures and they need different budgets.
-
-| Outcome | What it means |
+| Outcome | Meaning |
 |---|---|
-| **Miss** | We could not read the page, and the panel says so. Acceptable behaviour |
-| **Ambiguous** | The page carried coordinate evidence that disagreed with itself — two lodging objects, two map pins, or the structured data and the map pointing to different places. We refuse rather than pick. Counted as a failure, deliberately: choosing between conflicting evidence is guessing |
-| **Wrong** | We read the page and got the wrong place — a gym shown next to the wrong hotel. The panel is confidently lying, which is worse than admitting failure. **This must be near zero** |
+| **coordinate** | A point. The thing the product needs |
+| **address only** | Tier 3 found an address but no point. Geocodable — not a hit here, but not a failure either |
+| **ambiguous** | The page carried coordinate evidence that disagreed with itself. We refuse rather than pick, because choosing between conflicting evidence is guessing |
+| **nothing** | No tier could read it. An honest miss |
 
+**Correctness** — whether a coordinate was the *right place*. Only a person can judge that, so it is
+a **subsample**, and the report says how small. A **hit** is a verified-correct coordinate inside the
+latency budget: 800ms from page-ready to the reading existing, extraction ≤150ms.
+
+**Log everything; verify some.** Verification is the expensive part, so spend it deliberately —
+roughly one in five is plenty. But **not zero**: the wrong-rate is the number that decides this
+project, and with nothing verified the report prints `NOT MEASURED` rather than quietly implying it
+is fine.
+
+### Why a wrong read is worse than no read
+
+A miss is the panel honestly saying it could not read the page. A **wrong** is a gym shown next to
+the wrong hotel — the panel lying with confidence, at the moment someone is deciding where to stay.
 A single "accuracy" number hides the distinction, and hiding it is how a project ships on a figure
 that looked fine.
 
@@ -91,77 +91,53 @@ Stated here because a limitation nobody wrote down becomes a result somebody quo
 
 ## Running it
 
-Load `src/` as an unpacked extension. There is no build step and no dependencies — it runs exactly as
+Load `src/` as an unpacked extension. No build step and no dependencies — it runs exactly as
 written, which is also the easiest thing to audit.
 
 1. `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
-2. In the popup, **choose the site you are measuring**. That choice lives in session storage, so
-   it is re-chosen after a browser restart — one click, and nothing hostname-shaped is left on disk. That declaration is what gets recorded; the
-   site is never read off the page. If the page you are on disagrees with it, the popup says so and
-   refuses to record until you fix it.
-3. Browse listings. **Open the toolbar popup on each one** — that is the recorder. Opening it reads
-   the page as it is at that moment, so what you see always describes the page in front of you.
+2. Browse listings. **Open the toolbar popup on each one.** Opening it reads the page as it is at
+   that moment, so what you see always describes the page in front of you. The site is detected
+   automatically — there is nothing to select and nothing to switch between.
+3. Press **Log**. That is the whole interaction. It records what the extractor found; the extension
+   already knows which, so it does not ask you to restate it.
 
-   The popup, not an in-page panel: the page cannot hide it, click-jack it, or watch what you type
-   into it, which matters because it displays the "could not read this page" state and captures the
-   ground truth the whole measurement rests on. Press **Not a listing** on search and help pages; it
-   records nothing and enters no denominator.
-4. Toolbar icon → **Export JSON**. Save into `measurements/` (gitignored).
-5. `npm run report measurements/<file>.json <cohort>` — once **per file**, each file being one
-   cohort, and you supply the label. Nothing on disk names a site.
+   Optional, when a coordinate was found and only when you feel like it: whether the point is the
+   **building** or an **area**, whether it is **correct** or **wrong**, and the hotel's real
+   `lat, lon` for the positional-error figure.
 
-Switching cohort with unexported records is refused: export and clear first. A batch is one site.
+   **Not a listing** on a search or help page records nothing — a non-listing must not enter the
+   denominator, and the extractor genuinely cannot tell.
+4. Toolbar icon → **Export JSON**. One file for the whole session, across both sites.
+5. `npm run report measurements/<file>.json` — once, for the whole session. It splits by site and by
+   primary-vs-country-code domain itself.
 
-The recorder re-reads the page when you navigate between listings without a reload, and each reading
-is bound to the URL it was taken on — so a verdict can never be attributed to a listing you have
-already left.
+**Read the "why tier N gave up" section first.** It is the most useful output of this phase.
+`no coordinates published` and `coordinates present but refused` are opposite findings: the first is
+a fact about the site, possibly a market we cannot serve; the second is a fact about **us**, and a
+bug in what we accept.
 
-Optionally paste a known-good `lat, lon` into the recorder before saving; the report then includes the
-positional error distribution.
-
-Tests: `npm test`. They cover the extractors against hostile input, and they assert mechanically that
-**no source file makes a network request** and that the manifest never asks for `<all_urls>`.
+Tests: `npm test`. They cover the extractors against hostile input, the full pipeline end to end, and
+assert mechanically that **no source file makes a network request** and that the manifest never asks
+for `<all_urls>`.
 
 ## What is recorded
 
 Deliberately, **no page identifier**: not the URL, not the hostname, not the address text.
 
-- **Nothing derived from the URL is kept, not even a hash.** A 32-bit hash of a URL from a known
+- **Nothing derived from the URL is kept**, not even a hash. A 32-bit hash of a URL from a known
   short list of sites is walkable, so cross-session dedup was dropped rather than kept as a token
-  gesture. Recording the same listing in two sessions counts it twice; the panel guards the
-  realistic mistake, which is a double click on one page view.
-- **No record says anything about the site — not even a coarse label.** `{family: 'airbnb',
-  variant: 'primary'}` looked anonymous and was not: recording is refused unless the declared cohort
-  matches the page, so that pair plus the date proves a visit to airbnb.com that day. Coarsening the
-  value could not fix it, because the constraint that keeps the data honest is exactly what makes it
-  identifying.
-
-  The cohort lives **outside everything the extension writes**: not in the rows, and not in the
-  filename either — a file called `ftnss-phase1-airbnb.jp-….json` is itself a browsing record, and a
-  more durable one than the rows, because it survives being copied and attached. You pass the cohort
-  to the report when you run it. The per-site and ccTLD comparisons are made **across** reports
-  rather than within one, and the harness refuses to mix cohorts in a single batch because a mixed
-  file could not be split afterwards.
+  gesture.
+- **The site each record came from IS recorded** — as a family and a variant (`booking`, `primary`),
+  detected from the page, never a hostname. This reverses an earlier decision; see
+  [`DECISIONS.md`](DECISIONS.md) §11 for why the harness may do this and the shipped product may not.
 - **The projection is applied when a record is written**, not when it is exported, so the trail never
   exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
   decides it belongs, where a denylist protects only the fields somebody remembered.
-- Coordinates are stored only as the ~1km point the product would itself transmit, which is inside
-  the privacy envelope the product already operates in — and that rounding is **re-applied at the
-  storage boundary**, so it does not depend on the caller having remembered.
+- Coordinates are stored only as the 500m-grid point the product would itself transmit, and that
+  rounding is **re-applied at the storage boundary** so it does not depend on the caller remembering.
 - Timestamps are **date-only**. A precise time beside a site label is the makings of a browsing log,
   and nothing in the report groups more finely than a day.
 
-An earlier version stored the URL so a disputed reading could be re-checked, and argued it as a
-bounded exception written into `AGENTS.md`. That was wrong in two ways: it put a browsing trail on
-disk, and changing the rules to permit it would have disarmed the reviewer for every later change.
-The rule is absolute; the instrument changed instead.
-
-**What this costs:** a reading cannot be re-audited afterwards at all. Verification happens at the
-moment of recording, by the person looking at the page — which is when the evidence is best — but a
-disputed number cannot be re-litigated from the export.
-
-**On the ~1km rounding:** the grid is latitude-aware. A fixed number of decimal places is only ~1km
-of longitude near the equator — it is about 380m at 70° and 190m at 80°, so a uniform-sounding
-guarantee was quietly weakest in the Nordic markets this extension already lists. The longitude step
-is now derived from the rounded latitude, giving cells about 1.1km across in both directions
-everywhere, and the grid is recomputable from the published coordinate alone.
+**What this costs:** a reading cannot be re-audited afterwards. Verification happens at the moment of
+logging, by the person looking at the page — which is when the evidence is best — but a disputed
+number cannot be re-litigated from the export.

@@ -95,6 +95,121 @@ function readUrl(raw) {
 /**
  * @param {Document} doc
  */
+/**
+ * Coordinates published in META TAGS or DATA ATTRIBUTES.
+ *
+ * We were looking in exactly two places — JSON-LD and map-shaped URLs — and concluding "no
+ * coordinates published" when neither had them. These are the other conventional locations, and a
+ * site that renders its map client-side almost certainly has the point SOMEWHERE in the document:
+ * the map cannot draw without it.
+ *
+ * Deliberately NOT included: regex-scanning inline scripts for things that look like coordinates.
+ * That is where a confidently-wrong answer would come from — an arbitrary number pair in a page's
+ * JavaScript has no guarantee of being the listing, and on a site where no other tier produces a
+ * coordinate there would be nothing to cross-check it against. A wrong point is worse than none.
+ * (Prompted by Booking.com returning "no coordinates published" on 8 of 8 pages.)
+ */
+function collectMetadata(doc) {
+  const found = [];
+  const add = (lat, lon, source) => {
+    if (isUsableCoordinate(lat, lon)) found.push({ lat, lon, source });
+  };
+
+  // `lat;lon` or `lat, lon` in one attribute.
+  for (const [selector, attribute] of [
+    ['meta[name="geo.position" i]', 'content'],
+    ['meta[name="ICBM" i]', 'content'],
+    ['meta[property="place:location:latitude" i]', null], // handled as a pair below
+  ]) {
+    if (attribute == null) continue;
+    let nodes;
+    try {
+      nodes = doc.querySelectorAll(selector);
+    } catch {
+      continue;
+    }
+    for (const node of nodes) {
+      const raw = node.getAttribute(attribute);
+      if (!raw) continue;
+      const parts = String(raw).split(/[;,]/);
+      if (parts.length !== 2) continue;
+      const lat = parseCoordinate(parts[0].trim());
+      const lon = parseCoordinate(parts[1].trim());
+      add(lat, lon, 'meta geo');
+    }
+  }
+
+  // Latitude and longitude in separate meta tags.
+  const pairs = [
+    ['meta[property="place:location:latitude" i]', 'meta[property="place:location:longitude" i]'],
+    ['meta[property="og:latitude" i]', 'meta[property="og:longitude" i]'],
+  ];
+  for (const [latSelector, lonSelector] of pairs) {
+    try {
+      // EVERY tag, pairwise by position — not just the first of each.
+      //
+      // Taking `[0]` from each list fabricates a coordinate when the tags are contradictory or
+      // interleaved: the first latitude gets married to the first longitude regardless of whether
+      // they describe the same place, and every later tag is ignored so nothing can contradict the
+      // result. A page publishing two locations produced one confident wrong one.
+      // (Codex review, PR #6.)
+      const latNodes = [...doc.querySelectorAll(latSelector)].slice(0, 10);
+      const lonNodes = [...doc.querySelectorAll(lonSelector)].slice(0, 10);
+      for (let i = 0; i < Math.min(latNodes.length, lonNodes.length); i += 1) {
+        add(
+          parseCoordinate(latNodes[i].getAttribute('content')),
+          parseCoordinate(lonNodes[i].getAttribute('content')),
+          'meta geo',
+        );
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // Data attributes on something that is ACTUALLY A MAP.
+  //
+  // This used to accept the attributes on any element at all, which is far too loose: a single
+  // unrelated `<div data-lat data-lng>` — a weather widget, an analytics tag, a nearby-attractions
+  // strip — would be returned as the listing's own position, and on a site where no other tier
+  // produces a coordinate there would be nothing to contradict it. A confidently wrong point is the
+  // failure this project cares about most.
+  //
+  // The element must now say it is a map. That is still a heuristic, but it is a measured
+  // association rather than none at all. (Codex review, PR #6.)
+  const MAP_CONTEXT = ['[class*="map" i]', '[id*="map" i]', '[data-testid*="map" i]'];
+  for (const [latAttr, lonAttr] of [
+    ['data-lat', 'data-lng'],
+    ['data-lat', 'data-lon'],
+    ['data-latitude', 'data-longitude'],
+  ]) {
+    let nodes;
+    try {
+      nodes = MAP_CONTEXT.flatMap((context) => [
+        ...doc.querySelectorAll(`${context}[${latAttr}][${lonAttr}]`),
+      ]);
+    } catch {
+      continue;
+    }
+    let examined = 0;
+    for (const node of nodes) {
+      if (examined >= 50) break;
+      examined += 1;
+      const lat = parseCoordinate(node.getAttribute(latAttr));
+      const lon = parseCoordinate(node.getAttribute(lonAttr));
+      add(lat, lon, 'data attribute');
+    }
+  }
+
+  // EVERY candidate, not the first one.
+  //
+  // Returning on the first usable hit meant a page could publish two conflicting locations and have
+  // the earlier one rendered with confidence — the exact failure the conflict check exists to
+  // prevent, walked around by returning before the check could see the second value.
+  // (Codex review, PR #6.)
+  return found;
+}
+
 export function extractFromMapLinks(doc) {
   const nodes = doc.querySelectorAll('a[href], img[src], iframe[src]');
   let visited = 0;
@@ -124,8 +239,20 @@ export function extractFromMapLinks(doc) {
     candidates.push(hit);
   }
 
+  // Metadata is checked alongside the map URLs, and agrees with them or conflicts like any other
+  // candidate — a page contradicting itself between its map pin and its meta tag is the same signal
+  // as any other disagreement.
+  for (const fromMetadata of collectMetadata(doc)) {
+    if (candidates.length > 0 && distanceMetres(candidates[0], fromMetadata) > CONFLICT_METRES) {
+      return ambiguous('map url and page metadata disagreed about the location');
+    }
+    candidates.push(fromMetadata);
+  }
+
   if (candidates.length === 0) {
-    return notFound(visited === 0 ? 'no elements to examine' : 'no map url carried a usable coordinate');
+    return notFound(
+      visited === 0 ? 'no elements to examine' : 'no coordinate in map urls, meta tags or data attributes',
+    );
   }
 
   // Every candidate on the page agreed. Taking the first map-shaped URL in document order used to

@@ -81,6 +81,17 @@ export async function currentCohort() {
   return typeof bag?.[COHORT_KEY] === 'string' ? bag[COHORT_KEY] : null;
 }
 
+/**
+ * What gets recorded for a site: the family, and whether it was the primary domain or a
+ * country-code variant. Derived from the page, automatically — see DECISIONS 11 for why the
+ * harness may do this and the product may not.
+ */
+export function cohortRecordFor(label) {
+  const family = siteFamilyFor(label);
+  const primary = family === 'airbnb' ? 'airbnb.com' : family === 'booking' ? 'booking.com' : null;
+  return { family, variant: label === primary ? 'primary' : 'cctld' };
+}
+
 export async function setCurrentCohort(cohort) {
   if (!SITE_LABELS.includes(cohort)) throw new Error('unknown cohort');
   await chrome.storage.session.set({ [COHORT_KEY]: cohort });
@@ -170,18 +181,9 @@ export async function saveRecord(record) {
   // measurements, in collection order, without anyone being told. Losing data silently from a data
   // collection tool is the one failure it cannot have. Refuse instead, visibly.
   // (Codex review round 19, PR #1.)
-  // One batch, one cohort. With no site field on the records, a batch containing two cohorts cannot
-  // be told apart afterwards — so switching cohort with unexported records has to be refused rather
-  // than silently producing a file nobody can interpret.
-  const batchCohort = await batchCohortLabel();
-  const declared = await currentCohort();
-  if (batchCohort != null && declared != null && batchCohort !== declared) {
-    throw new Error(
-      `these ${records.length} records are for ${batchCohort} — export and clear before measuring ${declared}`,
-    );
-  }
-  if (records.length === 0 && declared != null) await setBatchCohortLabel(declared);
-
+  // No batch/cohort constraint any more. Each record carries its own site, so one file can hold a
+  // whole session across both sites and the report splits it — which removes the export/clear/switch
+  // dance that was the most error-prone part of the protocol.
   if (records.length >= MAX_RECORDS) {
     throw new Error(`storage is full (${MAX_RECORDS} records) — export and clear before continuing`);
   }
@@ -202,10 +204,53 @@ export async function saveRecord(record) {
  * was stored, and nothing would ever clean it. Runs at startup, before anything renders.
  * (Codex review round 25, PR #1.)
  */
+/**
+ * Map a record written by an older build onto the current shape, BEFORE projecting it.
+ *
+ * The projection is an allowlist, so a field it does not know about is dropped — which is the
+ * property we want for page data and a disaster for a schema change. Records written when the
+ * verdict was a single field (`correct`, `no_read`, `address_correct`…) would have had that field
+ * silently removed on the next startup, leaving rows with no outcome and no verification at all.
+ * Real measurements, destroyed irreversibly by an upgrade, with the report's denominators quietly
+ * wrong afterwards. (Codex review, PR #6.)
+ */
+function upgradeLegacyRecord(record) {
+  if (record == null || typeof record !== 'object') return record;
+  if (record.outcome !== undefined || record.verdict === undefined) return record;
+
+  const upgraded = { ...record };
+  const verdict = record.verdict;
+  const status = record.result?.status;
+
+  // `outcome` is what the extractor found; the old verdict conflated that with the person's
+  // judgement, so recover each from whichever part of the old value carried it.
+  upgraded.outcome =
+    status ??
+    (verdict === 'no_read'
+      ? 'not_found'
+      : verdict === 'address_correct' || verdict === 'address_wrong'
+        ? 'found_address'
+        : verdict === 'ambiguous_confirmed'
+          ? 'ambiguous'
+          : verdict === 'correct' || verdict === 'wrong'
+            ? 'found'
+            : 'not_found');
+
+  upgraded.verified =
+    verdict === 'correct' || verdict === 'address_correct'
+      ? 'correct'
+      : verdict === 'wrong' || verdict === 'address_wrong'
+        ? 'wrong'
+        : null;
+
+  delete upgraded.verdict;
+  return upgraded;
+}
+
 export async function migrateStoredRecords() {
   const records = await loadRecords();
   if (records.length === 0) return;
-  const projected = exportableRecords(records);
+  const projected = exportableRecords(records.map(upgradeLegacyRecord));
   await chrome.storage.local.set({ [KEY]: projected });
 }
 
@@ -219,7 +264,15 @@ export async function clearRecords() {
  * Every entry here is either a number we computed or a value chosen from our own vocabulary.
  */
 const EXPORT_FIELDS = [
-  // NO SITE FIELD AT ALL — not the hostname, not the family, not the variant.
+  // The family and variant, detected from the page. HARNESS ONLY — see DECISIONS 11. The shipped
+  // product records nothing of the sort, and a test enforces that separately.
+  'family',
+  'variant',
+  // Historical note, kept because it explains why this looks like it was fought over: it was.
+  // The label was removed from the row, then coarsened, then removed from the export filename,
+  // on the argument that a label plus a date proves which domain was visited. Sound for a product
+  // with users; wrong for an instrument whose operator is deliberately recording their own
+  // browsing, and it cost enough workflow friction to damage the measurement it was protecting.
   //
   // `{family: 'airbnb', variant: 'primary'}` looked anonymous and is not: recording is refused
   // unless the declared cohort matches the page, so that pair plus the date proves a visit to
@@ -234,7 +287,14 @@ const EXPORT_FIELDS = [
   'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and
                  // already within the privacy envelope the product itself operates in
   'latencyUncertaintyMs',
-  'verdict',
+  // WHAT THE EXTRACTOR FOUND — mechanical, on every record, the high-volume measure.
+  'outcome',
+  // WHETHER A PERSON CHECKED IT — null on most records by design. Kept strictly apart from
+  // `outcome` in the report, because an extraction rate over 100 pages and a correctness rate over
+  // 12 are different numbers and must never be quoted as one.
+  'verified',
+  // Whether the page had finished settling when the record was taken.
+  'settled',
   'precisionVerdict',
   'softNavigation',
   'domSettled',
@@ -262,6 +322,8 @@ const KNOWN_SOURCES = new Set([
   'map url ?markers',
   'map url ?location',
   'map url @lat,lon',
+  'meta geo',
+  'data attribute',
   'other',
 ]);
 
@@ -293,14 +355,63 @@ function exportableTiming(timing) {
     totalMs: asDuration(timing.totalMs),
     readingReadyMs: asDuration(timing.readingReadyMs),
     addressReadyMs: asDuration(timing.addressReadyMs),
-    readinessUncertaintyMs: asDuration(timing.readinessUncertaintyMs) ?? 0,
+    // These two were named `readinessUncertaintyMs` until they were split apart because they bound
+    // the true latency from opposite sides. The allowlist kept the OLD name, so both new fields were
+    // silently dropped on export and the report's straddle logic always saw zero.
+    //
+    // An allowlist fails CLOSED, which is the property we want — but it fails closed silently, so a
+    // producer that renames a field loses it with no error anywhere. Found by the first real record
+    // exported from a browser, not by any test, because every test built its own fixtures.
+    navigationDelayMs: asDuration(timing.navigationDelayMs) ?? 0,
+    probeDelayMs: asDuration(timing.probeDelayMs) ?? 0,
+    scriptStartedMs: asDuration(timing.scriptStartedMs),
   };
 }
+
+/**
+ * The exact failure reasons the extractors may emit.
+ *
+ * These are OUR strings from a closed vocabulary, not page text — which is what makes them safe to
+ * export. Without them a miss is `not_found, not_found, not_found`, which is a record that something
+ * went wrong and no record of what: you cannot tell a site that publishes no structured data from
+ * one that publishes it without coordinates, and those call for completely different responses.
+ * Diagnosing the misses is most of what phase 1 is for.
+ */
+const KNOWN_REASONS = new Set([
+  'no ld+json blocks on page',
+  'ld+json present but none parsed',
+  'lodging type found, no usable geo',
+  'lodging type found, no coordinates published',
+  'lodging type found, coordinates present but refused',
+  'no lodging type in structured data',
+  'structured data described two different places',
+  'no elements to examine',
+  'no map url carried a usable coordinate',
+  'no coordinate in map urls, meta tags or data attributes',
+  'map url and page metadata disagreed about the location',
+  'map urls disagreed about the location',
+  'no address-shaped text found',
+  'too many candidate elements to examine',
+  'all three tiers failed',
+  'structured data and map link disagreed about the location',
+  'page did not settle after navigation',
+]);
+
+const knownReason = (value) =>
+  typeof value === 'string' && KNOWN_REASONS.has(value) ? value : null;
 
 function exportableTiers(tiers) {
   if (tiers == null || typeof tiers !== 'object') return null;
   const tier = (value) => (TIER_STATUSES.has(value) ? value : 'not_found');
-  return { tier1: tier(tiers.tier1), tier2: tier(tiers.tier2), tier3: tier(tiers.tier3) };
+  return {
+    tier1: tier(tiers.tier1),
+    tier2: tier(tiers.tier2),
+    tier3: tier(tiers.tier3),
+    // Why each tier gave up. From the closed vocabulary above, never page text.
+    tier1Reason: knownReason(tiers.tier1Reason),
+    tier2Reason: knownReason(tiers.tier2Reason),
+    tier3Reason: knownReason(tiers.tier3Reason),
+  };
 }
 
 /**

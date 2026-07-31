@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  TRANSMIT_KM,
   toTransmittablePoint,
   isUsableCoordinate,
   distanceMetres,
@@ -15,12 +16,12 @@ import { ldJsonDocument, linkDocument, fakeDocument, textNode, scriptNode, attrN
 
 // ─── geo ──────────────────────────────────────────────────────────────────────
 
-test('rounding reduces precision to ~1km', () => {
+test('rounding reduces precision to the transmission grid', () => {
   const r = toTransmittablePoint(38.711503, -9.128744);
-  assert.ok(distanceMetres({ lat: 38.711503, lon: -9.128744 }, r) < 1110);
+  assert.ok(distanceMetres({ lat: 38.711503, lon: -9.128744 }, r) < TRANSMIT_KM * 1000);
 });
 
-test('the ~1km guarantee holds at HIGH LATITUDES, not just near the equator', () => {
+test('the rounding guarantee holds at HIGH LATITUDES, not just near the equator', () => {
   // A fixed 2dp longitude is ~1.1km at the equator but ~380m at 70 degrees and ~190m at 80 — so a
   // uniform-sounding promise was weakest in exactly the Nordic markets this extension lists.
   for (const lat of [0, 38.71, 51.5, 60, 69.65, 80, 85]) {
@@ -31,9 +32,10 @@ test('the ~1km guarantee holds at HIGH LATITUDES, not just near the equator', ()
       worst = Math.max(worst, distanceMetres(point, rounded));
     }
     // Coarse enough to be a real guarantee everywhere...
-    assert.ok(worst > 100, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
-    // ...and not so coarse that the product stops working.
-    assert.ok(worst < 1200, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
+    // Bounds DERIVED from the constant, not hardcoded: changing TRANSMIT_KM must not silently
+    // invalidate the test that guards it. A cell's worst-case error is about 0.7x its size.
+    assert.ok(worst > TRANSMIT_KM * 300, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
+    assert.ok(worst < TRANSMIT_KM * 1000, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
   }
 });
 
@@ -54,7 +56,7 @@ test('rounding is the only way a point is produced, and it refuses junk', () => 
 test('a rounded point is still close enough to answer the question', () => {
   const exact = { lat: 38.711503, lon: -9.128744 };
   const rounded = toTransmittablePoint(exact.lat, exact.lon);
-  // The privacy design only works if ~1km of rounding does not break the product. Assert it.
+  // The privacy design only works if the rounding does not break the product. Assert it.
   assert.ok(distanceMetres(exact, rounded) < 1000);
 });
 
@@ -232,7 +234,8 @@ test('the export is an allowlist — a field added later is withheld, not shippe
   const { exportableRecords } = await import('../src/lib/storage.js');
   const [out] = exportableRecords([
     {
-      verdict: 'correct',
+      outcome: 'found',
+      verified: 'correct',
       timing: { totalMs: 12 },
       // None of these may survive. The first three are the fields the harness must never emit;
       // the last is the case an allowlist exists for — something nobody thought about yet.
@@ -245,7 +248,7 @@ test('the export is an allowlist — a field added later is withheld, not shippe
     },
   ]);
 
-  assert.deepEqual(Object.keys(out).sort(), ['result', 'timing', 'verdict']);
+  assert.deepEqual(Object.keys(out).sort(), ['outcome', 'result', 'timing', 'verified']);
   // A coordinate is a location. The report is computed from verdicts, so it never needs one.
   assert.equal(out.result.lat, undefined);
   assert.equal(out.result.lon, undefined);
@@ -259,26 +262,26 @@ test('an unrecognised source string cannot smuggle page text into the export', a
   assert.equal(out.result.source, 'other');
 });
 
-test('nothing about the site reaches an exported record — not even a coarse label', async () => {
-  const { exportableRecords } = await import('../src/lib/storage.js');
+test('the harness records family and variant, and never a hostname', async () => {
+  const { exportableRecords, cohortRecordFor } = await import('../src/lib/storage.js');
+  // DECISIONS 11: the harness labels its own operator's browsing, which the product never will. What
+  // it must still never carry is a hostname — `airbnb` is a cohort, `airbnb.jp` is a location.
   const [out] = exportableRecords([
-    {
-      verdict: 'correct',
-      // Every shape this has taken across the review, all of which must now be dropped. The last
-      // pair looked anonymous and was not: recording is refused unless the declared cohort matches
-      // the page, so `airbnb`+`primary` plus a date proves a visit to airbnb.com that day.
-      site: 'airbnb.jp',
-      cohort: 'airbnb.jp',
-      detectedSite: 'airbnb.jp',
-      family: 'airbnb',
-      variant: 'primary',
-    },
+    { outcome: 'found', ...cohortRecordFor('airbnb.jp'), site: 'airbnb.jp', detectedSite: 'airbnb.jp' },
   ]);
-  assert.deepEqual(Object.keys(out).sort(), ['result', 'verdict']);
+  assert.equal(out.family, 'airbnb');
+  assert.equal(out.variant, 'cctld');
   const serialised = JSON.stringify(out);
-  for (const leak of ['airbnb', 'booking', '.jp', '.com', 'primary', 'cctld']) {
+  for (const leak of ['.jp', '.com', '.co.uk', 'http']) {
     assert.ok(!serialised.includes(leak), `exported record leaked "${leak}"`);
   }
+});
+
+test('the ccTLD question is answerable without naming the country', async () => {
+  const { cohortRecordFor } = await import('../src/lib/storage.js');
+  assert.deepEqual(cohortRecordFor('airbnb.com'), { family: 'airbnb', variant: 'primary' });
+  assert.deepEqual(cohortRecordFor('airbnb.co.uk'), { family: 'airbnb', variant: 'cctld' });
+  assert.deepEqual(cohortRecordFor('booking.de'), { family: 'booking', variant: 'cctld' });
 });
 
 test('the site label comes from our allowlist, never from the page', async () => {
@@ -294,7 +297,7 @@ test('nothing derived from the URL is persisted, not even a hash', async () => {
   // A 32-bit hash of a URL from a known site is walkable, so it was removed rather than kept as a
   // token gesture. If a future change reintroduces one, this fails.
   assert.equal(storage.urlKey, undefined);
-  const [out] = storage.exportableRecords([{ urlKey: 'deadbeef', url: 'https://x/y', verdict: 'correct' }]);
+  const [out] = storage.exportableRecords([{ urlKey: 'deadbeef', url: 'https://x/y', outcome: 'found' }]);
   assert.equal(out.urlKey, undefined);
   assert.equal(out.url, undefined);
 });
@@ -342,7 +345,7 @@ test('longitude wraps across the antimeridian rather than clamping', () => {
   // Clamping 180.001 to 180 would be wrong by a whole grid cell; wrapping puts it where it belongs.
   const rounded = toTransmittablePoint(0, 179.999);
   assert.ok(rounded.lon < 0, 'should have wrapped to the western hemisphere');
-  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < 1200);
+  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < TRANSMIT_KM * 1000);
 });
 
 test('tier 2 fails closed when map urls disagree about where the listing is', () => {
@@ -386,7 +389,7 @@ test('a partial or out-of-range ground truth is refused, not coerced', async () 
   assert.deepEqual(parse('38.7115, -9.1287'), { lat: 38.7115, lon: -9.1287 });
 });
 
-test('the ~1km guarantee holds at POLAR latitudes too', async () => {
+test('the rounding guarantee holds at POLAR latitudes too', async () => {
   const { isInRange } = await import('../src/lib/geo.js');
   // A `Math.min(1, step)` cap here made cells 194m at 89.9 and 19m at 89.99 — the guarantee failing
   // hardest exactly where the latitude correction was supposed to be working hardest. Near the pole
@@ -399,8 +402,8 @@ test('the ~1km guarantee holds at POLAR latitudes too', async () => {
       assert.ok(rounded && isInRange(rounded.lat, rounded.lon), `out of range at ${lat}`);
       worst = Math.max(worst, distanceMetres(point, rounded));
     }
-    assert.ok(worst > 100, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
-    assert.ok(worst < 1200, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
+    assert.ok(worst > TRANSMIT_KM * 300, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
+    assert.ok(worst < TRANSMIT_KM * 1000, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
   }
 });
 
@@ -415,11 +418,11 @@ test('saving migrates existing records through the projection', async () => {
   const { exportableRecords } = await import('../src/lib/storage.js');
   // Legacy rows were rewritten to disk untouched on every save, so a URL stored by an earlier build
   // outlived the change that stopped storing them.
-  const legacy = { url: 'https://www.airbnb.com/rooms/1', note: 'the Smiths', verdict: 'correct' };
+  const legacy = { url: 'https://www.airbnb.com/rooms/1', note: 'the Smiths', outcome: 'found' };
   const [migrated] = exportableRecords([legacy]);
   assert.equal(migrated.url, undefined);
   assert.equal(migrated.note, undefined);
-  assert.equal(migrated.verdict, 'correct');
+  assert.equal(migrated.outcome, 'found');
 });
 
 test('tier 1 fails closed when structured data describes two different places', () => {
@@ -490,7 +493,7 @@ test('rounding is idempotent everywhere, including across the antimeridian', asy
       worstDrift = Math.max(worstDrift, distanceMetres(point, once));
     }
   }
-  assert.ok(worstDrift < 1200, `rounding error too large: ${Math.round(worstDrift)}m`);
+  assert.ok(worstDrift < TRANSMIT_KM * 1000, `rounding error too large: ${Math.round(worstDrift)}m`);
 });
 
 test('the reported antimeridian case stays inside the guarantee', () => {
@@ -498,7 +501,7 @@ test('the reported antimeridian case stays inside the guarantee', () => {
   const once = toTransmittablePoint(input.lat, input.lon);
   const twice = toTransmittablePoint(once.lat, once.lon);
   assert.deepEqual(twice, once);
-  assert.ok(distanceMetres(input, twice) < 1200);
+  assert.ok(distanceMetres(input, twice) < TRANSMIT_KM * 1000);
 });
 
 // ─── cross-tier agreement ─────────────────────────────────────────────────────
@@ -575,4 +578,95 @@ test('tier 3 bounds how much work a page can commission', () => {
   const started = Date.now();
   extractFromAddressText(doc);
   assert.ok(Date.now() - started < 2000, 'tier 3 took too long on a hostile page');
+});
+
+test('coordinates published directly on the Place are found, not only under geo', () => {
+  // schema.org allows both. Looking only under `geo` made a listing that uses the other standard
+  // form read as having no coordinates — indistinguishable in the data from a site that genuinely
+  // withholds them, which is the difference between "a market we cannot serve" and "a bug in our
+  // reader".
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', latitude: 38.7115, longitude: -9.1287 }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.lat, 38.7115);
+});
+
+test('"no coordinates published" and "coordinates refused" are different findings', () => {
+  // The first is a fact about the site; the second is a fact about us. Collapsing them into one
+  // reason means the report cannot tell a market problem from a bug.
+  const absent = extractFromStructuredData(
+    ldJsonDocument(JSON.stringify({ '@type': 'Hotel', name: 'No geo here' })),
+  );
+  assert.equal(absent.reason, 'lodging type found, no coordinates published');
+
+  const refused = extractFromStructuredData(
+    // A comma decimal: indistinguishable from a truncated "lat,lon" pair, so we refuse it rather
+    // than guess — but we must say that is what happened.
+    ldJsonDocument(JSON.stringify({ '@type': 'Hotel', geo: { latitude: '38,7115', longitude: '-9,1287' } })),
+  );
+  assert.equal(refused.reason, 'lodging type found, coordinates present but refused');
+});
+
+test('an array of GeoCoordinates is read', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: [{ latitude: 38.7115, longitude: -9.1287 }] }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+// ─── coordinates outside JSON-LD and map URLs ────────────────────────────────
+
+test('coordinates in a geo.position meta tag are found', () => {
+  // A site that renders its map client-side has the point in the document somewhere — the map
+  // cannot draw without it. We were checking two places and calling the third "no coordinates".
+  const doc = fakeDocument({
+    'meta[name="geo.position" i]': [attrNode({ content: '38.7115;-9.1287' })],
+  });
+  const r = extractFromMapLinks(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.source, 'meta geo');
+});
+
+test('coordinates split across og:latitude and og:longitude are found', () => {
+  const doc = fakeDocument({
+    'meta[property="og:latitude" i]': [attrNode({ content: '38.7115' })],
+    'meta[property="og:longitude" i]': [attrNode({ content: '-9.1287' })],
+  });
+  assert.equal(extractFromMapLinks(doc).status, 'found');
+});
+
+test('coordinates in data attributes on a MAP container are found', () => {
+  const doc = fakeDocument({
+    '[class*="map" i][data-lat][data-lng]': [attrNode({ 'data-lat': '38.7115', 'data-lng': '-9.1287' })],
+  });
+  const r = extractFromMapLinks(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.source, 'data attribute');
+});
+
+test('coordinates on an element that is NOT a map are ignored', () => {
+  // A weather widget, an analytics tag or a nearby-attractions strip can carry data-lat/data-lng.
+  // On a site where no other tier produces a coordinate there would be nothing to contradict it, so
+  // an unassociated pair must not become the listing's position.
+  const doc = fakeDocument({
+    '[data-lat][data-lng]': [attrNode({ 'data-lat': '51.5074', 'data-lng': '-0.1278' })],
+  });
+  assert.equal(extractFromMapLinks(doc).status, 'not_found');
+});
+
+test('a meta tag that disagrees with the map pin is ambiguous, not a coin toss', () => {
+  const doc = fakeDocument({
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.example/?ll=38.7115,-9.1287' })],
+    'meta[name="geo.position" i]': [attrNode({ content: '51.5074;-0.1278' })],
+  });
+  assert.equal(extractFromMapLinks(doc).status, 'ambiguous');
+});
+
+test('a blank or malformed metadata coordinate is refused, not coerced', () => {
+  for (const content of ['', ';', '38.7115;', 'abc;def', '91;0']) {
+    const doc = fakeDocument({ 'meta[name="geo.position" i]': [attrNode({ content })] });
+    assert.equal(extractFromMapLinks(doc).status, 'not_found', `should have refused "${content}"`);
+  }
 });

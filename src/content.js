@@ -43,6 +43,24 @@
    * this still the same page you read?" without either side handling a URL.
    */
   let pageToken = crypto.randomUUID();
+  /**
+   * When this script first got to run, relative to the page being ready.
+   *
+   * Without it, `readingReadyMs` is unattributable. The first real session showed a p50 of 820ms
+   * against an 800ms budget, which reads as an extraction problem — and it is not: every success
+   * landed on the FIRST probe, and extraction itself costs 2.5–7ms. What the number was actually
+   * measuring is how long the page took to reach `document_idle`, which is when a content script is
+   * allowed to start.
+   *
+   * That still matters — the product's panel cannot appear sooner either — but it is a fact about
+   * the site, and no amount of optimising our code moves it. Splitting the two means the report can
+   * say which one blew the budget instead of implying it was us.
+   */
+  const scriptStartedMs = (() => {
+    const nav = performance.getEntriesByType('navigation')[0];
+    return nav ? Math.max(0, Math.round(performance.now() - nav.domContentLoadedEventEnd)) : null;
+  })();
+
   let readinessIdentity = identityOf();
   let readingReadyMs = null;
   let readinessSettled = false;
@@ -167,6 +185,12 @@
         tier1: extraction.tiers.tier1.status,
         tier2: extraction.tiers.tier2.status,
         tier3: extraction.tiers.tier3.status,
+        // Why each tier gave up. A miss that only says "not_found" three times records that
+        // something went wrong and nothing about what — and telling those cases apart is most of
+        // what this phase is for.
+        tier1Reason: extraction.tiers.tier1.reason ?? null,
+        tier2Reason: extraction.tiers.tier2.reason ?? null,
+        tier3Reason: extraction.tiers.tier3.reason ?? null,
       },
       timing: {
         totalMs: Math.round((performance.now() - started) * 100) / 100,
@@ -179,6 +203,8 @@
         // Kept separate: they bound the true value from opposite sides.
         navigationDelayMs,
         probeDelayMs,
+        // How much of readingReadyMs was the page getting to document_idle, rather than us.
+        scriptStartedMs,
       },
       // Still working out whether this page is readable. Shown to the operator, never recordable:
       // confirming "no read" on a page whose coordinates are about to appear writes a false miss,
