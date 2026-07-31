@@ -207,8 +207,18 @@ export function extractFromStructuredData(doc) {
    * between two addresses; it is not compatible between an address and a node that has none, once
    * the address is the answer. (Codex, PR #10.)
    */
-  let lodgingNodes = 0;
-  let lodgingNodesWithAddress = 0;
+  /**
+   * Keyed by `@id` so a page that REFERENCES its listing does not look like a second listing.
+   *
+   * schema.org graphs routinely carry the same entity twice — once as a stub with only an `@id`,
+   * once in full — and counting those as two candidates made a page disagree with itself for
+   * publishing a cross-reference. Same `@id` means same entity by definition, so they are folded
+   * together and the candidate has an address if ANY of its appearances did. Nodes without an
+   * `@id` cannot be identified with anything and each count alone. (Codex, PR #10.)
+   */
+  const lodgingCandidates = new Map();
+  let anonymousLodging = 0;
+  let anonymousWithAddress = 0;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -240,9 +250,16 @@ export function extractFromStructuredData(doc) {
       // Intersecting is the conservative reading: a component counts as available only if EVERY
       // candidate has it, so the answer can understate viability but never overstate it.
       // (Codex review, PR #8.)
-      lodgingNodes += 1;
       const nodeComponents = addressComponentsOf(node);
-      if (nodeComponents != null) lodgingNodesWithAddress += 1;
+      const identity = typeof node['@id'] === 'string' && node['@id'].trim().length > 0
+        ? node['@id'].trim()
+        : null;
+      if (identity == null) {
+        anonymousLodging += 1;
+        if (nodeComponents != null) anonymousWithAddress += 1;
+      } else {
+        lodgingCandidates.set(identity, (lodgingCandidates.get(identity) ?? false) || nodeComponents != null);
+      }
       if (nodeComponents != null) {
         // FAIL CLOSED WHEN TWO NODES DESCRIBE DIFFERENT PLACES — the address path's version of the
         // coordinate check below, and it was missing. Intersecting presence flags across a Lisbon
@@ -295,7 +312,10 @@ export function extractFromStructuredData(doc) {
   // UNATTRIBUTABLE IS AS BAD AS CONFLICTING. If some lodging candidates carry an address and
   // others do not, we have an address and no way to say whose it is — which is exactly the state
   // that produces a confident answer about the wrong hotel.
-  if (lodgingNodesWithAddress > 0 && lodgingNodesWithAddress < lodgingNodes) addressConflict = true;
+  const candidates = lodgingCandidates.size + anonymousLodging;
+  const candidatesWithAddress =
+    [...lodgingCandidates.values()].filter(Boolean).length + anonymousWithAddress;
+  if (candidatesWithAddress > 0 && candidatesWithAddress < candidates) addressConflict = true;
 
   // A merged presence map across two different places is not evidence about either, and it feeds
   // the geocoding measurement — so it is dropped whether or not a coordinate rescued the read.

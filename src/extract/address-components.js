@@ -233,22 +233,55 @@ export function addressComponentsOf(node) {
  * itself, and Booking is 48 of our 63 measured pages. Refusing a correct read is a real cost, not
  * a free safety win.
  *
- * So: they conflict only when the rendered text corroborates NOTHING the structured data stated.
- * A related-hotel block is usually a different street in a different postcode, which trips this; a
- * formatting difference on one field does not. It catches the impostor without inventing conflicts,
- * and it is honest about being a floor rather than a proof of agreement.
+ * So: they conflict only when the rendered text corroborates NEITHER the street NOR the postcode —
+ * a formatting difference on one of them is survivable as long as the other lands. A locality
+ * deliberately cannot corroborate: it says which town both hotels are in, which is not evidence
+ * that they are the same hotel, and accepting it waved the impostor through on the weakest evidence
+ * available. If the structured data states neither a street nor a postcode there is nothing to
+ * check, and that is an absence of evidence rather than a conflict.
+ *
+ * This is a floor, not a proof of agreement, and it is written to be one.
  */
 export function textCorroboratesAddress(values, text) {
   if (values == null || typeof text !== 'string') return true;
   const haystack = text.trim().toLowerCase().replace(/\s+/g, ' ');
   if (haystack.length === 0) return true;
-  // The country is excluded on purpose: rendered addresses omit it constantly, and a country shared
-  // by two hotels in the same market corroborates nothing anyway.
-  const stated = [values.street, values.locality, values.postalCode, values.region].filter(
+
+  // ONLY A PINNING FIELD MAY CORROBORATE.
+  //
+  // The first version accepted a match on ANY stated field, so a related hotel in the same city
+  // corroborated on its locality and sailed through — the exact impostor this check exists to
+  // catch, waved past by the weakest possible evidence. A locality or region says which town both
+  // hotels are in, which is not evidence that they are the same hotel. A street or a postcode is.
+  const pinning = [values.street, values.postalCode].filter(
     (v) => typeof v === 'string' && v.length > 0,
   );
-  if (stated.length === 0) return true;
-  return stated.some((value) => haystack.includes(value));
+  // Nothing to check against. Not a conflict — an absence of evidence either way, and inventing a
+  // conflict from it would refuse pages for publishing less rather than for disagreeing.
+  if (pinning.length === 0) return true;
+
+  return pinning.some((value) => containsWhole(haystack, value));
+}
+
+/**
+ * Substring matching, but not blind to word boundaries.
+ *
+ * `"1 oak st"` is a substring of `"11 oak st, porto"`, so a plain `includes` corroborated a
+ * neighbouring building's address — one digit away from the listing and confidently wrong. House
+ * numbers and postcodes are exactly the kind of short token where a prefix collision is likely
+ * rather than exotic.
+ */
+function containsWhole(haystack, needle) {
+  let from = 0;
+  for (;;) {
+    const at = haystack.indexOf(needle, from);
+    if (at === -1) return false;
+    const before = at === 0 ? '' : haystack[at - 1];
+    const after = haystack[at + needle.length] ?? '';
+    const isWordish = (c) => c !== '' && /[a-z0-9]/.test(c);
+    if (!isWordish(before) && !isWordish(after)) return true;
+    from = at + 1;
+  }
 }
 
 /**

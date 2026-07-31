@@ -1279,3 +1279,58 @@ test('the internal address values never leave the extractor', async () => {
   }
   assert.equal(JSON.stringify({ result, tiers }).includes('Oak'), false);
 });
+
+// --- Codex review round 6, PR #10 ---------------------------------------------------------------
+
+test('a neighbouring building does not corroborate by being a substring', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // "1 Oak St" is a substring of "11 Oak St", so a plain includes() corroborated the building next
+  // door — one digit away from the listing and confidently wrong. House numbers and postcodes are
+  // exactly the short tokens where a prefix collision is likely rather than exotic.
+  assert.equal(runExtraction(withText(LISTING, '11 Oak St, Lisbon, 1000-002')).result.status, 'ambiguous');
+  // The real street still corroborates.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon')).result.status, 'found_address');
+});
+
+test('a shared locality does not corroborate an otherwise different address', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // A related hotel in the same city used to pass on its locality alone — the impostor this check
+  // exists to catch, waved through by the weakest evidence available. Which town both hotels are
+  // in is not evidence that they are the same hotel.
+  assert.equal(runExtraction(withText(LISTING, '99 Elm Avenue, Lisbon, 4000-999')).result.status, 'ambiguous');
+});
+
+test('a postcode corroborates when the street is rendered differently', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // The point of accepting EITHER pinning field: sites abbreviate street names constantly, and a
+  // postcode is format-stable. Booking is 48 of 63 measured pages and this is its shape.
+  const { result } = runExtraction(withText(LISTING, 'Rua do Carvalho 1, Lisboa, 1000-001'));
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+});
+
+test('a page that references its own listing is not a page describing two', () => {
+  // schema.org graphs carry the same entity twice constantly — a stub with only an @id, and the
+  // full node. Counting those as two candidates made a page disagree with itself for publishing a
+  // cross-reference. Same @id is the same entity by definition.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/#hotel' }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found_address');
+
+  // Two DIFFERENT ids, only one with an address, is still unattributable.
+  const two = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/#other' }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+  );
+  assert.equal(extractFromStructuredData(two).status, 'ambiguous');
+});
