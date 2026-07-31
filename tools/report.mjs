@@ -9,6 +9,7 @@
 // one "accuracy" figure is how a project ships on a number that looked fine.
 
 import { readFileSync } from 'node:fs';
+import { TRANSMIT_KM } from '../src/lib/geo.js';
 
 const LATENCY_BUDGET_MS = 800;
 const EXTRACT_BUDGET_MS = 150;
@@ -125,7 +126,9 @@ function summarise(allRows, label) {
     // thing in this dataset a person can get wrong in a way no other check catches. On the first
     // verification session a coordinate was marked WRONG whose measured error was 42m — inside the
     // grid cell, so rounding erases it — and that single row drove the reported wrong-rate to 100%.
-    const cell = 500;
+    // Derived, not literal: this threshold is "inside the grid cell", so it has to move when the
+    // grid does or it starts flagging the wrong rows.
+    const cell = TRANSMIT_KM * 1000;
     const disputed = rows.filter(
       (r) =>
         r.verified === 'wrong' && Number.isFinite(r.errorMetres) && r.errorMetres <= cell,

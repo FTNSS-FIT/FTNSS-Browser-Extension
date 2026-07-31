@@ -44,7 +44,7 @@ open-source question of "is it safe to publish this key?" does not arise. There 
 
 ## 3. Coordinates are rounded at the outbound boundary
 
-**Decided:** rounding to 500m cells happens in one place, at the point of transmission, and no caller can
+**Decided:** rounding to 250m cells happens in one place, at the point of transmission, and no caller can
 bypass it.
 
 **Why.** Rounding performed by each caller is correct only for as long as every caller remembers. The
@@ -186,9 +186,9 @@ be mostly empty at current supply, and beyond about 5km a gym stops being somewh
 a hotel. 5km is a short taxi or metro ride in a city, which is still a usable answer.
 
 **How this interacts with the rounding — they are different things.** The rounding is about
-*precision of the query point*: we are told roughly where, to within about 320m. The radius is about *how
+*precision of the query point*: we are told roughly where, to within about 160m. The radius is about *how
 far we then look*. They are unrelated numbers, but the first constrains what the second can claim:
-because the query point carries about 320m of uncertainty, **a displayed distance cannot be more
+because the query point carries about 160m of uncertainty, **a displayed distance cannot be more
 precise than that**. The panel says "about 2km" or "a short walk", never "400m from this hotel",
 which the spec's own mock-up shows and which is not a claim the architecture can support.
 
@@ -214,7 +214,7 @@ geocoded gives away the thing §4.2 of the spec promises we cannot know:
 | Extension → our own server | **We** learn which property is being viewed. "We don't log it" is a policy promise, and this project's argument is that its guarantees are architectural |
 | Client-side, offline | Not viable — street-level data for one country is far too large to ship in an extension |
 
-**The likely resolution: geocode coarsely.** We round to 500m cells anyway, so we do not need street
+**The likely resolution: geocode coarsely.** We round to 250m cells anyway, so we do not need street
 precision. Geocoding **postcode plus locality** lands inside our own rounding error and does not
 transmit the listing identity. A coarser query is a better answer than a broken promise.
 

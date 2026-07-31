@@ -341,11 +341,22 @@ test('rounding never produces an out-of-range point at the edges of the world', 
   }
 });
 
-test('longitude wraps across the antimeridian rather than clamping', () => {
-  // Clamping 180.001 to 180 would be wrong by a whole grid cell; wrapping puts it where it belongs.
-  const rounded = toTransmittablePoint(0, 179.999);
-  assert.ok(rounded.lon < 0, 'should have wrapped to the western hemisphere');
-  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < TRANSMIT_KM * 1000);
+test('longitude wraps across the antimeridian rather than clamping', async () => {
+  const { isInRange } = await import('../src/lib/geo.js');
+  // Tests the PROPERTY, not one input. Which longitude rounds past 180 depends on the cell size, so
+  // hardcoding an example ties the test to a particular TRANSMIT_KM — it passed at 500m and failed
+  // at 250m for a reason that had nothing to do with the behaviour being checked.
+  //
+  // Clamping 180.001 to 180 would be wrong by a whole cell; wrapping puts it where it belongs.
+  let wrapped = 0;
+  for (let i = 0; i < 200; i += 1) {
+    const lon = 180 - i * 0.0005;
+    const rounded = toTransmittablePoint(0, lon);
+    assert.ok(rounded && isInRange(rounded.lat, rounded.lon), `out of range at ${lon}`);
+    assert.ok(distanceMetres({ lat: 0, lon }, rounded) < TRANSMIT_KM * 1000);
+    if (rounded.lon < 0) wrapped += 1;
+  }
+  assert.ok(wrapped > 0, 'at least one longitude near 180 must wrap to the western hemisphere');
 });
 
 test('tier 2 fails closed when map urls disagree about where the listing is', () => {

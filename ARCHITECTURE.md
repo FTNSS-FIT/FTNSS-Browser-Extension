@@ -138,8 +138,8 @@ The privacy claim is the product, so four properties are enforced rather than pr
 2. **Nothing identifying the page leaves the browser.** No URL, hostname, title, or content — in any
    request, log, or export. A test fails the build if any source file even contains `fetch(`, and
    another asserts that no exported record carries a site label of any kind, however coarse.
-3. **Coordinates are rounded to 500m cells at a single outbound boundary** that no caller can
-   bypass, giving a worst-case error of ~320m. The grid is latitude-aware, because a fixed number of
+3. **Coordinates are rounded to 250m cells at a single outbound boundary** that no caller can
+   bypass, giving a worst-case error of ~160m. The grid is latitude-aware, because a fixed number of
    decimal places is ~1.1km at the equator and ~190m at 80°N.
 4. **The source is published**, so all of the above can be checked rather than believed.
 
