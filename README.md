@@ -65,6 +65,7 @@ step at all, which is the strongest form of that promise: the extension you load
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how it runs, how it relates to the FTNSS platform, and where
   cross-browser support actually stands
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — the architectural decisions and why
+- [`docs/PHASE-1-FINDINGS.md`](docs/PHASE-1-FINDINGS.md) — **what the measurement actually found**
 - [`docs/PHASE-1-MEASUREMENT.md`](docs/PHASE-1-MEASUREMENT.md) — the measurement protocol
 - [`AGENTS.md`](AGENTS.md) — the standards a change is held to
 
