@@ -280,7 +280,7 @@ there would be nothing to cross-check it against.
 ## 14. Expedia Group added to the harness — 61 hosts, and why that is not the product's list
 
 **Decided 2026-07-31.** The harness matches 61 hosts: Booking (4), Airbnb (24), and Expedia Group
-(33 — 31 Expedia country domains plus `hotels.com` and `vrbo.com`).
+(53 — 31 Expedia country domains, 6 Hotels.com, 16 Vrbo). 81 hosts in total.
 
 §4 requires a decision record for any growth in the host list. This is it.
 

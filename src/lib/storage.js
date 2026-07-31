@@ -45,8 +45,14 @@ export const SITE_LABELS = [
   ].map(
     (tld) => `expedia.${tld}`,
   ),
-  'hotels.com',
-  'vrbo.com',
+  // Hotels.com and Vrbo enumerated the same way, for the same reason — leaving them at .com while
+  // Expedia had 31 domains would have biased the measurement toward .com on two of the three brands
+  // and made any brand comparison meaningless. (Codex review, PR #9.)
+  ...['com', 'co.uk', 'ca', 'fr', 'com.au', 'co.jp'].map((tld) => `hotels.${tld}`),
+  ...[
+    'com', 'ca', 'co.uk', 'de', 'fr', 'com.au', 'es', 'it', 'nl', 'pt', 'dk', 'se', 'no', 'fi',
+    'mx', 'com.br',
+  ].map((tld) => `vrbo.${tld}`),
   'booking.com',
   'booking.co.uk',
   'booking.fr',
@@ -64,7 +70,12 @@ export function siteFamilyFor(label) {
   // One family, several brands: Expedia, Hotels.com and Vrbo share an owner and — probably — a
   // template. Whether that shows up as one behaviour or three is itself worth knowing, so they are
   // grouped for reporting while each brand keeps its own label.
-  if (label.startsWith('expedia.') || label === 'hotels.com' || label === 'vrbo.com') return 'expedia';
+  // Prefix, not equality: `hotels.co.uk` is a country variant of Hotels.com and belongs to the same
+  // family. Matching only `.com` dropped every sibling ccTLD into 'other', where it could not be
+  // recorded at all — the enumeration would have added the hosts and then discarded their readings.
+  if (label.startsWith('expedia.') || label.startsWith('hotels.') || label.startsWith('vrbo.')) {
+    return 'expedia';
+  }
   return 'other';
 }
 
@@ -119,8 +130,8 @@ function brandOf(label) {
   if (label.startsWith('expedia.')) return 'expedia';
   if (label.startsWith('airbnb.')) return 'airbnb';
   if (label.startsWith('booking.')) return 'booking';
-  if (label === 'hotels.com') return 'hotels';
-  if (label === 'vrbo.com') return 'vrbo';
+  if (label.startsWith('hotels.')) return 'hotels';
+  if (label.startsWith('vrbo.')) return 'vrbo';
   return null;
 }
 
@@ -128,11 +139,17 @@ export function cohortRecordFor(label) {
   const family = siteFamilyFor(label);
   // Hotels.com and Vrbo are separate brands rather than country variants of Expedia, so they are
   // 'primary' too — calling them ccTLDs would answer the ccTLD question with the wrong data.
-  const siblings = new Set(['hotels.com', 'vrbo.com']);
+  // A sibling brand's own primary domain. `hotels.co.uk` is a country variant OF Hotels.com, not a
+  // separate brand — so variant must be judged against the brand's primary, not the family's.
+  const siblingPrimary = { hotels: 'hotels.com', vrbo: 'vrbo.com' };
+  const brand = brandOf(label);
+  if (siblingPrimary[brand]) {
+    return { family, variant: label === siblingPrimary[brand] ? 'primary' : 'cctld', brand };
+  }
   // An unlisted host has no family and therefore no variant. Recording one would put a meaningless
   // 'other/cctld' row in the data, and the popup refuses to record these anyway.
   if (family === 'other') return { family: 'other', variant: null, brand: null };
-  const isPrimary = label === PRIMARY_DOMAIN[family] || siblings.has(label);
+  const isPrimary = label === PRIMARY_DOMAIN[family];
   // THE BRAND, RECORDED. Without it every Expedia Group page persisted as an identical
   // {family:'expedia', variant:'primary'} row, so the report could not tell Hotels.com from Vrbo —
   // which contradicts the stated reason for adding them, that a sibling behaving differently should

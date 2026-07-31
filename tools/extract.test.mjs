@@ -884,3 +884,19 @@ test('an unlisted host has no family and no variant', async () => {
     brand: null,
   });
 });
+
+test('sibling brands keep their family across country domains', async () => {
+  const { siteLabelFor, cohortRecordFor } = await import('../src/lib/storage.js');
+  const cohort = (host) => cohortRecordFor(siteLabelFor(host));
+
+  // Matching only `.com` dropped every sibling ccTLD into 'other', where it cannot be recorded at
+  // all — the manifest would have added the hosts and then discarded their readings, which looks
+  // exactly like a market with no listings.
+  assert.deepEqual(cohort('www.hotels.co.uk'), { family: 'expedia', variant: 'cctld', brand: 'hotels' });
+  assert.deepEqual(cohort('www.vrbo.de'), { family: 'expedia', variant: 'cctld', brand: 'vrbo' });
+
+  // And variant is judged against the BRAND's primary: hotels.co.uk is a country variant of
+  // Hotels.com, not of Expedia.com.
+  assert.deepEqual(cohort('www.hotels.com'), { family: 'expedia', variant: 'primary', brand: 'hotels' });
+  assert.deepEqual(cohort('www.vrbo.com'), { family: 'expedia', variant: 'primary', brand: 'vrbo' });
+});
