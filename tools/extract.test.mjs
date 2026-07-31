@@ -847,3 +847,33 @@ test('two lodging nodes in different countries yield no country at all', async (
   // returns nothing or somewhere wrong.
   assert.equal(extractFromStructuredData(doc).addressComponents.country, null);
 });
+
+test('Expedia Group brands are one family but keep their own labels', async () => {
+  const { siteLabelFor, cohortRecordFor } = await import('../src/lib/storage.js');
+  const cohort = (host) => cohortRecordFor(siteLabelFor(host));
+
+  // Expedia, Hotels.com and Vrbo share an owner and probably a template. Grouping them answers
+  // "is Booking or Airbnb the typical shape?"; keeping separate labels means we can still see if
+  // one brand behaves differently from its siblings.
+  assert.deepEqual(cohort('www.expedia.com'), { family: 'expedia', variant: 'primary' });
+  assert.deepEqual(cohort('uk.hotels.com'), { family: 'expedia', variant: 'primary' });
+  assert.deepEqual(cohort('www.vrbo.com'), { family: 'expedia', variant: 'primary' });
+
+  // A country variant, which is a different question from a sibling brand — calling Hotels.com a
+  // ccTLD would answer the ccTLD question with the wrong data.
+  assert.deepEqual(cohort('www.expedia.co.uk'), { family: 'expedia', variant: 'cctld' });
+
+  // And the others still work.
+  assert.deepEqual(cohort('www.booking.com'), { family: 'booking', variant: 'primary' });
+  assert.deepEqual(cohort('www.airbnb.com'), { family: 'airbnb', variant: 'primary' });
+});
+
+test('an unlisted host has no family and no variant', async () => {
+  const { siteLabelFor, cohortRecordFor } = await import('../src/lib/storage.js');
+  // A host we never listed cannot introduce a label, and recording 'other/cctld' would put a
+  // meaningless row in the data.
+  assert.deepEqual(cohortRecordFor(siteLabelFor('expedia.com.evil.example')), {
+    family: 'other',
+    variant: null,
+  });
+});

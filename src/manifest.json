@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FTNSS phase 1 measurement harness (internal)",
-  "version": "0.4.5",
+  "version": "0.5.0",
   "description": "Internal measurement tool. Records how often a listing page's location can be read. Not for publication.",
   "permissions": [
     "storage"
@@ -36,7 +36,12 @@
         "*://*.airbnb.cz/*",
         "*://*.airbnb.com.br/*",
         "*://*.airbnb.mx/*",
-        "*://*.airbnb.jp/*"
+        "*://*.airbnb.jp/*",
+        "*://*.expedia.com/*",
+        "*://*.expedia.co.uk/*",
+        "*://*.expedia.ca/*",
+        "*://*.hotels.com/*",
+        "*://*.vrbo.com/*"
       ],
       "js": [
         "content.js"
@@ -78,7 +83,12 @@
         "*://*.airbnb.cz/*",
         "*://*.airbnb.com.br/*",
         "*://*.airbnb.mx/*",
-        "*://*.airbnb.jp/*"
+        "*://*.airbnb.jp/*",
+        "*://*.expedia.com/*",
+        "*://*.expedia.co.uk/*",
+        "*://*.expedia.ca/*",
+        "*://*.hotels.com/*",
+        "*://*.vrbo.com/*"
       ]
     }
   ],

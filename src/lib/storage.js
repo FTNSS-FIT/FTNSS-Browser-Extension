@@ -31,6 +31,14 @@ const MAX_RECORDS = 500;
  * rather than one the page supplied.
  */
 export const SITE_LABELS = [
+  // Expedia Group. Added to answer one question: Booking publishes no coordinates and Airbnb
+  // publishes them on every page, so a third family tells us which is TYPICAL — and that decides
+  // whether geocoding is a minority path or the main one for most of the market.
+  'expedia.com',
+  'expedia.co.uk',
+  'expedia.ca',
+  'hotels.com',
+  'vrbo.com',
   'booking.com',
   'booking.co.uk',
   'booking.fr',
@@ -45,6 +53,10 @@ export const SITE_LABELS = [
 export function siteFamilyFor(label) {
   if (label.startsWith('airbnb.')) return 'airbnb';
   if (label.startsWith('booking.')) return 'booking';
+  // One family, several brands: Expedia, Hotels.com and Vrbo share an owner and — probably — a
+  // template. Whether that shows up as one behaviour or three is itself worth knowing, so they are
+  // grouped for reporting while each brand keeps its own label.
+  if (label.startsWith('expedia.') || label === 'hotels.com' || label === 'vrbo.com') return 'expedia';
   return 'other';
 }
 
@@ -86,10 +98,18 @@ export async function currentCohort() {
  * country-code variant. Derived from the page, automatically — see DECISIONS 11 for why the
  * harness may do this and the product may not.
  */
+const PRIMARY_DOMAIN = { airbnb: 'airbnb.com', booking: 'booking.com', expedia: 'expedia.com' };
+
 export function cohortRecordFor(label) {
   const family = siteFamilyFor(label);
-  const primary = family === 'airbnb' ? 'airbnb.com' : family === 'booking' ? 'booking.com' : null;
-  return { family, variant: label === primary ? 'primary' : 'cctld' };
+  // Hotels.com and Vrbo are separate brands rather than country variants of Expedia, so they are
+  // 'primary' too — calling them ccTLDs would answer the ccTLD question with the wrong data.
+  const siblings = new Set(['hotels.com', 'vrbo.com']);
+  // An unlisted host has no family and therefore no variant. Recording one would put a meaningless
+  // 'other/cctld' row in the data, and the popup refuses to record these anyway.
+  if (family === 'other') return { family: 'other', variant: null };
+  const isPrimary = label === PRIMARY_DOMAIN[family] || siblings.has(label);
+  return { family, variant: isPrimary ? 'primary' : 'cctld' };
 }
 
 export async function setCurrentCohort(cohort) {
