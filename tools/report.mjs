@@ -158,6 +158,36 @@ function summarise(rows, label) {
     console.log('      (time until a content script may run at all — a fact about the site, not us)');
   }
 
+  // ── THE HIT RATE ───────────────────────────────────────────────────────────
+  //
+  // The INTERSECTION, computed explicitly. Splitting the report into extraction and correctness
+  // sections lost this, and the separate percentages can hide the answer completely: if every
+  // correct coordinate is slow and every fast coordinate is wrong, both lines look healthy and the
+  // true hit rate is zero. A hit is a coordinate that a person verified as correct AND that arrived
+  // inside both budgets, with straddling and unmeasured rows excluded because neither can be shown
+  // to qualify. (Codex review, PR #6.)
+  const hits = verified.filter(
+    (r) =>
+      r.verified === 'correct' &&
+      Number.isFinite(worstCase(r)) &&
+      Number.isFinite(r.timing?.totalMs) &&
+      worstCase(r) <= LATENCY_BUDGET_MS &&
+      r.timing.totalMs <= EXTRACT_BUDGET_MS,
+  ).length;
+
+  console.log('  HIT RATE (correct AND in budget — the phase 1 number)');
+  if (verified.length === 0) {
+    console.log('    NOT COMPUTABLE — nothing was verified. Extraction alone cannot give a hit rate.');
+  } else {
+    console.log(`    hits                      ${pct(hits, verified.length)}   ${hits}/${verified.length} verified`);
+    const correctButUnqualified = correct.length - hits;
+    if (correctButUnqualified > 0) {
+      console.log(
+        `    correct but not a hit     ${pct(correctButUnqualified, verified.length)}  — too slow, straddling, or untimed`,
+      );
+    }
+  }
+
   const errors = rows.map((r) => r.errorMetres).filter(Number.isFinite);
   if (errors.length > 0) {
     console.log(

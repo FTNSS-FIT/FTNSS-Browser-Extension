@@ -357,7 +357,11 @@ async function render() {
         // Whether the page had finished settling when this was logged. A reading taken while a
         // coordinate might still have appeared is usable but weaker, and the report says so rather
         // than mixing it in silently.
-        settled: !settling,
+        // Derived from the read we are ACTUALLY logging, not from the render-time snapshot. The
+        // page may have finished settling between the popup opening and the click — using the
+        // stale value marked those records unsettled when they were not, which is the same class
+        // of error as logging the stale reading itself. (Codex review, PR #6.)
+        settled: fresh.provisional !== true,
         precisionVerdict,
         timing: reading.timing,
         tiers: reading.tiers,

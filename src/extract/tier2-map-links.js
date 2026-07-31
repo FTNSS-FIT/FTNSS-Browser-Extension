@@ -109,7 +109,12 @@ function readUrl(raw) {
  * coordinate there would be nothing to cross-check it against. A wrong point is worse than none.
  * (Prompted by Booking.com returning "no coordinates published" on 8 of 8 pages.)
  */
-function extractFromMetadata(doc) {
+function collectMetadata(doc) {
+  const found = [];
+  const add = (lat, lon, source) => {
+    if (isUsableCoordinate(lat, lon)) found.push({ lat, lon, source });
+  };
+
   // `lat;lon` or `lat, lon` in one attribute.
   for (const [selector, attribute] of [
     ['meta[name="geo.position" i]', 'content'],
@@ -130,7 +135,7 @@ function extractFromMetadata(doc) {
       if (parts.length !== 2) continue;
       const lat = parseCoordinate(parts[0].trim());
       const lon = parseCoordinate(parts[1].trim());
-      if (isUsableCoordinate(lat, lon)) return { lat, lon, source: 'meta geo' };
+      add(lat, lon, 'meta geo');
     }
   }
 
@@ -146,7 +151,7 @@ function extractFromMetadata(doc) {
       if (latNode == null || lonNode == null) continue;
       const lat = parseCoordinate(latNode.getAttribute('content'));
       const lon = parseCoordinate(lonNode.getAttribute('content'));
-      if (isUsableCoordinate(lat, lon)) return { lat, lon, source: 'meta geo' };
+      add(lat, lon, 'meta geo');
     } catch {
       continue;
     }
@@ -170,11 +175,17 @@ function extractFromMetadata(doc) {
       examined += 1;
       const lat = parseCoordinate(node.getAttribute(latAttr));
       const lon = parseCoordinate(node.getAttribute(lonAttr));
-      if (isUsableCoordinate(lat, lon)) return { lat, lon, source: 'data attribute' };
+      add(lat, lon, 'data attribute');
     }
   }
 
-  return null;
+  // EVERY candidate, not the first one.
+  //
+  // Returning on the first usable hit meant a page could publish two conflicting locations and have
+  // the earlier one rendered with confidence — the exact failure the conflict check exists to
+  // prevent, walked around by returning before the check could see the second value.
+  // (Codex review, PR #6.)
+  return found;
 }
 
 export function extractFromMapLinks(doc) {
@@ -209,8 +220,7 @@ export function extractFromMapLinks(doc) {
   // Metadata is checked alongside the map URLs, and agrees with them or conflicts like any other
   // candidate — a page contradicting itself between its map pin and its meta tag is the same signal
   // as any other disagreement.
-  const fromMetadata = extractFromMetadata(doc);
-  if (fromMetadata != null) {
+  for (const fromMetadata of collectMetadata(doc)) {
     if (candidates.length > 0 && distanceMetres(candidates[0], fromMetadata) > CONFLICT_METRES) {
       return ambiguous('map url and page metadata disagreed about the location');
     }

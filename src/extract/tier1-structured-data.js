@@ -128,16 +128,30 @@ function coordinatesIn(node) {
   // The node itself, for `"latitude": …, "longitude": …` published directly on the Place.
   candidates.push(node);
 
+  // EVERY candidate, not the first usable one. Returning early meant two conflicting entries inside
+  // one lodging object — a `geo` array with two different points — bypassed the ambiguity check
+  // entirely, because the check never saw the second. (Codex review, PR #6.)
+  const usable = [];
+  let sawUnusable = false;
   for (const candidate of candidates) {
     const lat = parseCoordinate(candidate.latitude);
     const lon = parseCoordinate(candidate.longitude);
-    if (isUsableCoordinate(lat, lon)) return { found: true, lat, lon };
+    if (isUsableCoordinate(lat, lon)) {
+      usable.push({ lat, lon });
+      continue;
+    }
     // A coordinate-shaped pair that we refused tells us something different from no pair at all.
-    if (candidate.latitude != null || candidate.longitude != null) {
-      return { found: false, sawUnusable: true };
+    if (candidate.latitude != null || candidate.longitude != null) sawUnusable = true;
+  }
+
+  for (const point of usable.slice(1)) {
+    if (distanceMetres(usable[0], point) > CONFLICT_METRES) {
+      return { found: false, conflicting: true };
     }
   }
-  return { found: false, sawUnusable: false };
+
+  if (usable.length > 0) return { found: true, lat: usable[0].lat, lon: usable[0].lon };
+  return { found: false, sawUnusable };
 }
 
 /**
@@ -175,6 +189,9 @@ export function extractFromStructuredData(doc) {
       const types = typesOf(node);
       if (!types.some((t) => LODGING_TYPES.has(t))) continue;
       const coordinates = coordinatesIn(node);
+      if (coordinates.conflicting) {
+        return ambiguous('structured data described two different places');
+      }
       if (!coordinates.found) {
         // Distinguish "no coordinates published" from "coordinates published in a form we refused".
         // Reported as separate reasons, because the first is a finding about the site and the second
