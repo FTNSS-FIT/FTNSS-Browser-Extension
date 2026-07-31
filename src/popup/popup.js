@@ -745,13 +745,16 @@ async function renderGyms() {
     left.appendChild(el('b', gym.name));
     if (gym.city) left.appendChild(el('div', gym.city, 'muted'));
     row.appendChild(left);
-    // NO NUMBER AT ALL when the page's own location is approximate by design. A tier-2 read is a
-    // map pin the site placed where it chose, and stacking a distance band on top of that is two
-    // uncertainties presented as one measurement. The order still carries the useful part: nearest
-    // first. (Codex, PR #13.)
-    row.appendChild(
-      el('span', approximate ? '' : describeDistance(gym.distanceMetres), 'dist'),
-    );
+    // NO DISTANCE AT ALL. Not for approximate reads, not for `unknown` ones — which is every other
+    // read, because `unknown` is what tier 1 reports and there is no `exact` in this codebase.
+    //
+    // Bands were the third attempt and still could not be made true: the query point is a 250m
+    // cell, so a server distance of 499m can be ~674m from the listing, and "under 500 m" is then
+    // simply false. Each version was less wrong than the last while the real problem stayed put —
+    // we do not know how far away these gyms are, and no phrasing fixes that.
+    //
+    // The ordering carries the useful part, and it survives the uncertainty: nearest first is still
+    // nearest first when every distance is shifted by the same cell offset. (Codex, PR #13.)
     container.appendChild(row);
   }
   // SAY WHAT THE DISTANCES ARE MEASURED FROM, and say it differently when the reading itself was
@@ -771,8 +774,8 @@ async function renderGyms() {
     el(
       'div',
       approximate
-        ? `${answer.gyms.length} nearest — rough: this page publishes an approximate location, then we round to a 250m cell`
-        : `${answer.gyms.length} nearest — approximate: this page's precision is unverified, and we round to a 250m cell`,
+        ? `${answer.gyms.length} nearest first — this page publishes only an approximate location, so treat the order loosely`
+        : `${answer.gyms.length} nearest first — distances not shown: we search from a 250m cell, so we cannot state one honestly`,
       approximate ? 'warn' : 'muted',
     ),
   );
