@@ -197,6 +197,42 @@ is true, useful, and — per §1 of the spec — the market-expansion signal wor
 never be confused with "we could not read this page", which is the different failure the panel also
 has to be able to state.
 
+## 13. Geocoding is a privacy decision before it is a vendor decision
+
+**Open — not decided.** Recorded now because the first measured session forced the question.
+
+Booking.com published no coordinates on 8 of 8 pages: a `Hotel` block with an address, no usable map
+URL. If that holds, the Booking path needs a geocoder, and that collides with the architecture.
+
+**A hotel's street address is the listing identity.** "27 Travessa das Merceeiras, Lisboa" identifies
+which property someone is looking at as precisely as the URL does. So sending it anywhere to be
+geocoded gives away the thing §4.2 of the spec promises we cannot know:
+
+| Where it runs | What it costs |
+|---|---|
+| Extension → third-party geocoder | The address leaves the browser to a **third party**, in a public repo, where anyone can read the call |
+| Extension → our own server | **We** learn which property is being viewed. "We don't log it" is a policy promise, and this project's argument is that its guarantees are architectural |
+| Client-side, offline | Not viable — street-level data for one country is far too large to ship in an extension |
+
+**The likely resolution: geocode coarsely.** We round to ~1.1km anyway, so we do not need street
+precision. Geocoding **postcode plus locality** lands inside our own rounding error and does not
+transmit the listing identity. A coarser query is a better answer than a broken promise.
+
+**On the vendor**, once the above is settled: Photon was chosen for a different job — typo-tolerant
+autocomplete for humans typing into a box. Nothing here is typed; the input is a clean structured
+address. For structured forward geocoding the realistic options are Nominatim or Pelias, both of
+which can be **self-hosted** — which matters more than their accuracy difference, because a
+self-hosted geocoder means no third party is in the path at all.
+
+**Before any of this, confirm the premise.** Coordinate probing was extended to meta tags
+(`geo.position`, `ICBM`, `og:latitude`, `place:location:*`) and `data-lat`/`data-lng` attributes,
+because a site that renders its map client-side must have the point in the document somewhere. If
+Booking's coordinates turn out to be there, this entire decision is moot and nothing needs geocoding.
+
+Deliberately excluded from that probing: regex-scanning inline scripts for number pairs. That is
+where a confidently-wrong coordinate would come from, and on a site where no other tier produces one
+there would be nothing to cross-check it against.
+
 ---
 
 ## Deliberately not in v1

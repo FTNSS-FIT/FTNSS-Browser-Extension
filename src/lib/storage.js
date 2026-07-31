@@ -279,6 +279,8 @@ const KNOWN_SOURCES = new Set([
   'map url ?markers',
   'map url ?location',
   'map url @lat,lon',
+  'meta geo',
+  'data attribute',
   'other',
 ]);
 
@@ -342,6 +344,8 @@ const KNOWN_REASONS = new Set([
   'structured data described two different places',
   'no elements to examine',
   'no map url carried a usable coordinate',
+  'no coordinate in map urls, meta tags or data attributes',
+  'map url and page metadata disagreed about the location',
   'map urls disagreed about the location',
   'no address-shaped text found',
   'too many candidate elements to examine',

@@ -613,3 +613,48 @@ test('an array of GeoCoordinates is read', () => {
   );
   assert.equal(extractFromStructuredData(doc).status, 'found');
 });
+
+// ─── coordinates outside JSON-LD and map URLs ────────────────────────────────
+
+test('coordinates in a geo.position meta tag are found', () => {
+  // A site that renders its map client-side has the point in the document somewhere — the map
+  // cannot draw without it. We were checking two places and calling the third "no coordinates".
+  const doc = fakeDocument({
+    'meta[name="geo.position" i]': [attrNode({ content: '38.7115;-9.1287' })],
+  });
+  const r = extractFromMapLinks(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.source, 'meta geo');
+});
+
+test('coordinates split across og:latitude and og:longitude are found', () => {
+  const doc = fakeDocument({
+    'meta[property="og:latitude" i]': [attrNode({ content: '38.7115' })],
+    'meta[property="og:longitude" i]': [attrNode({ content: '-9.1287' })],
+  });
+  assert.equal(extractFromMapLinks(doc).status, 'found');
+});
+
+test('coordinates in data attributes on a map container are found', () => {
+  const doc = fakeDocument({
+    '[data-lat][data-lng]': [attrNode({ 'data-lat': '38.7115', 'data-lng': '-9.1287' })],
+  });
+  const r = extractFromMapLinks(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.source, 'data attribute');
+});
+
+test('a meta tag that disagrees with the map pin is ambiguous, not a coin toss', () => {
+  const doc = fakeDocument({
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.example/?ll=38.7115,-9.1287' })],
+    'meta[name="geo.position" i]': [attrNode({ content: '51.5074;-0.1278' })],
+  });
+  assert.equal(extractFromMapLinks(doc).status, 'ambiguous');
+});
+
+test('a blank or malformed metadata coordinate is refused, not coerced', () => {
+  for (const content of ['', ';', '38.7115;', 'abc;def', '91;0']) {
+    const doc = fakeDocument({ 'meta[name="geo.position" i]': [attrNode({ content })] });
+    assert.equal(extractFromMapLinks(doc).status, 'not_found', `should have refused "${content}"`);
+  }
+});
