@@ -78,11 +78,18 @@ async function refreshCount() {
   countEl.textContent = `${records.length} recorded`;
 }
 
+/** A message that must survive the re-render which follows it. */
+let pendingNotice = null;
+
 async function render() {
   controlsEl.replaceChildren();
   statusEl.replaceChildren();
+  if (pendingNotice != null) {
+    statusEl.appendChild(el('span', pendingNotice, 'warn'));
+    pendingNotice = null;
+  }
   // Read the page as it is right now.
-  const reading = await readActivePage();
+  let reading = await readActivePage();
 
   if (reading == null) {
     readingEl.className = 'muted';
@@ -151,20 +158,46 @@ async function render() {
   // coordinate is a second away writes a false miss. But the answer is to SHOW the state and let the
   // person decide, not to take the button away: they are looking at the page and can see whether it
   // has finished loading. The record carries whether it had settled, so the report can separate them.
+  let recorded = false;
   const settling = reading.provisional === true;
+  const progressEl = el('div', null, 'muted');
+  readingEl.appendChild(progressEl);
+
   if (settling) {
-    const elapsed = ((MAX_POLLS - pollsRemaining) * POLL_INTERVAL_MS) / 1000;
-    if (pollsRemaining > 0) {
-      readingEl.appendChild(
-        el('div', `still reading… ${elapsed.toFixed(1)}s — a coordinate may still appear`, 'muted'),
-      );
-      pollsRemaining -= 1;
-      pollTimer = setTimeout(() => void render(), POLL_INTERVAL_MS);
-    } else {
-      readingEl.appendChild(
-        el('div', 'stopped waiting — this is what the page gives us. Logging it is fine.', 'warn'),
-      );
-    }
+    // POLL WITHOUT REBUILDING THE CONTROLS.
+    //
+    // The poll used to call render(), which begins by replacing every child of the controls — so on
+    // a page that never settles, the Log button was destroyed and rebuilt every 400ms, and a click
+    // landing in the wrong 400ms window hit a button that no longer existed. Clicking Log did
+    // nothing, repeatedly, with no error, which is the worst possible failure for a button whose
+    // entire job is to be pressed.
+    //
+    // Only the progress line updates now. A full re-render happens ONLY when the outcome category
+    // changes, because that is when a different set of controls genuinely applies.
+    const startedAt = Date.now();
+    const tick = async () => {
+      if (recorded) return;
+      const latest = await readActivePage();
+      if (latest == null || latest.pageToken !== reading.pageToken) return;
+
+      if (latest.result?.status !== reading.result?.status) {
+        pollsRemaining = MAX_POLLS;
+        await render();
+        return;
+      }
+
+      const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      if (pollsRemaining > 0 && latest.provisional === true) {
+        pollsRemaining -= 1;
+        progressEl.textContent = `still reading… ${seconds}s — a coordinate may still appear`;
+        pollTimer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
+      } else {
+        progressEl.className = 'warn';
+        progressEl.textContent = 'stopped waiting — this is what the page gives us. Logging it is fine.';
+      }
+    };
+    progressEl.textContent = 'still reading… 0.0s — a coordinate may still appear';
+    pollTimer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
   }
 
   const hasCoordinate = reading.result?.status === 'found';
@@ -225,7 +258,6 @@ async function render() {
   truth.placeholder = 'Optional — ground truth "lat, lon"';
   if (hasCoordinate) controlsEl.appendChild(truth);
 
-  let recorded = false;
   async function log({ notAListing = false } = {}) {
     if (recorded) return; // one record per popup opening
     // Stop re-reading: a refresh mid-log would replace the controls under the person's hands.
@@ -245,16 +277,41 @@ async function render() {
     }
 
     // Re-read immediately before saving: the popup stays open while the person decides, and the page
-    // underneath can navigate in that time. Compared on an opaque per-page token and the extraction
-    // itself, so neither side handles a URL.
+    // underneath can navigate in that time.
     const fresh = await readActivePage();
-    if (fresh == null || fresh.pageToken !== reading.pageToken || !sameReading(fresh, reading)) {
+    if (fresh == null) {
+      statusEl.replaceChildren(el('span', 'Could not read the page — nothing logged.', 'warn'));
+      return;
+    }
+
+    // NAVIGATION is what must block a save. A DIFFERENT READING IS NOT.
+    //
+    // The check used to refuse whenever the fresh extraction differed from the displayed one, which
+    // made Log do nothing on exactly the pages that need it most: while a page is still settling the
+    // extraction changes every few hundred milliseconds — that is what "still reading" means — so
+    // every click was refused as though the person had navigated. And the refusal called render(),
+    // which clears the status line it had just written, so it failed silently.
+    //
+    // The opaque page token changes only on navigation, so that is the right discriminator. A
+    // changed reading on the SAME page means the page finished loading, and the fresh one is the
+    // truer record — so we log that rather than the stale snapshot.
+    if (fresh.pageToken !== reading.pageToken) {
       statusEl.replaceChildren(
-        el('span', 'This page changed while the popup was open — nothing recorded.', 'warn'),
+        el('span', 'The page changed while the popup was open — nothing logged.', 'warn'),
       );
+      return;
+    }
+
+    // One exception: if the person judged a coordinate and the coordinate has since moved, their
+    // judgement is about a point that no longer exists. Re-render so they can look again.
+    if (verified != null && !sameReading(fresh, reading)) {
+      pendingNotice = 'The page finished loading and the reading changed — check it and log again.';
       await render();
       return;
     }
+
+    // Log what the page says NOW.
+    reading = fresh;
 
     let errorMetres = null;
     const raw = truth.value.trim();
@@ -293,9 +350,11 @@ async function render() {
         tiers: reading.tiers,
         errorMetres,
         result: reading.result,
-        transmitted: hasCoordinate
-          ? toTransmittablePoint(reading.result.lat, reading.result.lon)
-          : null,
+        // Recomputed from the reading we are actually logging, not from the render-time snapshot.
+        transmitted:
+          reading.result?.status === 'found'
+            ? toTransmittablePoint(reading.result.lat, reading.result.lon)
+            : null,
       });
     } catch (err) {
       statusEl.replaceChildren(el('span', err?.message ?? 'Could not save.', 'warn'));
