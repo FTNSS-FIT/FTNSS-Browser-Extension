@@ -39,8 +39,15 @@ Four were verified against the real location:
 24m   29m   42m   52m
 ```
 
-For scale: the transmission grid is 250m, so **an error of that size is erased by our own rounding
-before it reaches the server**. The search radius is 5km.
+For scale: the transmission grid is 250m and the search radius is 5km, so errors of this size are
+**smaller than the grid we round to and twenty times smaller than the distances the panel talks
+about**.
+
+Stated carefully, because the obvious phrasing is wrong: an error smaller than the cell is *not*
+"erased by rounding". Two points a metre apart either side of a cell boundary round into different
+cells and end up 333m apart. Cell size bounds the error rounding **adds**; whether a particular pair
+survives it can only be answered by rounding both and comparing. The popup does that now — the first
+version of this document said "erased", which was the same mistake the tool was making.
 
 **Caveat that matters:** all four verified listings were **hotels on Airbnb**. Airbnb fuzzes location
 for *private homes* — host safety, not an accident — and homes are the majority of its inventory and
