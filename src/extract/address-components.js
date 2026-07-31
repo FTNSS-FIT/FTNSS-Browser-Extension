@@ -78,6 +78,50 @@ function countryCode(value) {
 const present = (value) => typeof value === 'string' && value.trim().length > 0;
 
 /**
+ * Does this street name a BUILDING, or just a road?
+ *
+ * "Oxford Street" is a mile long; counting it as an address we could locate inflates exactly the
+ * number this phase exists to produce. Two things can rescue it, and both were too loose at first:
+ *
+ *   A HOUSE NUMBER — but "any digit anywhere" also accepted "5th Avenue", where the digit is part
+ *   of the road's own name. Requires a standalone numeric token now.
+ *
+ *   A POSTCODE — but only where a postcode names a building. That is the same market-by-market fact
+ *   the corroboration check already uses, and applying it here too means "Oxford Street, W1D 1BS"
+ *   passes (a UK postcode pins the building) while "Oxford Street, 90210" does not (a US ZIP is a
+ *   neighbourhood).
+ *
+ * STILL IMPERFECT, and knowingly: "Route 66" carries a standalone number that is part of the road's
+ * name, and no rule distinguishes it from a house number without knowing the country's addressing
+ * convention. House numbers lead in the US and trail in most of Europe; Japan numbers blocks rather
+ * than streets; named buildings carry no number at all. Recorded in #12 with the census that would
+ * settle it, rather than closed with a guess that fails silently by reporting a market unreadable.
+ */
+function hasNonOrdinalNumber(text) {
+  // English ordinals cover the case that motivated this ("5th Avenue", "1st Street"); a street
+  // numbered in another language's ordinals is a gap, and a narrower one than refusing every
+  // script whose addresses do not put a space around the number.
+  for (const match of text.matchAll(/\p{N}+/gu)) {
+    const after = text.slice(match.index + match[0].length);
+    if (!/^(st|nd|rd|th)\b/i.test(after)) return true;
+  }
+  return false;
+}
+
+function streetNamesABuilding(address) {
+  if (!present(address.streetAddress)) return false;
+  // A number that is not an ORDINAL. "1 Oak St" qualifies; "5th Avenue" does not, because there the
+  // digit is part of the road's own name.
+  //
+  // Written as narrowly as this on the second attempt. The first required a standalone numeric
+  // token, which is a Latin-script assumption: "中山路1号" is No. 1 Zhongshan Road with the number
+  // welded between two characters, so the rule quietly reported China as unreadable — the exact
+  // silent failure #12 warns about, produced by the fix meant to avoid it.
+  if (hasNonOrdinalNumber(address.streetAddress)) return true;
+  return present(address.postalCode) && BUILDING_PRECISE_POSTCODES.has(countryCode(address.addressCountry));
+}
+
+/**
  * Did the page publish a country AT ALL?
  *
  * Separate from `countryCode` because the two answer different questions — this one is about the
@@ -165,6 +209,24 @@ export function addressesCompatible(a, b) {
   });
 }
 
+/**
+ * Do these two state something IN COMMON, and contradict nothing?
+ *
+ * Distinct from `addressesCompatible`, and the distinction is worth being exact about because
+ * conflating them reopened a P0. Compatibility asks "could these be the same place" and answers yes
+ * when one side says nothing — the right reading when deciding whether two addresses CONFLICT.
+ * Overlap asks "is there evidence these ARE the same place", and silence is not evidence.
+ *
+ * Clustering needs the second. Using compatibility to cluster meant an address-less stub merged
+ * into whichever node had an address, which is precisely the "related hotel's address attributed to
+ * the listing" failure the candidate census exists to catch. (Codex, PR #10.)
+ */
+export function addressesOverlap(a, b) {
+  if (a == null || b == null) return false;
+  if (!addressesCompatible(a, b)) return false;
+  return Object.keys(a).some((key) => a[key] !== '' && a[key] === b[key]);
+}
+
 /** Fill in what the other side knew. Neither overwrites the other; they have already agreed. */
 export function mergeAddressValues(a, b) {
   if (a == null) return b;
@@ -201,9 +263,7 @@ export function addressComponentsOf(node) {
     // number is what usually distinguishes the two; where a building is named rather than numbered
     // — "The Savoy" — a postcode does the same job. Neither present means we have a road.
     // (Codex, PR #10.)
-    streetNamesABuilding:
-      present(address.streetAddress) &&
-      (/\p{N}/u.test(address.streetAddress) || present(address.postalCode)),
+    streetNamesABuilding: streetNamesABuilding(address),
     locality: present(address.addressLocality),
     region: present(address.addressRegion),
     postalCode: present(address.postalCode),

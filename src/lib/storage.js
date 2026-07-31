@@ -435,6 +435,15 @@ function exportableResult(result) {
     tier: [1, 2, 3].includes(result.tier) ? result.tier : null,
     precision: PRECISIONS.has(result.precision) ? result.precision : null,
     source: source.startsWith('map url ') ? 'map url' : source,
+    // WHY the runner landed here, from the same closed vocabulary as the tier reasons.
+    //
+    // It was dropped, which quietly defeated the point of adding the cross-tier reasons at all:
+    // every ambiguity exported as the bare word `ambiguous`, so "the page contradicted itself
+    // across tiers" and "we could not attribute a coordinate among several listings" — opposite
+    // findings, one about the page and one about our attribution rule — were the same row. The new
+    // refusals added in this PR are the ones most in need of watching, and they were the least
+    // visible. (Codex, PR #10.)
+    reason: knownReason(result.reason),
   };
 }
 

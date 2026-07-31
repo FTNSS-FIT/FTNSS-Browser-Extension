@@ -15,6 +15,7 @@ import {
   describesAPlace,
   addressValuesOf,
   addressesCompatible,
+  addressesOverlap,
   mergeAddressValues,
 } from './address-components.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
@@ -219,15 +220,22 @@ export function extractFromStructuredData(doc) {
    */
   const lodgingCandidates = new Map();
   /**
-   * Anonymous nodes keyed by WHAT THEY SAY, not counted.
+   * Anonymous nodes CLUSTERED by what they say, not counted and not keyed exactly.
    *
    * Counting them made a page publishing the same hotel twice without an `@id` — the ordinary way
    * a site repeats a block — look like a page about two hotels, and the round-8 attribution check
    * then threw away its perfectly good coordinate. Raw node count is not evidence of distinct
    * listings. Two anonymous nodes stating the same address and the same point ARE one candidate;
-   * two stating different things are two. (Codex, PR #10.)
+   * two stating different things are two.
+   *
+   * CLUSTERED rather than keyed, on the second attempt. Keying on exact address-and-coordinate JSON
+   * split the ordinary case it was written for: one copy of a block carrying the address AND the
+   * point, another carrying only the address, is one hotel described twice — and the exact key made
+   * it two candidates, so the attribution check threw the coordinate away on evidence that entirely
+   * agreed. Unknown is compatible here for the same reason it is between two addresses.
+   * (Codex, PR #10.)
    */
-  const anonymousCandidates = new Map();
+  const anonymousCandidates = [];
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -268,15 +276,36 @@ export function extractFromStructuredData(doc) {
         const nodeCoordinates = coordinatesIn(node);
         // The evidence itself is the key. An anonymous node carrying neither an address nor a point
         // says nothing that could distinguish it, so every such node folds into one candidate.
-        const evidence = JSON.stringify([
-          addressValuesOf(node),
-          nodeCoordinates.found ? [nodeCoordinates.lat, nodeCoordinates.lon] : null,
-        ]);
-        const seen = anonymousCandidates.get(evidence) ?? { address: false, coordinate: false };
-        anonymousCandidates.set(evidence, {
-          address: seen.address || nodeComponents != null,
-          coordinate: seen.coordinate || nodeHasCoordinate,
-        });
+        const nodeValues = addressValuesOf(node);
+        const nodePoint = nodeCoordinates.found
+          ? { lat: nodeCoordinates.lat, lon: nodeCoordinates.lon }
+          : null;
+        // POSITIVE SHARED EVIDENCE, not mere compatibility. Two nodes cluster when they actually
+        // state something the same — an address they agree on, or a point in the same building —
+        // and contradict nothing. Silence is not evidence of identity: clustering on compatibility
+        // alone merged an evidence-free stub into whichever node had an address, which is the
+        // "related hotel's address attributed to the listing" failure this census exists to catch.
+        const samePoint = (c) =>
+          c.point != null && nodePoint != null && distanceMetres(c.point, nodePoint) <= CONFLICT_METRES;
+        const cluster = anonymousCandidates.find(
+          (c) =>
+            addressesCompatible(c.values, nodeValues) &&
+            (c.point == null || nodePoint == null || samePoint(c)) &&
+            (addressesOverlap(c.values, nodeValues) || samePoint(c)),
+        );
+        if (cluster == null) {
+          anonymousCandidates.push({
+            values: nodeValues,
+            point: nodePoint,
+            address: nodeComponents != null,
+            coordinate: nodeHasCoordinate,
+          });
+        } else {
+          cluster.values = mergeAddressValues(cluster.values, nodeValues);
+          cluster.point = cluster.point ?? nodePoint;
+          cluster.address = cluster.address || nodeComponents != null;
+          cluster.coordinate = cluster.coordinate || nodeHasCoordinate;
+        }
       } else {
         const seen = lodgingCandidates.get(identity) ?? { address: false, coordinate: false };
         lodgingCandidates.set(identity, {
@@ -336,7 +365,7 @@ export function extractFromStructuredData(doc) {
   // UNATTRIBUTABLE IS AS BAD AS CONFLICTING. If some lodging candidates carry an address and
   // others do not, we have an address and no way to say whose it is — which is exactly the state
   // that produces a confident answer about the wrong hotel.
-  const seenCandidates = [...lodgingCandidates.values(), ...anonymousCandidates.values()];
+  const seenCandidates = [...lodgingCandidates.values(), ...anonymousCandidates];
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
   const candidatesWithCoordinate = seenCandidates.filter((c) => c.coordinate).length;

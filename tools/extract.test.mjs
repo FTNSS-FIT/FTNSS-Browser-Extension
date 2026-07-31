@@ -1468,7 +1468,60 @@ test('an anonymous stub does not split a candidate that has evidence', () => {
     JSON.stringify({ '@type': 'Hotel' }),
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
   );
-  // Two distinct candidates remain: the evidence-free one and the one with a point. Still refused,
-  // and that is correct — but the two stubs did not inflate it to three.
+  // Refused, and correctly: a stub states nothing, so nothing can establish it is the same hotel as
+  // the one carrying the point. Silence is not evidence of identity — which is why clustering needs
+  // positive shared evidence rather than mere compatibility.
   assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+// --- Codex review round 10, PR #10 --------------------------------------------------------------
+
+test('one hotel described twice, once with its point, is one candidate', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Keying anonymous nodes on exact address-and-coordinate JSON split the ordinary case the keying
+  // was written for: the same block published once with the point and once without. All the
+  // evidence agrees, and the attribution check threw the coordinate away anyway.
+  const address = { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' };
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address, geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', address }),
+  );
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 1);
+});
+
+test('an ordinal in a road name is not a house number', () => {
+  const street = (streetAddress, extra = {}) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress, addressLocality: 'New York', addressCountry: 'US', ...extra },
+    }))).status;
+
+  // "5th Avenue" is a road. The digit is part of its name, not a building on it.
+  assert.equal(street('5th Avenue'), 'not_found');
+  assert.equal(street('12 5th Avenue'), 'found_address');
+});
+
+test('a postcode names a building only where postcodes name buildings', () => {
+  const road = (country, postalCode) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'Oxford Street', addressLocality: 'London', postalCode, addressCountry: country },
+    }))).status;
+
+  // A UK postcode pins the building on a mile of road. A US ZIP is a neighbourhood.
+  assert.equal(road('GB', 'W1D 1BS'), 'found_address');
+  assert.equal(road('US', '90210'), 'not_found');
+});
+
+test('a CJK address keeps its house number', () => {
+  // The first version of this rule required a standalone numeric token, which is a Latin-script
+  // assumption: 中山路1号 is No. 1 Zhongshan Road with the number welded between two characters, so
+  // the rule quietly reported China as unreadable.
+  const r = extractFromStructuredData(ldJsonDocument(JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '中山路1号', addressLocality: '上海市', postalCode: '200000', addressCountry: 'CN' },
+  })));
+  assert.equal(r.status, 'found_address');
 });
