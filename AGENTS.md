@@ -95,6 +95,23 @@ alike.
 
 ## Working conventions
 
+**Bump the version on every change that reaches the browser.**
+
+```bash
+npm run bump          # patch: 0.2.1 -> 0.2.2
+npm run bump minor    # 0.2.1 -> 0.3.0
+```
+
+Reloading an unpacked extension gives no confirmation that anything changed. During the first
+testing sessions a fix was pushed, reloaded, and the old behaviour persisted several times, and
+there was no way to tell a failed reload from a failed fix — which wastes the tester's time and,
+worse, produces bug reports about code that is not running.
+
+The popup shows the running version, read from the manifest at runtime so it cannot drift. A test
+keeps `manifest.json` and `package.json` in lockstep; the manifest is the source of truth, because
+it is what the browser reads.
+
+
 - One feature per branch, cut from `main`, small enough to review in a single pass.
 - Self-review the full diff before opening a PR.
 - Never commit anything you would not want published, in any commit, at any point.

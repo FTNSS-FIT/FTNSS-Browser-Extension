@@ -12,6 +12,7 @@
   .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
   code { font-family: ui-monospace, monospace; color: #9fd0ff; overflow-wrap: anywhere; }
   .muted { color: #8b93a1; }
+  .version { float: right; color: #5c6470; font-weight: normal; letter-spacing: 0; }
   .warn { color: #ffb26b; }
   .ok { color: #7ee08a; }
   hr { border: 0; border-top: 1px solid #2c3038; margin: 14px 0 10px; }
@@ -21,7 +22,7 @@
           color: #f2f3f5; border: 1px solid #3a4049; border-radius: 6px; padding: 5px 7px; }
 </style>
 
-<h1>Measuring</h1>
+<h1>Measuring <span id="version" class="version"></span></h1>
 <div id="cohort" class="muted">…</div>
 
 <h1 style="margin-top:14px">Current page</h1>

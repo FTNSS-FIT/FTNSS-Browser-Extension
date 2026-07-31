@@ -48,7 +48,7 @@ function makeElement(tag = 'div') {
 function installDom() {
   created.length = 0;
   const byId = {};
-  for (const id of ['reading', 'controls', 'status', 'count', 'cohort', 'export', 'clear']) {
+  for (const id of ['reading', 'controls', 'status', 'count', 'cohort', 'export', 'clear', 'version']) {
     byId[id] = makeElement('div');
   }
   globalThis.document = {
@@ -80,7 +80,7 @@ function installChrome(reading) {
     },
   });
   globalThis.chrome = {
-    runtime: { id: 'test-extension' },
+    runtime: { id: 'test-extension', getManifest: () => ({ version: '9.9.9' }) },
     storage: { local: area(local), session: area(session) },
     tabs: {
       async query() {
@@ -116,13 +116,17 @@ const BOOKING_READING = {
 const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
 
 test('the popup loads, renders and logs a still-settling Booking page', async () => {
-  installDom();
+  const byId = installDom();
   const { local } = installChrome(BOOKING_READING);
 
   // Loading the module runs start() → migrate → render. A ReferenceError anywhere in that path,
   // which is what shipped twice, fails here.
   await import('../src/popup/popup.js');
   await settle();
+
+  // The version has to be on screen, or it cannot serve its purpose: confirming a reload took.
+  assert.ok(findByText('v9.9.9').length > 0 || byId.version.textContent === 'v9.9.9',
+    'the popup must display the running version');
 
   const logButton = findByText('Log').at(-1);
   assert.ok(logButton, 'there must be a Log button even while the page is still settling');

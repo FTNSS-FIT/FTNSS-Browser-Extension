@@ -143,3 +143,22 @@ test('every storage helper a file uses is actually imported', () => {
 
   assert.deepEqual(problems, [], `missing imports:\n${problems.join('\n')}`);
 });
+
+test('the manifest and package versions are in lockstep', () => {
+  // Two files carrying the same number is two chances to be wrong. The manifest is what the browser
+  // reads, so it is the source of truth; `npm run bump` writes both, and this catches a hand-edit
+  // of one of them.
+  const manifest = JSON.parse(readFileSync(join(SRC, 'manifest.json'), 'utf8'));
+  const pkg = JSON.parse(readFileSync(join(SRC, '../package.json'), 'utf8'));
+  assert.equal(manifest.version, pkg.version, 'run `npm run bump` rather than editing versions by hand');
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/, 'the store requires a plain semver version');
+});
+
+test('the popup displays the version it is actually running', () => {
+  // Written from the manifest at runtime, never hardcoded — a hardcoded one drifts, and a version
+  // that lies is worse than none, because it is used to confirm a reload took effect.
+  const popup = readFileSync(join(SRC, 'popup/popup.js'), 'utf8');
+  assert.ok(popup.includes('chrome.runtime.getManifest()'), 'version must come from the manifest');
+  const html = readFileSync(join(SRC, 'popup/popup.html'), 'utf8');
+  assert.ok(html.includes('id="version"'), 'the popup needs somewhere to show it');
+});
