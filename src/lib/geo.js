@@ -29,6 +29,11 @@
  * times coarser than a GPS fix, and in any city it contains dozens of buildings. The privacy
  * difference between 500m and 1.11km is small; the accuracy difference is not.
  *
+ * 250m cells (174m error) were considered and declined. Below 500m you start distinguishing
+ * individual city blocks, and the claim gets harder to state plainly in a store listing — which
+ * matters, because per spec §1 the privacy story is a marketing asset and not only an engineering
+ * property. 500m buys most of the accuracy without weakening the sentence.
+ *
  * (Jordan, 2026-07-31, on seeing that 1.11km was inherited rather than chosen.)
  */
 export const TRANSMIT_KM = 0.5;
