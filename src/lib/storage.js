@@ -38,7 +38,11 @@ export const SITE_LABELS = [
   // Country variants enumerated rather than sampled, each confirmed to resolve by DNS on
   // 2026-07-31. A partial list is the bug the ccTLD rule exists to prevent: the script silently
   // never runs on the omitted ones, and their absence looks like a market with no listings.
-  ...['com', 'co.uk', 'ca', 'de', 'fr', 'it', 'es', 'nl', 'com.au', 'co.in', 'co.jp'].map(
+  ...[
+    'com', 'co.uk', 'ca', 'de', 'fr', 'it', 'es', 'nl', 'com.au', 'co.in', 'co.jp',
+    'co.nz', 'com.br', 'com.mx', 'com.hk', 'com.sg', 'ie', 'be', 'at', 'ch', 'dk', 'se', 'no',
+    'fi', 'pt', 'gr', 'com.tw', 'co.kr', 'com.my', 'ph', 'com.ar',
+  ].map(
     (tld) => `expedia.${tld}`,
   ),
   'hotels.com',
