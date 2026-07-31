@@ -29,13 +29,25 @@ export function found({ lat, lon, tier, source, precision }) {
 }
 
 /**
- * Tier 3 produces an address STRING, not a point — turning it into one needs a geocoder, which is a
- * network call, and this harness makes none. Kept as its own outcome rather than folded into
- * `found` so the report cannot silently count "we saw an address" as "we located the listing".
- * Those differ by exactly the geocoder's error rate, which phase 1 does not measure.
+ * An address, not a point — turning it into one needs a geocoder, which is a network call, and this
+ * harness makes none. Kept as its own outcome rather than folded into `found` so the report cannot
+ * silently count "we saw an address" as "we located the listing". Those differ by exactly the
+ * geocoder's error rate, which phase 1 does not measure.
+ *
+ * TIER IS A PARAMETER, and it used to be hardcoded to 3. That looked like a detail and was a
+ * measurement bug: it encoded the assumption that a structured address is not an address unless it
+ * is ALSO printed on screen. Expedia and Hotels.com publish a complete PostalAddress in JSON-LD and
+ * do not expose it to tier 3's text scraper, so 6 of 6 pages carrying a full street, locality,
+ * postcode and country were recorded as total failures — the exact shape of finding this phase
+ * exists to detect, reported as its opposite.
+ *
+ * `address` is nullable, and tier 1 passes null on purpose: the harness records WHICH components a
+ * page published, never what they say (see address-components.js). The product will need the values
+ * to geocode; which of them may leave the browser is docs/DECISIONS.md 13 and is not phase 1's to
+ * decide.
  */
-export function foundAddress({ address, source }) {
-  return { status: 'found_address', address, source, tier: 3 };
+export function foundAddress({ address = null, source, tier = 3, reason = null }) {
+  return { status: 'found_address', address, source, tier, reason };
 }
 
 /**

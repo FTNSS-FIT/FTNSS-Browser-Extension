@@ -702,7 +702,11 @@ test('address components are captured from a lodging node with no coordinates', 
     }),
   );
   const r = extractFromStructuredData(doc);
-  assert.equal(r.status, 'not_found');
+  // `found_address`, not `not_found`. This assertion said not_found until 31 July 2026 and was
+  // pinning the bug in place: a complete address is an ANSWER, and the reason the coordinate is
+  // missing is carried alongside rather than instead of it.
+  assert.equal(r.status, 'found_address');
+  assert.equal(r.reason, 'lodging type found, no coordinates published');
   assert.deepEqual(r.addressComponents, {
     street: true,
     locality: true,
@@ -899,4 +903,70 @@ test('sibling brands keep their family across country domains', async () => {
   // Hotels.com, not of Expedia.com.
   assert.deepEqual(cohort('www.hotels.com'), { family: 'expedia', variant: 'primary', brand: 'hotels' });
   assert.deepEqual(cohort('www.vrbo.com'), { family: 'expedia', variant: 'primary', brand: 'vrbo' });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A STRUCTURED ADDRESS WITHOUT COORDINATES IS A FINDING, NOT A FAILURE.
+//
+// Measured 31 July 2026: 6 of 6 Expedia and Hotels.com pages carried a complete PostalAddress in
+// JSON-LD — street, locality, region, postcode and country all present — and every one was recorded
+// `not_found`, because `found_address` was hardcoded to tier 3 and Expedia does not expose its
+// address to tier 3's text scraper. The evidence was in the record the whole time: addressComponents
+// all true, outcome not_found. Read at face value it says Expedia publishes nothing, which is the
+// opposite of what it published.
+// ---------------------------------------------------------------------------------------------
+
+const EXPEDIA_SHAPED = JSON.stringify({
+  '@type': 'Hotel',
+  address: {
+    '@type': 'PostalAddress',
+    streetAddress: '1 Example Street',
+    addressLocality: 'Exampleton',
+    addressRegion: 'EX',
+    postalCode: 'EX1 2AB',
+    addressCountry: 'United Kingdom',
+  },
+});
+
+test('tier 1 reports a structured address when the page publishes no coordinates', () => {
+  const r = extractFromStructuredData(ldJsonDocument(EXPEDIA_SHAPED));
+  assert.equal(r.status, 'found_address');
+  assert.equal(r.tier, 1);
+  // The finding about the SITE survives the rescue: we still know why there was no coordinate.
+  assert.equal(r.reason, 'lodging type found, no coordinates published');
+  // Presence, never values. A street address IS the listing identity.
+  assert.equal(r.address, null);
+  assert.equal(r.addressComponents.postalCode, true);
+});
+
+test('a page with an address and no coordinates is not recorded as unreadable', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = ldJsonDocument(EXPEDIA_SHAPED);
+  const { result, tiers } = runExtraction(doc);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+  // Tier 3 genuinely could not read it — that stays true and stays recorded.
+  assert.equal(tiers.tier3.status, 'not_found');
+});
+
+test('an address fragment is not promoted to a place', () => {
+  // A country alone, or a street alone, resolves to nothing. Reporting found_address off either
+  // would trade a false negative for a false positive, which is not an improvement.
+  const fragment = JSON.stringify({
+    '@type': 'Hotel',
+    address: { '@type': 'PostalAddress', streetAddress: '1 Example Street' },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(fragment)).status, 'not_found');
+});
+
+test('a coordinate still beats an address, from any tier', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Ordering matters: the rescue must not let a geocodable address outrank a published point.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(EXPEDIA_SHAPED)],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 2);
 });

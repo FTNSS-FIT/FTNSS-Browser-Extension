@@ -9,8 +9,8 @@
 // types, 40-deep nesting, a `__proto__` key, a `geo` that is a string. Nothing below trusts a shape
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
-import { found, notFound, ambiguous } from './result.js';
-import { addressComponentsOf } from './address-components.js';
+import { found, foundAddress, notFound, ambiguous } from './result.js';
+import { addressComponentsOf, describesAPlace } from './address-components.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 /**
@@ -272,8 +272,29 @@ export function extractFromStructuredData(doc) {
 
   const withComponents = (result) => ({ ...result, addressComponents });
   if (!parsedAny) return withComponents(notFound('ld+json present but none parsed'));
+
+  // NO COORDINATES IS NOT NO ANSWER.
+  //
+  // Reaching here with a complete PostalAddress in hand and reporting `not_found` was wrong, and
+  // wrong in the direction that costs most: it made a site that publishes addresses-without-
+  // coordinates — the Booking shape, and the shape Expedia and Hotels.com turn out to share —
+  // indistinguishable from a site we cannot read at all. Those call for opposite responses. One
+  // needs a geocoder; the other needs a different extraction strategy or dropping the site.
+  //
+  // The diagnostic reason is carried THROUGH rather than replaced. "lodging type found, no
+  // coordinates published" is the finding about the site, and it stays true and stays recorded
+  // whether or not an address rescued the read.
+  const reason = sawUnusableGeo
+    ? 'lodging type found, coordinates present but refused'
+    : sawLodgingWithoutGeo
+      ? 'lodging type found, no coordinates published'
+      : 'no lodging type in structured data';
+
+  if (describesAPlace(addressComponents)) {
+    // `address: null` — presence, never values. See result.js.
+    return withComponents(foundAddress({ source: 'ld+json.address', tier: 1, reason }));
+  }
+
   // Two different findings, deliberately not collapsed into one reason.
-  if (sawUnusableGeo) return withComponents(notFound('lodging type found, coordinates present but refused'));
-  if (sawLodgingWithoutGeo) return withComponents(notFound('lodging type found, no coordinates published'));
-  return withComponents(notFound('no lodging type in structured data'));
+  return withComponents(notFound(reason));
 }

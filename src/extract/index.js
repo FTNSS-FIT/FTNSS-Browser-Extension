@@ -64,6 +64,13 @@ export function runExtraction(doc) {
     result = t1.value;
   } else if (isFound(t2.value)) {
     result = t2.value;
+  } else if (isFoundAddress(t1.value)) {
+    // A COORDINATE FROM ANY TIER STILL BEATS AN ADDRESS — that ordering is above this branch and is
+    // the point of putting it here rather than with the tier-1 coordinate case. Between two
+    // addresses, though, the structured one wins: tier 1 hands back separated components, and
+    // whether the street can be withheld from a geocoder is answerable only when the parts arrive
+    // apart. Tier 3 returns one rendered blob, which cannot be geocoded coarsely at all.
+    result = t1.value;
   } else if (isFoundAddress(t3.value)) {
     result = t3.value;
   } else {

@@ -122,6 +122,24 @@ export function addressComponentsOf(node) {
 }
 
 /**
+ * Does this describe a PLACE, as opposed to a fragment of one?
+ *
+ * The threshold for reporting `found_address` at all, and deliberately looser than
+ * `coarselyGeocodable` below — that one asks whether we can geocode without the street, this one
+ * asks whether there is an address here worth geocoding by any means. A country plus either a
+ * postcode or a locality is the least that resolves anywhere; a bare street or a lone region is a
+ * component, not a location.
+ *
+ * `countryPublished` rather than `countryParsed`: a country we failed to turn into a code is still
+ * a country the SITE published, and conflating those is how a parser gap gets written down as a
+ * finding about a market. (The same distinction the country table exists to keep honest.)
+ */
+export function describesAPlace(components) {
+  if (components == null) return false;
+  return Boolean(components.countryPublished && (components.postalCode || components.locality));
+}
+
+/**
  * Could this address be geocoded WITHOUT sending the street?
  *
  * Postcode plus country is the minimum that resolves anywhere; locality alone is ambiguous in most
