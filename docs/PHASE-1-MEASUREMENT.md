@@ -133,7 +133,7 @@ Deliberately, **no page identifier**: not the URL, not the hostname, not the add
 - **The projection is applied when a record is written**, not when it is exported, so the trail never
   exists on disk. It is a strict **allowlist** — a field added later is withheld until someone
   decides it belongs, where a denylist protects only the fields somebody remembered.
-- Coordinates are stored only as the ~1.1km point the product would itself transmit, and that
+- Coordinates are stored only as the 500m-grid point the product would itself transmit, and that
   rounding is **re-applied at the storage boundary** so it does not depend on the caller remembering.
 - Timestamps are **date-only**. A precise time beside a site label is the makings of a browsing log,
   and nothing in the report groups more finely than a day.

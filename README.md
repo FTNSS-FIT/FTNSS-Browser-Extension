@@ -43,9 +43,9 @@ Four properties carry the claim:
    other page — a limit enforced by the browser, not by us.
 2. **The URL never leaves your browser.** Not the address bar, not the page title, not the content.
    Our servers cannot reconstruct what you were looking at, because it was never sent.
-3. **Coordinates are rounded before they are sent.** Cells about 1.1km across — plenty to answer "is
+3. **Coordinates are rounded before they are sent.** Cells 500m across — plenty to answer "is
    there a gym near this hotel", uselessly coarse as a location trail. The grid is **latitude-aware**:
-   a fixed number of decimal places is only ~1km near the equator and about 190m at 80°, so the
+   a fixed number of decimal places is ~1.1km near the equator and about 190m at 80°, so the
    longitude step is derived from the latitude.
 4. **The source is public**, so none of the above has to be taken on trust.
 

@@ -7,10 +7,31 @@
 // becomes a convention that mostly holds.
 
 /**
- * Target transmission precision, in kilometres. Roughly what 0.01° of LATITUDE is worth anywhere on
- * Earth — plenty to answer "is there a gym near this hotel", uselessly coarse as a location trail.
+ * Target transmission precision, in kilometres: cells 500m across, worst-case error ~348m.
+ *
+ * This was 1.11km, and that number was never derived — it was an artifact. The spec picked two
+ * decimal places of latitude, which happens to be ~1.11km, because a reader could SEE the
+ * truncation: 38.711503 becomes 38.71. That was a legibility argument.
+ *
+ * The legibility is already gone. Two decimal places is ~1.11km at the equator and ~190m at 80°N, so
+ * the grid had to become latitude-aware — after which nobody can eyeball the rounding anyway, and we
+ * were paying for a number whose only justification no longer applied.
+ *
+ * What the change costs and buys, measured:
+ *
+ *     1.11km cells → worst-case error 773m
+ *     0.50km cells → worst-case error 348m
+ *
+ * 773m matters. The panel ranks the six NEAREST gyms and shows a distance, and an error of that size
+ * reorders them and makes any distance we display suspect. 348m is inside what "a short walk" means.
+ *
+ * What it does not cost: a 500m cell still identifies no building and no hotel — it is a hundred
+ * times coarser than a GPS fix, and in any city it contains dozens of buildings. The privacy
+ * difference between 500m and 1.11km is small; the accuracy difference is not.
+ *
+ * (Jordan, 2026-07-31, on seeing that 1.11km was inherited rather than chosen.)
  */
-export const TRANSMIT_KM = 1.11;
+export const TRANSMIT_KM = 0.5;
 
 /** Degrees of latitude per kilometre is very nearly constant; degrees of longitude are not. */
 const KM_PER_DEGREE_LATITUDE = 111.32;

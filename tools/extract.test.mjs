@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  TRANSMIT_KM,
   toTransmittablePoint,
   isUsableCoordinate,
   distanceMetres,
@@ -15,12 +16,12 @@ import { ldJsonDocument, linkDocument, fakeDocument, textNode, scriptNode, attrN
 
 // ─── geo ──────────────────────────────────────────────────────────────────────
 
-test('rounding reduces precision to ~1km', () => {
+test('rounding reduces precision to the transmission grid', () => {
   const r = toTransmittablePoint(38.711503, -9.128744);
-  assert.ok(distanceMetres({ lat: 38.711503, lon: -9.128744 }, r) < 1110);
+  assert.ok(distanceMetres({ lat: 38.711503, lon: -9.128744 }, r) < TRANSMIT_KM * 1000);
 });
 
-test('the ~1km guarantee holds at HIGH LATITUDES, not just near the equator', () => {
+test('the rounding guarantee holds at HIGH LATITUDES, not just near the equator', () => {
   // A fixed 2dp longitude is ~1.1km at the equator but ~380m at 70 degrees and ~190m at 80 — so a
   // uniform-sounding promise was weakest in exactly the Nordic markets this extension lists.
   for (const lat of [0, 38.71, 51.5, 60, 69.65, 80, 85]) {
@@ -31,9 +32,10 @@ test('the ~1km guarantee holds at HIGH LATITUDES, not just near the equator', ()
       worst = Math.max(worst, distanceMetres(point, rounded));
     }
     // Coarse enough to be a real guarantee everywhere...
-    assert.ok(worst > 100, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
-    // ...and not so coarse that the product stops working.
-    assert.ok(worst < 1200, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
+    // Bounds DERIVED from the constant, not hardcoded: changing TRANSMIT_KM must not silently
+    // invalidate the test that guards it. A cell's worst-case error is about 0.7x its size.
+    assert.ok(worst > TRANSMIT_KM * 300, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
+    assert.ok(worst < TRANSMIT_KM * 1000, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
   }
 });
 
@@ -54,7 +56,7 @@ test('rounding is the only way a point is produced, and it refuses junk', () => 
 test('a rounded point is still close enough to answer the question', () => {
   const exact = { lat: 38.711503, lon: -9.128744 };
   const rounded = toTransmittablePoint(exact.lat, exact.lon);
-  // The privacy design only works if ~1km of rounding does not break the product. Assert it.
+  // The privacy design only works if the rounding does not break the product. Assert it.
   assert.ok(distanceMetres(exact, rounded) < 1000);
 });
 
@@ -343,7 +345,7 @@ test('longitude wraps across the antimeridian rather than clamping', () => {
   // Clamping 180.001 to 180 would be wrong by a whole grid cell; wrapping puts it where it belongs.
   const rounded = toTransmittablePoint(0, 179.999);
   assert.ok(rounded.lon < 0, 'should have wrapped to the western hemisphere');
-  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < 1200);
+  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < TRANSMIT_KM * 1000);
 });
 
 test('tier 2 fails closed when map urls disagree about where the listing is', () => {
@@ -387,7 +389,7 @@ test('a partial or out-of-range ground truth is refused, not coerced', async () 
   assert.deepEqual(parse('38.7115, -9.1287'), { lat: 38.7115, lon: -9.1287 });
 });
 
-test('the ~1km guarantee holds at POLAR latitudes too', async () => {
+test('the rounding guarantee holds at POLAR latitudes too', async () => {
   const { isInRange } = await import('../src/lib/geo.js');
   // A `Math.min(1, step)` cap here made cells 194m at 89.9 and 19m at 89.99 — the guarantee failing
   // hardest exactly where the latitude correction was supposed to be working hardest. Near the pole
@@ -400,8 +402,8 @@ test('the ~1km guarantee holds at POLAR latitudes too', async () => {
       assert.ok(rounded && isInRange(rounded.lat, rounded.lon), `out of range at ${lat}`);
       worst = Math.max(worst, distanceMetres(point, rounded));
     }
-    assert.ok(worst > 100, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
-    assert.ok(worst < 1200, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
+    assert.ok(worst > TRANSMIT_KM * 300, `rounding at ${lat} is too fine: ${Math.round(worst)}m`);
+    assert.ok(worst < TRANSMIT_KM * 1000, `rounding at ${lat} is too coarse: ${Math.round(worst)}m`);
   }
 });
 
@@ -491,7 +493,7 @@ test('rounding is idempotent everywhere, including across the antimeridian', asy
       worstDrift = Math.max(worstDrift, distanceMetres(point, once));
     }
   }
-  assert.ok(worstDrift < 1200, `rounding error too large: ${Math.round(worstDrift)}m`);
+  assert.ok(worstDrift < TRANSMIT_KM * 1000, `rounding error too large: ${Math.round(worstDrift)}m`);
 });
 
 test('the reported antimeridian case stays inside the guarantee', () => {
@@ -499,7 +501,7 @@ test('the reported antimeridian case stays inside the guarantee', () => {
   const once = toTransmittablePoint(input.lat, input.lon);
   const twice = toTransmittablePoint(once.lat, once.lon);
   assert.deepEqual(twice, once);
-  assert.ok(distanceMetres(input, twice) < 1200);
+  assert.ok(distanceMetres(input, twice) < TRANSMIT_KM * 1000);
 });
 
 // ─── cross-tier agreement ─────────────────────────────────────────────────────
