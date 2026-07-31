@@ -46,10 +46,11 @@ Four properties carry the claim:
    not the hotel's name or address. Our servers cannot reconstruct what you were looking at,
    because it was never sent.
 
-   **One request is made, and only if you ask for gyms.** It carries a single coordinate rounded to
-   the grid below, and nothing else — no cookies, no identifier, no session. You can watch it in
-   devtools; that is the point of it being one small thing. Nothing is sent while you browse, and
-   the measurements this build records stay on your machine.
+   **One request is made, and only when you press "Find gyms".** Opening the panel sends nothing;
+   the request carries a single coordinate rounded to the grid below and nothing else — no cookies,
+   no identifier, no session. You can watch it in devtools; that is the point of it being one small
+   thing. Nothing is sent while you browse, and the measurements this build records stay on your
+   machine.
 3. **Coordinates are rounded before they are sent.** Cells 250m across — plenty to answer "is
    there a gym near this hotel", uselessly coarse as a location trail. The grid is **latitude-aware**:
    a fixed number of decimal places is ~1.1km near the equator and about 190m at 80°, so the

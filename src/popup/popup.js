@@ -566,6 +566,45 @@ document.getElementById('clear').addEventListener('click', async () => {
  */
 let lookupGeneration = 0;
 
+/**
+ * The resting state: an endpoint is configured and NOTHING has been sent.
+ *
+ * Opening the popup used to fire a lookup immediately, which contradicted the README's own promise
+ * — "one request is made, and only if you ask for gyms" — for the most ordinary reason anyone opens
+ * this build, which is to log or export a measurement. A privacy claim the code breaks on the
+ * common path is not a bug in the wording.
+ *
+ * It also made a network request a side effect of a toolbar click, and the panel is the one place
+ * this extension does anything a user did not directly ask for.
+ */
+async function renderGymsIdle() {
+  const container = document.getElementById('gyms');
+  if (container == null) return;
+  const endpoint = await loadEndpoint();
+  container.replaceChildren();
+
+  if (endpoint == null) {
+    container.appendChild(el('div', 'No endpoint set yet.', 'muted'));
+  } else {
+    container.appendChild(
+      el('div', 'Nothing has been sent. Looking up gyms sends one rounded coordinate.', 'muted'),
+    );
+  }
+
+  const row = el('div', null, 'row');
+  if (endpoint != null) {
+    const find = el('button', 'Find gyms', 'primary');
+    find.addEventListener('click', () => { void renderGyms(); });
+    row.appendChild(find);
+  }
+  const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
+  change.addEventListener('click', () => {
+    container.replaceChildren(endpointForm(endpoint ?? ''));
+  });
+  row.appendChild(change);
+  container.appendChild(row);
+}
+
 async function renderGyms() {
   const generation = (lookupGeneration += 1);
   const container = document.getElementById('gyms');
@@ -585,8 +624,11 @@ async function renderGyms() {
   const say = (message, className = 'muted') => {
     if (stale()) return;
     container.replaceChildren(el('div', message, className));
-    const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
     const row = el('div', null, 'row');
+    const again = el('button', 'Look again');
+    again.addEventListener('click', () => { void renderGyms(); });
+    row.appendChild(again);
+    const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
     change.addEventListener('click', () => {
       row.replaceChildren(endpointForm(endpoint ?? ''));
     });
@@ -714,9 +756,14 @@ async function releaseOrigin(previous, next) {
   const old = matchPatternFor(previous);
   if (old == null || old === matchPatternFor(next)) return;
   try {
-    await chrome.permissions.remove({ origins: [old] });
-  } catch {
-    // Nothing to do about it, and nothing that should stop the save.
+    // `remove` RESOLVES FALSE when it declines rather than throwing, so catching alone left a
+    // silent failure looking identical to success. There is nothing to do about it in the UI —
+    // the endpoint is saved and works — but a console line is the difference between a stale
+    // permission being discoverable and being invisible.
+    const removed = await chrome.permissions.remove({ origins: [old] });
+    if (!removed) console.warn(`FTNSS: could not release ${old}; it remains authorised`);
+  } catch (err) {
+    console.warn(`FTNSS: could not release ${old}`, err?.message ?? err);
   }
 }
 
@@ -760,10 +807,12 @@ function endpointForm(current) {
     const previous = await loadEndpoint();
     await saveEndpoint('');
     await releaseOrigin(previous, '');
-    await renderGyms();
+    await renderGymsIdle();
   });
   save.addEventListener('click', async () => {
     const value = input.value.trim();
+    /** Set once a new origin has actually been granted, so a later failure can hand it back. */
+    let grantedPattern = null;
     const problem = value.length === 0 ? null : endpointProblem(value);
     if (problem != null) {
       note.textContent = problem;
@@ -793,6 +842,7 @@ function endpointForm(current) {
         note.className = 'warn';
         return;
       }
+      grantedPattern = matchPatternFor(value);
     }
     // GIVE BACK WHAT WE NO LONGER NEED. Switching from localhost to production left both origins
     // authorised forever, which contradicts the single-origin design the manifest exists to state.
@@ -802,6 +852,16 @@ function endpointForm(current) {
     try {
       await saveEndpoint(value);
     } catch (err) {
+      // ROLL THE GRANT BACK. Storage failing after the permission was granted left the extension
+      // holding access to an origin it had no endpoint for and no UI to reach — a permission the
+      // person agreed to for a setting that does not exist.
+      if (grantedPattern != null && grantedPattern !== matchPatternFor(previous)) {
+        try {
+          await chrome.permissions.remove({ origins: [grantedPattern] });
+        } catch {
+          // Nothing further to try; the message below is still the important part.
+        }
+      }
       note.textContent = err?.message ?? 'Could not save that.';
       note.className = 'warn';
       return;
@@ -810,7 +870,7 @@ function endpointForm(current) {
     // likely edit anyone makes — saved the new endpoint and then revoked the permission it needs,
     // breaking the feature through the act of correcting it.
     await releaseOrigin(previous, value);
-    await renderGyms();
+    await renderGymsIdle();
   });
   row.appendChild(save);
   row.appendChild(clear);
@@ -824,9 +884,10 @@ async function start() {
   await migrateAwayLocalCohort();
   await migrateStoredRecords();
   await render();
-  // AFTER the recorder renders, and not awaited alongside it. This one makes a network call, and
-  // the measurement UI must never wait on the network to appear.
-  void renderGyms();
+  // AFTER the recorder renders, and not awaited alongside it. This one touches storage, and the
+  // measurement UI must never wait on it to appear. It makes NO network request — that happens only
+  // when someone presses Find gyms.
+  void renderGymsIdle();
 }
 
 void start();

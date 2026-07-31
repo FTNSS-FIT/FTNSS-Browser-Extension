@@ -30,7 +30,9 @@ function stub(payload, { status = 200, capture = {} } = {}) {
     return {
       ok: status >= 200 && status < 300,
       status,
-      json: async () => body,
+      // text(), not json() — the client reads the body as text so it can bound the size before
+      // parsing it. A stub that only offers json() would let an unbounded parse back in unnoticed.
+      text: async () => JSON.stringify(body),
     };
   };
 }
@@ -181,7 +183,7 @@ test('an empty list without a stated radius is not evidence of an empty 5km', as
   // full one does, because the radius is the whole content of what we then say.
   const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
     endpoint: ENDPOINT,
-    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ gyms: [] }) }),
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => '{"gyms":[]}' }),
   });
   assert.equal(answer.status, 'error');
   assert.equal(answer.reason, 'radius mismatch');
@@ -245,4 +247,31 @@ test('the endpoint allowlist is read from the manifest, not restated', async () 
   // Still enforced before the allowlist is consulted.
   assert.match(endpointProblem('http://ftnss.fit/api/proximity', manifest), /https/);
   assert.match(endpointProblem('not a url', manifest), /not a URL/);
+});
+
+test('an oversized response is refused before it is parsed', async () => {
+  // response.json() reads to completion, so a gigabyte of JSON is parsed in full before any check
+  // gets a look — and by then the abort timer has done its job, because the bytes did arrive. The
+  // freeze happens in the parse, not the wait.
+  const huge = 'x'.repeat(300 * 1024);
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => `{"padding":"${huge}"}` }),
+  });
+  assert.equal(answer.status, 'error');
+  assert.equal(answer.reason, 'response too large');
+});
+
+test('an absurd number of gyms is a contract violation, not a list to trim', async () => {
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    // Sized to stay UNDER the byte limit, so this exercises the count check rather than being
+    // caught by the size check first — two separate bounds, and a test that cannot tell them apart
+    // is only testing whichever fires soonest.
+    fetchImpl: stub({ gyms: Array.from({ length: 500 }, () => GYM) }),
+  });
+  // Mapping and sorting five thousand entries before deciding not to trust them is doing the
+  // expensive work first.
+  assert.equal(answer.status, 'error');
+  assert.equal(answer.reason, 'too many gyms');
 });

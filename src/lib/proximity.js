@@ -27,6 +27,10 @@ const TIMEOUT_MS = 4000;
 const MAX_TEXT = 120;
 /** DECISIONS.md 12. The server also limits; a client that trusts a count it did not enforce is not limiting. */
 const MAX_GYMS = 6;
+/** Generous against the agreed shape, tiny against anything that could hurt. */
+const MAX_RESPONSE_BYTES = 256 * 1024;
+/** Room for a server that over-returns, far short of one that has stopped honouring the contract. */
+const MAX_RESPONSE_GYMS = 100;
 
 const text = (value) =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, MAX_TEXT) : null;
@@ -119,15 +123,31 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
 
   if (!response.ok) return failed(`http ${response.status}`);
 
-  let payload;
+  // BOUND THE BODY BEFORE PARSING IT. `response.json()` reads to completion, so an endpoint
+  // returning a gigabyte of JSON is parsed in full before any of the checks below get a look — and
+  // by then the abort timer has served its purpose, because the bytes did arrive. The freeze
+  // happens in the parse, not the wait.
+  let raw;
   try {
-    payload = await response.json();
+    raw = await response.text();
   } catch (err) {
-    return failed(err?.name === 'AbortError' ? 'timeout' : 'unparseable response');
+    return failed(err?.name === 'AbortError' ? 'timeout' : 'network');
   }
   clearTimeout(timer);
+  if (raw.length > MAX_RESPONSE_BYTES) return { status: 'error', reason: 'response too large' };
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    return { status: 'error', reason: 'unparseable response' };
+  }
 
   if (!Array.isArray(payload?.gyms)) return { status: 'error', reason: 'no gyms array' };
+  // A CONTRACT VIOLATION, NOT A LONG LIST TO TRIM. The endpoint returns at most six; anything
+  // wildly beyond that is a different service, a rollback or a fault, and mapping and sorting it
+  // first would do the expensive work before deciding not to trust it.
+  if (payload.gyms.length > MAX_RESPONSE_GYMS) return { status: 'error', reason: 'too many gyms' };
 
   // THE SERVER MUST STATE THE RADIUS IT SEARCHED, on every response including an empty one.
   //
