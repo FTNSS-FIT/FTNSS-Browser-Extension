@@ -149,6 +149,21 @@ has no gyms here", which is a false statement about our own supply at the worst 
 
 Full rules for changes: [`AGENTS.md`](AGENTS.md).
 
+## Versioning
+
+```bash
+npm run bump          # patch: 0.2.1 -> 0.2.2
+npm run bump minor    # 0.2.1 -> 0.3.0
+```
+
+Bump on every change that reaches the browser. Reloading an unpacked extension gives no confirmation
+that anything changed — during the first testing sessions a fix was pushed, reloaded, and the old
+behaviour persisted several times, with no way to tell a failed reload from a failed fix.
+
+The popup shows the running version, read from the manifest at runtime so it cannot drift from what
+the browser loaded. `manifest.json` is the source of truth and `package.json` follows it; a test
+keeps them in lockstep.
+
 ## Testing
 
 ```bash
