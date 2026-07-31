@@ -687,6 +687,29 @@ async function renderGyms() {
   container.appendChild(changeRow);
 }
 
+/**
+ * Hand back the old origin's permission, unless the new endpoint still needs it.
+ *
+ * Best effort and deliberately non-fatal: failing to return a permission is untidy, while refusing
+ * to save a working endpoint over it would be worse.
+ */
+async function releaseOrigin(previous, next) {
+  const originOf = (value) => {
+    try {
+      return new URL(value).origin;
+    } catch {
+      return null;
+    }
+  };
+  const old = originOf(previous);
+  if (old == null || old === originOf(next)) return;
+  try {
+    await chrome.permissions.remove({ origins: [`${old}/*`] });
+  } catch {
+    // Nothing to do about it, and nothing that should stop the save.
+  }
+}
+
 /** Set or change the endpoint, and ask for that origin's permission at the same time. */
 function endpointForm(current) {
   const wrap = el('div');
@@ -705,13 +728,7 @@ function endpointForm(current) {
     // discovering that emptying the field and saving is the way out.
     const previous = await loadEndpoint();
     await saveEndpoint('');
-    if (previous != null) {
-      try {
-        await chrome.permissions.remove({ origins: [`${new URL(previous).origin}/*`] });
-      } catch {
-        // Best effort — clearing the setting is the part that must succeed.
-      }
-    }
+    await releaseOrigin(previous, '');
     await renderGyms();
   });
   save.addEventListener('click', async () => {
@@ -758,13 +775,10 @@ function endpointForm(current) {
       note.className = 'warn';
       return;
     }
-    if (previous != null && previous !== value) {
-      try {
-        await chrome.permissions.remove({ origins: [`${new URL(previous).origin}/*`] });
-      } catch {
-        // Nothing to do about it, and nothing that should stop the save.
-      }
-    }
+    // COMPARE ORIGINS, NOT URLS. Comparing the full URL meant changing only the PATH — the most
+    // likely edit anyone makes — saved the new endpoint and then revoked the permission it needs,
+    // breaking the feature through the act of correcting it.
+    await releaseOrigin(previous, value);
     await renderGyms();
   });
   row.appendChild(save);
