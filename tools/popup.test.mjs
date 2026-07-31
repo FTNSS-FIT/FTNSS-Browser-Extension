@@ -48,7 +48,7 @@ function makeElement(tag = 'div') {
 function installDom() {
   created.length = 0;
   const byId = {};
-  for (const id of ['reading', 'controls', 'status', 'count', 'cohort', 'export', 'clear', 'version']) {
+  for (const id of ['reading', 'controls', 'status', 'count', 'cohort', 'export', 'clear', 'version', 'gyms']) {
     byId[id] = makeElement('div');
   }
   globalThis.document = {

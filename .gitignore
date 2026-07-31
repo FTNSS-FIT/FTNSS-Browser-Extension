@@ -17,3 +17,9 @@ measurements/
 .DS_Store
 .idea/
 .vscode/
+
+# Real gym data for the local stub. Supply numbers are internal; this repo is public.
+tools/proximity-fixture.json
+
+# Working state, never published — see the first rule in ~/.claude/CLAUDE.md
+HANDOFF.md

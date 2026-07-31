@@ -313,3 +313,50 @@ set of pages a content script may read, on an unpublished internal build.
 | Showing the user's own passes | Requires credentialed cross-origin auth — see §1 |
 | Classes and events in the panel | Blocked on backend work that is a separate project |
 | Safari | A separate build shipped through a different store; gated on Chrome traction |
+
+## 15. The panel lives in the popup, and the endpoint's origin is granted at runtime
+
+**Decided 2026-07-31.**
+
+**The panel is not injected into the page.** The content script's invariant is that it renders
+nothing and publishes nothing — it reads the DOM when asked and answers. Injecting a panel ends
+that: our markup would live inside a document we treat as adversarial, inheriting its CSS, visible
+to its scripts, and mutating a page nobody asked us to change.
+
+The cost is real — a click away instead of in front of them — and it is a product question for a
+later phase. It is also reversible, which the invariant is not. Giving up "we never touch the page"
+is a one-way door, and it should be walked through on purpose rather than because a panel needed
+somewhere to live.
+
+**The endpoint URL is stored, not compiled in**, and its origin is requested at runtime through
+`optional_host_permissions`. Two reasons:
+
+- **Which environment we can call is unresolved.** Consumer Web's dev origin is Vercel-auth-gated
+  and an extension cannot pass that gate. A compiled-in default would settle that question by
+  omission, and the environment nobody chose would be the one that gets called.
+- **A compiled-in host permission appears in the install prompt** before anyone has decided what it
+  should be, so it would have to be broad enough to cover the undecided answer. Asking for the one
+  origin a person just typed is both narrower and more truthful.
+
+`host_permissions` stays absent and the `permissions` array stays `["storage"]`. Both are asserted.
+
+## 16. Exactly one file may reach the network, and it is named in a test
+
+**Decided 2026-07-31.**
+
+Phase 1 forbade network access absolutely, enforced by a source scan. The proximity panel ends that,
+because asking what is near a point requires asking someone. The rule changes shape rather than
+relaxing: `src/lib/proximity.js` is allowlisted by name, and every other file in `src/` is held to
+the original absolute rule.
+
+**Worth recording that the old guard failed to fire.** `gymsNear` takes `fetchImpl = fetch` and
+calls `fetchImpl(...)`, and the pattern `\bfetch\s*\(` matches neither — the default has no
+parenthesis after it, and the call site is a different identifier. The first network request in the
+project's history landed without tripping the test written to force a conversation about exactly
+that, and nobody noticed because nothing prompted them to.
+
+A guard that can be walked past by renaming a variable is not a guard, and an accidental walk-past
+is worse than a deliberate one. The patterns now match bare references, the allowlist is asserted to
+name a file that exists, and a structural test checks the request body is one literal built from one
+rounded point with no spread — so the privacy claim is auditable by reading, not only by testing
+behaviour.

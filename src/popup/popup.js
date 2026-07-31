@@ -21,6 +21,9 @@ import {
   siteLabelFor,
   migrateAwayLocalCohort,
   migrateStoredRecords,
+  loadEndpoint,
+  saveEndpoint,
+  endpointProblem,
 } from '../lib/storage.js';
 import {
   TRANSMIT_KM,
@@ -29,6 +32,7 @@ import {
   parseCoordinate,
   isUsableCoordinate,
 } from '../lib/geo.js';
+import { gymsNear, describeDistance } from '../lib/proximity.js';
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -539,11 +543,138 @@ document.getElementById('clear').addEventListener('click', async () => {
  * none was stored, with no path that would ever clean it. Migration cannot depend on a later write
  * succeeding. (Codex review round 25, PR #1.)
  */
+/**
+ * The panel, such as it is.
+ *
+ * IN THE POPUP, NOT INJECTED INTO THE PAGE, and that is the significant decision here rather than
+ * anything about the layout. The content script's stated invariant is that it renders nothing and
+ * publishes nothing — it reads the DOM on demand and answers. Injecting a panel would end that:
+ * our markup would live inside a document we treat as adversarial, inheriting its CSS, visible to
+ * its scripts, and mutating a page the person did not ask us to change.
+ *
+ * The cost is that this is a click away instead of in front of them, which is a product question
+ * for a later phase and reversible. The invariant is not reversible once given up.
+ */
+async function renderGyms() {
+  const container = document.getElementById('gyms');
+  // Defensive for the same reason showVersion() is: this runs unawaited at startup, so anything it
+  // throws surfaces as an unhandled rejection with no obvious link to the recorder — and the
+  // recorder is the part that must not break. A missing node means a markup change, not a crash.
+  if (container == null) return;
+  const endpoint = await loadEndpoint();
+
+  const say = (message, className = 'muted') =>
+    container.replaceChildren(el('div', message, className));
+
+  if (endpoint == null) {
+    say('No endpoint set yet.');
+    container.appendChild(endpointForm(''));
+    return;
+  }
+
+  const reading = await readActivePage();
+  const result = reading?.result;
+  if (result?.status !== 'found') {
+    // Honest about WHICH of the two reasons applies. "No gyms" and "we could not read this page"
+    // look identical in a panel and mean opposite things — one is about our supply, the other
+    // about our extractor — and conflating them is how a coverage problem gets misdiagnosed as a
+    // reading problem for a month.
+    say(result?.status === 'found_address'
+      ? 'This page gave an address but no coordinates, and there is no geocoder yet.'
+      : 'Nothing to search from — no coordinate read on this page.');
+    return;
+  }
+
+  say('Searching…');
+  const answer = await gymsNear({ lat: result.lat, lon: result.lon }, { endpoint });
+
+  if (answer.status === 'unconfigured') return say('No endpoint set yet.');
+  if (answer.status === 'error') {
+    // One sentence for every failure. Which of them it was is our business, not the page's.
+    say('Could not reach FTNSS.', 'warn');
+    container.appendChild(el('div', answer.reason, 'muted'));
+    return;
+  }
+  if (answer.status === 'empty') {
+    // NOT AN ERROR, and worded so nobody reads it as one. This is the true answer nearly
+    // everywhere until supply grows, and a panel that cries failure over its most common correct
+    // response teaches people to ignore it.
+    say('No FTNSS gyms within 5km of here.');
+    return;
+  }
+
+  container.replaceChildren();
+  for (const gym of answer.gyms) {
+    const row = el('div', null, 'gym');
+    const left = el('div');
+    left.appendChild(el('b', gym.name));
+    if (gym.city) left.appendChild(el('div', gym.city, 'muted'));
+    row.appendChild(left);
+    row.appendChild(el('span', describeDistance(gym.distanceMetres), 'dist'));
+    container.appendChild(row);
+  }
+  container.appendChild(
+    el('div', `${answer.gyms.length} nearest, within 5km of a 250m cell`, 'muted'),
+  );
+}
+
+/** Set or change the endpoint, and ask for that origin's permission at the same time. */
+function endpointForm(current) {
+  const wrap = el('div');
+  const input = document.createElement('input');
+  input.type = 'url';
+  input.placeholder = 'https://…/api/proximity';
+  input.value = current;
+  wrap.appendChild(input);
+
+  const row = el('div', null, 'row');
+  const save = el('button', 'Save endpoint', 'primary');
+  const note = el('span', null, 'muted');
+  save.addEventListener('click', async () => {
+    const value = input.value.trim();
+    const problem = value.length === 0 ? null : endpointProblem(value);
+    if (problem != null) {
+      note.textContent = problem;
+      note.className = 'warn';
+      return;
+    }
+    // ASK FOR THIS ORIGIN ONLY, at the moment a person names it.
+    //
+    // The alternative was a compiled-in host permission, which means the install prompt lists a
+    // host before anyone has decided which environment we call — and a broad one to cover the
+    // choice. Requesting the origin the person just typed is both narrower and more truthful.
+    if (value.length > 0) {
+      const origin = `${new URL(value).origin}/*`;
+      const granted = await chrome.permissions.request({ origins: [origin] });
+      if (!granted) {
+        note.textContent = 'Permission declined, so it was not saved.';
+        note.className = 'warn';
+        return;
+      }
+    }
+    try {
+      await saveEndpoint(value);
+    } catch (err) {
+      note.textContent = err?.message ?? 'Could not save that.';
+      note.className = 'warn';
+      return;
+    }
+    await renderGyms();
+  });
+  row.appendChild(save);
+  row.appendChild(note);
+  wrap.appendChild(row);
+  return wrap;
+}
+
 async function start() {
   showVersion();
   await migrateAwayLocalCohort();
   await migrateStoredRecords();
   await render();
+  // AFTER the recorder renders, and not awaited alongside it. This one makes a network call, and
+  // the measurement UI must never wait on the network to appear.
+  void renderGyms();
 }
 
 void start();

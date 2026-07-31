@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FTNSS phase 1 measurement harness (internal)",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Internal measurement tool. Records how often a listing page's location can be read. Not for publication.",
   "permissions": [
     "storage"
@@ -191,5 +191,10 @@
   "action": {
     "default_popup": "popup/popup.html",
     "default_title": "FTNSS measurement harness"
-  }
+  },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ]
 }

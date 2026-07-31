@@ -560,3 +560,57 @@ export function exportableRecords(records) {
     return out;
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// The proximity endpoint address.
+//
+// STORED, NOT COMPILED IN, and that is a decision rather than a convenience. Consumer Web's dev
+// origin is Vercel-auth-gated and an extension cannot pass that gate, so which environment this
+// build can reach is still unresolved (Phase 0 brief, question 1). Shipping a default would mean
+// picking prod by omission — the environment nobody chose is the one that gets called.
+//
+// It also means the panel is testable against a local stub before the real endpoint exists, which
+// is the difference between building now and waiting.
+// ---------------------------------------------------------------------------------------------
+
+const ENDPOINT_KEY = 'ftnss.proximityEndpoint';
+
+/** @returns {Promise<string|null>} */
+export async function loadEndpoint() {
+  const bag = await chrome.storage.local.get(ENDPOINT_KEY);
+  const value = bag?.[ENDPOINT_KEY];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * HTTPS ONLY, except on localhost.
+ *
+ * A coarse point is not a secret worth a wiretap, but the response drives what a person is told
+ * about where to work out, and plaintext means any network between here and there can rewrite it.
+ * Localhost is exempt because a stub server is the whole point of this being configurable, and
+ * there is no network to sit in the middle of.
+ */
+export function endpointProblem(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'That is not a URL.';
+  }
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+    return 'Must be https, or http on localhost.';
+  }
+  return null;
+}
+
+export async function saveEndpoint(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (trimmed.length === 0) {
+    await chrome.storage.local.remove(ENDPOINT_KEY);
+    return;
+  }
+  const problem = endpointProblem(trimmed);
+  if (problem != null) throw new Error(problem);
+  await chrome.storage.local.set({ [ENDPOINT_KEY]: trimmed });
+}
