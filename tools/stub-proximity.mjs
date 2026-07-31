@@ -73,13 +73,42 @@ function metresBetween(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
-const server = createServer((req, res) => {
-  // Mirrors what the brief asks for: POST and OPTIONS only, no credentials header.
-  const cors = {
-    'access-control-allow-origin': '*',
+/**
+ * EXTENSION ORIGINS ONLY. The wildcard that is defensible for the real endpoint is not defensible
+ * here, and the asymmetry is the point.
+ *
+ * The production endpoint serves published gym data to anyone; `*` costs it nothing. This server
+ * runs on Jordan's laptop, loaded from a gitignored fixture of internal supply data, while he
+ * browses hotel sites — and with `*` any page he visits could fetch localhost:8787 and enumerate
+ * the lot. A development convenience reachable by every site he happens to open is a worse exposure
+ * than the thing it stands in for.
+ *
+ * A chrome-extension:// origin cannot be forged by a web page: the browser sets it, and a page's
+ * own origin is always its site. The extension ID is not known until publish, so any extension
+ * origin is accepted — that is a laptop-local development server, not an authorisation boundary.
+ */
+function corsFor(origin) {
+  if (typeof origin !== 'string' || !origin.startsWith('chrome-extension://')) return null;
+  return {
+    'access-control-allow-origin': origin,
+    // Not '*' — a reflected origin must be paired with Vary so nothing caches one caller's answer
+    // for another.
+    vary: 'Origin',
     'access-control-allow-methods': 'POST, OPTIONS',
     'access-control-allow-headers': 'content-type',
   };
+}
+
+const server = createServer((req, res) => {
+  const cors = corsFor(req.headers.origin);
+  if (cors == null) {
+    // No CORS headers at all, so a browser refuses the response regardless of what is in it. Say
+    // so plainly in the log, because the alternative is someone debugging a silent failure.
+    console.log(`refused origin: ${req.headers.origin ?? '(none)'}`);
+    res.writeHead(403, { 'content-type': 'application/json' });
+    res.end('{"error":"extension origins only"}');
+    return;
+  }
   if (req.method === 'OPTIONS') {
     res.writeHead(204, cors);
     res.end();

@@ -114,18 +114,28 @@ test('an HTTP failure never reaches the parser', async () => {
   assert.equal(answer.status, 'error');
 });
 
-test('unusable and out-of-range entries are dropped, and the list is capped', async () => {
+test('a partly-unreadable answer is refused, not quietly trimmed', async () => {
+  // This asserted that bad entries were FILTERED and the good ones shown, until review pointed out
+  // the discarded entry could be the CLOSEST — at which point the panel labels a farther gym
+  // "nearest" with complete confidence. A ranked list cannot survive an unknown number of missing
+  // members. Partial data is fine when counting; it is not fine when ranking.
+  for (const bad of [
+    { ...GYM, name: '' },
+    { ...GYM, distanceMetres: SEARCH_RADIUS_METRES + 1 },
+    { ...GYM, distanceMetres: 'near' },
+  ]) {
+    const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+      endpoint: ENDPOINT,
+      fetchImpl: stub({ gyms: [GYM, bad, GYM] }),
+    });
+    assert.equal(answer.status, 'error', `${JSON.stringify(bad)} must poison the response`);
+  }
+});
+
+test('a well-formed answer is still capped at six', async () => {
   const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
     endpoint: ENDPOINT,
-    fetchImpl: stub({
-      gyms: [
-        GYM,
-        { ...GYM, name: '' },                                     // no name
-        { ...GYM, distanceMetres: SEARCH_RADIUS_METRES + 1 },      // outside the radius we asked for
-        { ...GYM, distanceMetres: 'near' },                        // not a number
-        ...Array.from({ length: 9 }, () => GYM),
-      ],
-    }),
+    fetchImpl: stub({ gyms: Array.from({ length: 12 }, (unused, i) => ({ ...GYM, distanceMetres: 100 + i })) }),
   });
   // A client that trusts a count it did not enforce is not enforcing one.
   assert.equal(answer.gyms.length, 6);

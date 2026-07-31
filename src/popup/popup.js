@@ -563,12 +563,23 @@ async function renderGyms() {
   if (container == null) return;
   const endpoint = await loadEndpoint();
 
-  const say = (message, className = 'muted') =>
+  // THE FORM IS ALWAYS REACHABLE, and it used to appear only when no endpoint was set — so a typo,
+  // a revoked permission or a change of environment left the feature permanently broken with no way
+  // back through the UI. A setting you can write once and never correct is a trap, and the state it
+  // traps you in is the one where something is already wrong.
+  const say = (message, className = 'muted') => {
     container.replaceChildren(el('div', message, className));
+    const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
+    const row = el('div', null, 'row');
+    change.addEventListener('click', () => {
+      row.replaceChildren(endpointForm(endpoint ?? ''));
+    });
+    row.appendChild(change);
+    container.appendChild(row);
+  };
 
   if (endpoint == null) {
     say('No endpoint set yet.');
-    container.appendChild(endpointForm(''));
     return;
   }
 
@@ -599,8 +610,17 @@ async function renderGyms() {
     // NOT AN ERROR, and worded so nobody reads it as one. This is the true answer nearly
     // everywhere until supply grows, and a panel that cries failure over its most common correct
     // response teaches people to ignore it.
-    // "of the area searched", not "of here". The query point is a 250m cell, not the hotel.
-    say('No FTNSS gyms within 5km of the area searched.');
+    //
+    // BUT AN ABSENCE IS A STRONGER CLAIM THAN A PRESENCE, so it needs the same caveat the results
+    // list carries — and it was returning before the precision check that adds it. A tier-2 read is
+    // a map pin, not a published point, and "no gyms within 5km" measured from a pin that may be
+    // somewhere else is a false negative delivered with total confidence. The one thing worse than
+    // failing to find a gym is telling someone there isn't one.
+    //
+    // "of the area searched", not "of here": the query point is a 250m cell, not the hotel.
+    say(result.precision === 'approximate'
+      ? 'No FTNSS gyms within 5km of the area searched — though this page gave only an approximate location, so that is not conclusive.'
+      : 'No FTNSS gyms within 5km of the area searched.');
     return;
   }
 
@@ -619,6 +639,13 @@ async function renderGyms() {
   // for that reason — stacking an approximate reading under a 250m grid and then printing a
   // confident distance is precisely the compounding this repo refuses to do elsewhere.
   const approximate = result.precision === 'approximate';
+  const change = el('button', 'Change endpoint');
+  change.addEventListener('click', () => {
+    container.replaceChildren(endpointForm(endpoint));
+  });
+  const changeRow = el('div', null, 'row');
+  changeRow.appendChild(change);
+
   container.appendChild(
     el(
       'div',
@@ -628,6 +655,7 @@ async function renderGyms() {
       approximate ? 'warn' : 'muted',
     ),
   );
+  container.appendChild(changeRow);
 }
 
 /** Set or change the endpoint, and ask for that origin's permission at the same time. */
@@ -641,7 +669,14 @@ function endpointForm(current) {
 
   const row = el('div', null, 'row');
   const save = el('button', 'Save endpoint', 'primary');
+  const clear = el('button', 'Clear');
   const note = el('span', null, 'muted');
+  clear.addEventListener('click', async () => {
+    // Saving an empty value removes it. Worth an explicit button rather than relying on someone
+    // discovering that emptying the field and saving is the way out.
+    await saveEndpoint('');
+    await renderGyms();
+  });
   save.addEventListener('click', async () => {
     const value = input.value.trim();
     const problem = value.length === 0 ? null : endpointProblem(value);
@@ -684,6 +719,7 @@ function endpointForm(current) {
     await renderGyms();
   });
   row.appendChild(save);
+  row.appendChild(clear);
   row.appendChild(note);
   wrap.appendChild(row);
   return wrap;

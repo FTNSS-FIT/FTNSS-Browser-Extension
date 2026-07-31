@@ -142,24 +142,27 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
   // FILTER, THEN CAP — in that order. Capping first let unusable entries consume the six slots, so
   // a response carrying three malformed gyms and six good ones rendered three. The cap is meant to
   // bound what we show, not to be spent on things we were never going to show.
+  const parsed = payload.gyms.map(gymFrom);
+
+  // ONE BAD ENTRY POISONS THE WHOLE ANSWER, and dropping it quietly was worse than it looked.
+  //
+  // Filtering kept the readable gyms and discarded the rest — but the discarded one could be the
+  // CLOSEST, and the panel then labels a farther gym "nearest" with complete confidence. The list
+  // is an ordered claim, and an ordered claim cannot survive an unknown number of missing members.
+  // Partial data is fine when you are counting; it is not fine when you are ranking.
+  //
+  // This also subsumes the all-invalid case: "we could not read the answer" is never "there is
+  // nothing there". An empty panel reads as "FTNSS has no gyms here", which is a claim, and it must
+  // not be made from a failure to parse.
+  if (parsed.some((gym) => gym == null)) {
+    return { status: 'error', reason: 'unreadable gym in the response' };
+  }
+
   // SORT, THEN CAP. The panel says "nearest", and that word was being underwritten entirely by the
   // server's ordering — so a response that listed gyms by name, or by id, or by nothing in
   // particular would have had its seventh entry discarded regardless of it being the closest. We
   // assert what we display rather than trusting an ordering we did not compute.
-  const usable = payload.gyms.map(gymFrom).filter(Boolean)
-    .sort((a, b) => a.distanceMetres - b.distanceMetres);
-  const gyms = usable.slice(0, MAX_GYMS);
-
-  // "WE COULD NOT READ THE ANSWER" IS NOT "THERE IS NOTHING THERE".
-  //
-  // A non-empty array whose every entry failed validation used to return `empty`, so a broken or
-  // mismatched server produced the panel's most reassuring sentence — "no FTNSS gyms within 5km" —
-  // from evidence that said nothing of the kind. That is the same failure the extraction tiers are
-  // built to avoid: an empty panel reads as "FTNSS has no gyms here", which is a claim, and it must
-  // never be made from a failure to parse.
-  if (payload.gyms.length > 0 && usable.length === 0) {
-    return { status: 'error', reason: 'no usable gym in a non-empty response' };
-  }
+  const gyms = parsed.sort((a, b) => a.distanceMetres - b.distanceMetres).slice(0, MAX_GYMS);
 
   // A genuinely empty list IS a success, and saying so here is what stops the panel crying failure
   // over the most common correct answer we have. Early in a marketplace's life, "no gyms near here"
