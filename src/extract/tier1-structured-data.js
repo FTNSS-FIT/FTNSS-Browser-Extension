@@ -72,6 +72,23 @@ const MAX_JSON_CHARS = 512 * 1024;
  * answer is the same refusal — so the work of telling them apart is work we never need to do.
  */
 const MAX_CANDIDATES = 24;
+/**
+ * How close two published points must be to mean "the same building", as opposed to "not obviously
+ * a contradiction".
+ *
+ * Much tighter than CONFLICT_METRES, and the difference is the point. That one answers "do these
+ * two disagree", where a few hundred metres is noise. This one answers "are these the same hotel",
+ * where a few hundred metres is a different hotel — reusing the loose threshold here merged two
+ * listings 200m apart into one candidate and handed back whichever came first.
+ *
+ * Set at a large building's footprint. A page repeating its own block usually publishes the
+ * identical coordinate, so most of this budget is spent on the case where the two copies were
+ * geocoded from different sources and land a few tens of metres apart — which PR #1 decided
+ * deliberately was still one listing. A JUDGEMENT, not a measurement: nobody has counted how far
+ * apart a real page's two copies of one hotel actually land. It sits between "float noise", which
+ * would be too tight to be useful, and CONFLICT_METRES, which is provably too loose.
+ */
+const IDENTITY_METRES = 50;
 
 /** `@type` may be a string or an array. Normalise, and ignore anything that is neither. */
 function typesOf(node) {
@@ -298,7 +315,7 @@ export function extractFromStructuredData(doc) {
         ? { lat: nodeCoordinates.lat, lon: nodeCoordinates.lon }
         : null;
       const samePoint = (c) =>
-        c.point != null && nodePoint != null && distanceMetres(c.point, nodePoint) <= CONFLICT_METRES;
+        c.point != null && nodePoint != null && distanceMetres(c.point, nodePoint) <= IDENTITY_METRES;
 
       // FLAG, DO NOT RETURN. Returning here abandoned the coordinate search the moment two
       // addresses disagreed — so a page publishing the SAME point twice with "1 Main Street" and
@@ -322,10 +339,18 @@ export function extractFromStructuredData(doc) {
       }
 
       const candidate = candidateList.find((c) => {
+        // An @id is the page telling us outright that these are one entity.
         if (identity != null && c.ids.has(identity)) return true;
+        // A SHARED POINT IS THE STRONGEST EVIDENCE THERE IS, and it was being gated behind address
+        // compatibility — so two nodes at the same coordinate whose streets read "1 Main Street"
+        // and "1 Main St" failed to cluster, became two candidates, and the page was refused for
+        // publishing one hotel twice. Same building, different spelling. The spelling disagreement
+        // is still recorded, and still disqualifies the ADDRESS path; it has no business
+        // disqualifying the point.
+        if (samePoint(c)) return true;
         if (!addressesCompatible(c.values, nodeValues)) return false;
-        if (c.point != null && nodePoint != null && !samePoint(c)) return false;
-        return addressesOverlap(c.values, nodeValues) || samePoint(c);
+        if (c.point != null && nodePoint != null) return false; // different points, checked above
+        return addressesOverlap(c.values, nodeValues);
       });
 
       if (candidate == null) {
@@ -384,7 +409,6 @@ export function extractFromStructuredData(doc) {
   const seenCandidates = candidateList;
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
-  const candidatesWithCoordinate = seenCandidates.filter((c) => c.coordinate).length;
   if (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates)) {
     addressConflict = true;
   }
@@ -417,7 +441,14 @@ export function extractFromStructuredData(doc) {
   // The cost is the risk #11 was written about: Airbnb reads 100% from this tier today, and if its
   // pages carry a lodging node without geo, those reads become ambiguous. The refusal carries its
   // own reason string so that shows up in the very next export rather than being inferred.
-  if (best != null && (candidateOverflow || (candidates > 1 && candidatesWithCoordinate < candidates))) {
+  // MORE THAN ONE CANDIDATE IS MORE THAN ONE HOTEL, however close their points happen to be.
+  //
+  // This used to allow a page through when EVERY candidate published a coordinate and they agreed
+  // within CONFLICT_METRES — but agreement is not attribution. Two genuinely different hotels 200m
+  // apart pass that test, and `best` is then whichever appeared first in document order, which has
+  // never been a reason to think it is the one on screen. The error is bounded at a few hundred
+  // metres rather than unbounded, which is exactly what made it easy to miss. (Codex, PR #10.)
+  if (best != null && (candidateOverflow || candidates > 1)) {
     return withComponents(ambiguous('coordinates could not be attributed among several listings'));
   }
 

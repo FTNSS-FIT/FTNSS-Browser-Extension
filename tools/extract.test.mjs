@@ -449,6 +449,9 @@ test('tier 1 fails closed when structured data describes two different places', 
 });
 
 test('tier 1 still answers when several lodging objects agree', () => {
+  // ~40m apart: PR #1 decided deliberately that this is one listing geocoded twice, and round 16 of
+  // #10 kept that while removing the far looser rule it had grown into — agreement within
+  // CONFLICT_METRES, which two genuinely different hotels 200m apart also satisfy.
   const doc = ldJsonDocument(
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7118, longitude: -9.129 } }),
@@ -1394,11 +1397,25 @@ test('a related hotel with coordinates is not read as the listing without them',
   assert.equal(r.reason, 'coordinates could not be attributed among several listings');
 });
 
-test('several listings that ALL publish a point are attributable if they agree', () => {
-  // The refusal is about attribution, not about counting nodes. Where every candidate carries a
-  // coordinate the existing agreement check already governs, and it still does.
+test('two nodes at the same point are one candidate', () => {
+  // Same building, published twice. Note what this test asserted until round 16: that several
+  // DISTINCT candidates were attributable as long as their points agreed within CONFLICT_METRES.
+  // Agreement is not attribution — two different hotels 200m apart pass that, and the answer was
+  // then whichever came first in document order. The error was bounded at a few hundred metres,
+  // which is exactly what made it easy to miss.
   const near = (lat) => JSON.stringify({ '@type': 'Hotel', geo: { latitude: lat, longitude: -9.1287 } });
   assert.equal(extractFromStructuredData(ldJsonDocument(near(38.7115), near(38.7115))).status, 'found');
+});
+
+test('two hotels a few hundred metres apart are two hotels', () => {
+  const at = (lat, street) => JSON.stringify({
+    '@type': 'Hotel',
+    geo: { latitude: lat, longitude: -9.1287 },
+    address: { streetAddress: street, addressLocality: 'Lisbon', addressCountry: 'PT' },
+  });
+  // Inside CONFLICT_METRES, so nothing "disagrees" — and still two listings, with no way to say
+  // which one the page is about.
+  assert.equal(extractFromStructuredData(ldJsonDocument(at(38.7115, '1 Oak St'), at(38.7133, '9 Elm Ave'))).status, 'ambiguous');
 });
 
 test('a road is not a building', () => {
@@ -1752,4 +1769,24 @@ test('the witness must belong to the same rendered address', async () => {
   assert.equal(runExtraction(withText(LISTING, mixed)).result.status, 'ambiguous');
   // The same tokens, this time in one address.
   assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon, 1000-001')).result.status, 'found_address');
+});
+
+test('a guessed visible address cannot veto a published one', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Tier 3's last selectors are guesses: [class*="address" i] matches a newsletter block, a footer,
+  // a delivery-address form. A guess was being allowed to contradict a structured address the site
+  // published deliberately. A claim can contradict a claim; a guess cannot.
+  const guessed = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[class*="address" i]': [textNode('99 Elm Avenue, Porto, 4000-999')],
+  });
+  const { result } = runExtraction(guessed);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+
+  // An explicit one still can — that is the whole point of the cross-tier check.
+  assert.equal(
+    runExtraction(withText(LISTING, '99 Elm Avenue, Porto, 4000-999')).result.status,
+    'ambiguous',
+  );
 });

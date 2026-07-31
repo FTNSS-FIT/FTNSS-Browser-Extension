@@ -21,6 +21,16 @@ const MAX_READ_CHARS = 2000;
  * Ordered by how much the page is telling us it is an address. Microdata and the `address` element
  * are explicit claims; the class-name selectors are guesses and are last.
  */
+/**
+ * Selectors where the PAGE is asserting "this is an address", as opposed to us guessing from a
+ * class name. Only these may contradict tier 1 — see index.js.
+ */
+export const EXPLICIT_ADDRESS_SOURCES = new Set([
+  'text [itemprop="address"]',
+  'text [itemtype*="PostalAddress"]',
+  'text address',
+]);
+
 const SELECTORS = [
   '[itemprop="address"]',
   '[itemtype*="PostalAddress"]',

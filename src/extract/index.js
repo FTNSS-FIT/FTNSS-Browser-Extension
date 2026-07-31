@@ -12,6 +12,7 @@ import { extractFromAddressText } from './tier3-address-text.js';
 import { isFound, isFoundAddress, isAmbiguous, isAddressAmbiguous, ambiguous } from './result.js';
 import { distanceMetres } from '../lib/geo.js';
 import { textCorroboratesAddress } from './address-components.js';
+import { EXPLICIT_ADDRESS_SOURCES } from './tier3-address-text.js';
 
 /** Two coordinate-bearing tiers further apart than this are not describing the same listing. */
 const CROSS_TIER_CONFLICT_METRES = 250;
@@ -85,7 +86,15 @@ export function runExtraction(doc) {
       ? ambiguous('structured data described two different places')
       : t2.value;
   } else if (isFoundAddress(t1.value) && isFoundAddress(t3.value) &&
+             EXPLICIT_ADDRESS_SOURCES.has(t3.value.source) &&
              !textCorroboratesAddress(t1.value.addressValues, t3.value.address)) {
+    // ONLY AN EXPLICIT VISIBLE ADDRESS MAY CONTRADICT TIER 1.
+    //
+    // Tier 3's last two selectors are guesses — `[class*="address" i]` matches an email-signup
+    // block, a footer, a "delivery address" form — and a guess was being allowed to veto a
+    // structured address the site published deliberately. Tier 3 is ordered by how strongly the
+    // page ASSERTS the text is an address, and that ordering should govern here too: a claim can
+    // contradict a claim, a guess cannot. (Codex, PR #10.)
     // THE TIERS DISAGREE ABOUT WHICH ADDRESS. Tier 1 used to win here without ever being compared,
     // so a page whose JSON-LD describes a related hotel while the visible text describes the
     // listing recorded a confident successful read of the wrong property. Same check the coordinate
