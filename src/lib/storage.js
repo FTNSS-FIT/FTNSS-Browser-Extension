@@ -484,6 +484,7 @@ const KNOWN_REASONS = new Set([
   'too many candidate elements to examine',
   'all three tiers failed',
   'structured data and map link disagreed about the location',
+  'structured data and rendered address disagreed',
   'page did not settle after navigation',
 ]);
 

@@ -1045,6 +1045,7 @@ test('a nested Country object still counts as published', () => {
       '@type': 'Hotel',
       address: {
         '@type': 'PostalAddress',
+        streetAddress: '1 Oak St',
         postalCode: 'EX1 2AB',
         addressLocality: 'Exampleton',
         addressCountry: { '@type': 'Country', name: 'United Kingdom' },
@@ -1214,17 +1215,67 @@ test('a long address is compared in full, not by its first 120 characters', () =
   assert.equal(extractFromStructuredData(ldJsonDocument(long('north'), long('south'))).status, 'ambiguous');
 });
 
-test('one component plus a country is an area, not a listing', () => {
+test('an address that does not name the building is an area, not a listing', () => {
   const only = (address) =>
     extractFromStructuredData(ldJsonDocument(JSON.stringify({ '@type': 'Hotel', address }))).status;
 
-  // A US ZIP covers several square kilometres — wider than the panel's whole search radius. This
-  // would have read as a success in the UK and been useless across the entire US market.
+  // Each of these geocodes to a point that is confidently somewhere the hotel is not, and each was
+  // accepted at some stage of this PR. A US ZIP covers several square kilometres — wider than the
+  // panel's whole search radius — so postcode-only would have looked fine in the UK and been
+  // useless across the entire US market.
   assert.equal(only({ postalCode: '90210', addressCountry: 'US' }), 'not_found');
   assert.equal(only({ addressLocality: 'Lisbon', addressCountry: 'PT' }), 'not_found');
   assert.equal(only({ streetAddress: '1 Oak St', addressCountry: 'US' }), 'not_found');
+  // Still an area, just a smaller one — no building is named.
+  assert.equal(only({ addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' }), 'not_found');
 
-  // Any two of the three pins a building well enough to be worth geocoding.
+  // A street names the building; a locality or postcode tells this "1 Oak St" from the others.
   assert.equal(only({ streetAddress: '1 Oak St', postalCode: '90210', addressCountry: 'US' }), 'found_address');
-  assert.equal(only({ addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' }), 'found_address');
+  assert.equal(only({ streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' }), 'found_address');
+});
+
+// --- Codex review round 5, PR #10 ---------------------------------------------------------------
+
+const withText = (json, text) =>
+  fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(json)],
+    '[itemprop="address"]': [textNode(text)],
+  });
+
+const LISTING = JSON.stringify({
+  '@type': 'Hotel',
+  address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+});
+
+test('structured data describing a DIFFERENT address than the page prints is refused', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // The JSON-LD is a related hotel; the visible text is the listing. Tier 1 used to win this
+  // without ever being compared, recording a confident successful read of the wrong property.
+  const doc = withText(LISTING, '99 Elm Avenue, Porto, 4000-999');
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('a formatting difference between the tiers is NOT a conflict', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // The check is deliberately weak. Booking is 48 of 63 measured pages and renders addresses in its
+  // own format; demanding the tiers match would turn "1 Oak St" vs "1 Oak Street" into a page
+  // contradicting itself. Refusing a correct read is a real cost, not a free safety win.
+  const doc = withText(LISTING, '1 Oak Street, Lisbon 1000-001, Portugal');
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+});
+
+test('the internal address values never leave the extractor', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Tier 1 attaches normalised values so the cross-tier check can run. They are a street address —
+  // the one thing DECISIONS 13 exists to keep inside the browser. Storage would drop them, but an
+  // allowlist that is the ONLY thing standing between an address and an export file is one edit
+  // away from not being.
+  const { result, tiers } = runExtraction(ldJsonDocument(LISTING));
+  assert.equal(result.status, 'found_address');
+  for (const value of [result, tiers.tier1, tiers.tier2, tiers.tier3]) {
+    assert.equal('addressValues' in value, false);
+  }
+  assert.equal(JSON.stringify({ result, tiers }).includes('Oak'), false);
 });

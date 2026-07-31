@@ -219,6 +219,39 @@ export function addressComponentsOf(node) {
 }
 
 /**
+ * Does the address PRINTED ON THE PAGE corroborate the one in the structured data?
+ *
+ * Both tiers can now answer with an address, and tier 1 won without ever being checked against
+ * tier 3 — so a page whose JSON-LD describes a related hotel while the visible text describes the
+ * listing recorded a confident successful read of the wrong property. The coordinate tiers have
+ * been cross-checked since round 23; this is the same check for addresses. (Codex, PR #10.)
+ *
+ * DELIBERATELY WEAK, and this is the whole design decision. The two sides are not comparable
+ * artifacts: tier 1 has separated components, tier 3 has one rendered blob that may abbreviate,
+ * reorder, translate or omit any of them. Demanding they match would make the ordinary case — a
+ * site rendering "1 Oak Street" from `streetAddress: "1 Oak St"` — look like a page contradicting
+ * itself, and Booking is 48 of our 63 measured pages. Refusing a correct read is a real cost, not
+ * a free safety win.
+ *
+ * So: they conflict only when the rendered text corroborates NOTHING the structured data stated.
+ * A related-hotel block is usually a different street in a different postcode, which trips this; a
+ * formatting difference on one field does not. It catches the impostor without inventing conflicts,
+ * and it is honest about being a floor rather than a proof of agreement.
+ */
+export function textCorroboratesAddress(values, text) {
+  if (values == null || typeof text !== 'string') return true;
+  const haystack = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (haystack.length === 0) return true;
+  // The country is excluded on purpose: rendered addresses omit it constantly, and a country shared
+  // by two hotels in the same market corroborates nothing anyway.
+  const stated = [values.street, values.locality, values.postalCode, values.region].filter(
+    (v) => typeof v === 'string' && v.length > 0,
+  );
+  if (stated.length === 0) return true;
+  return stated.some((value) => haystack.includes(value));
+}
+
+/**
  * Does this describe a PLACE, as opposed to a fragment of one?
  *
  * The threshold for reporting `found_address` at all, and deliberately looser than
@@ -234,23 +267,28 @@ export function addressComponentsOf(node) {
 export function describesAPlace(components) {
   if (components == null) return false;
   if (!components.countryPublished) return false;
-  // TWO COMPONENTS PLUS A COUNTRY. Any single one of them describes an area, not a listing:
+  // A BUILDING IDENTIFIER, PLUS SOMETHING TO DISAMBIGUATE IT.
   //
-  //   locality alone   "Lisbon, Portugal"  — a city; geocodes to the city centre
-  //   postcode alone   "90210, US"         — several square kilometres, wider than the whole
-  //                                          search radius the panel talks about
-  //   street alone     "1 Oak St"          — there are thousands
+  // Three bars were tried in this PR and each was too low by one component:
   //
-  // Both of the first two were accepted in turn during this PR, and both would have been counted in
-  // the report as an address we could locate. A wrong answer that looks like a success is the
-  // failure mode this project cares about most, and postcode-only is the one that would have looked
-  // fine in the UK and been useless across the entire US market.
+  //   locality + country            "Lisbon, Portugal"          — a city
+  //   postcode + country            "90210, US"                 — several square kilometres
+  //   locality + postcode + country "Beverly Hills, 90210, US"  — still an area, just a smaller one
   //
-  // Any two of the three pins a building well enough to be worth geocoding. Note this is the bar for
-  // calling the read a SUCCESS; whether the street may leave the browser to geocode it is a
-  // different question, and a stricter one. (docs/DECISIONS.md 13.)
-  const stated = [components.street, components.locality, components.postalCode].filter(Boolean);
-  return stated.length >= 2;
+  // Every one of them geocodes to a point that is confidently somewhere the hotel is not, and the
+  // report would have counted all three as an address we could locate. The pattern is that none of
+  // them names the BUILDING. A street does, and a locality or postcode is then what tells one
+  // "1 Oak St" from the thousands of others.
+  //
+  // This costs nothing on the market we have measured: street is present on 100% of Booking,
+  // Expedia and Hotels.com pages carrying structured data.
+  //
+  // NOTE THE DIVISION OF LABOUR with coarselyGeocodable below. This asks whether the PAGE
+  // identified the listing — the bar for calling a read a success. That one asks which components
+  // may leave the browser, and deliberately excludes the street we are requiring here. Knowing the
+  // street and choosing not to send it is the entire coarse-geocoding design. (DECISIONS 13.)
+  if (!components.street) return false;
+  return Boolean(components.locality || components.postalCode);
 }
 
 /**

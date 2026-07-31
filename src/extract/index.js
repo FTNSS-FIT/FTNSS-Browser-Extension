@@ -11,6 +11,7 @@ import { extractFromMapLinks } from './tier2-map-links.js';
 import { extractFromAddressText } from './tier3-address-text.js';
 import { isFound, isFoundAddress, isAmbiguous, isAddressAmbiguous, ambiguous } from './result.js';
 import { distanceMetres } from '../lib/geo.js';
+import { textCorroboratesAddress } from './address-components.js';
 
 /** Two coordinate-bearing tiers further apart than this are not describing the same listing. */
 const CROSS_TIER_CONFLICT_METRES = 250;
@@ -73,6 +74,14 @@ export function runExtraction(doc) {
     result = t1.value;
   } else if (isFound(t2.value)) {
     result = t2.value;
+  } else if (isFoundAddress(t1.value) && isFoundAddress(t3.value) &&
+             !textCorroboratesAddress(t1.value.addressValues, t3.value.address)) {
+    // THE TIERS DISAGREE ABOUT WHICH ADDRESS. Tier 1 used to win here without ever being compared,
+    // so a page whose JSON-LD describes a related hotel while the visible text describes the
+    // listing recorded a confident successful read of the wrong property. Same check the coordinate
+    // tiers have had since round 23, and the same conclusion: a page contradicting itself across
+    // sources is a page we cannot read. (Codex, PR #10.)
+    result = ambiguous('structured data and rendered address disagreed');
   } else if (isFoundAddress(t1.value)) {
     // A COORDINATE FROM ANY TIER STILL BEATS AN ADDRESS — that ordering is above this branch and is
     // the point of putting it here rather than with the tier-1 coordinate case. Between two
@@ -91,12 +100,21 @@ export function runExtraction(doc) {
     result = { status: 'not_found', reason: 'all three tiers failed' };
   }
 
+  // STRIP THE INTERNAL VALUES BEFORE ANYTHING LEAVES THIS MODULE.
+  //
+  // Tier 1 attaches the normalised address values so the corroboration above can run. They are a
+  // street address — the listing's identity, and the one thing docs/DECISIONS.md 13 exists to keep
+  // inside the browser. Storage projects through an allowlist and would have dropped them, but an
+  // allowlist that is the only thing standing between an address and an export file is one edit
+  // away from not being. Removed here, at the boundary that put them there.
+  const shed = ({ addressValues, ...rest }) => rest;
+
   return {
     // Which address components the page published, presence only — the question the geocoding
     // decision turns on, answerable without transmitting an address. (docs/DECISIONS.md 13.)
     addressComponents: t1.value.addressComponents ?? null,
-    result,
-    tiers: { tier1: t1.value, tier2: t2.value, tier3: t3.value },
+    result: shed(result),
+    tiers: { tier1: shed(t1.value), tier2: shed(t2.value), tier3: shed(t3.value) },
     timing: {
       tier1Ms: t1.ms,
       tier2Ms: t2.ms,

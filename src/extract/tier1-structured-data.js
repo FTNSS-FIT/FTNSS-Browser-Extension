@@ -361,8 +361,19 @@ export function extractFromStructuredData(doc) {
   }
 
   if (describesAPlace(addressComponents)) {
-    // `address: null` — presence, never values. See result.js.
-    return withComponents(foundAddress({ source: 'ld+json.address', tier: 1, reason }));
+    return withComponents(
+      foundAddress({
+        // `address: null` — presence, never values. See result.js.
+        source: 'ld+json.address',
+        tier: 1,
+        reason,
+        // FOR THE RUNNER'S CROSS-TIER CHECK, AND NOTHING ELSE. The runner strips this before the
+        // extraction leaves this module, so it never reaches the popup, storage or an export — see
+        // index.js. It exists because corroborating tier 1 against tier 3 needs the values, and the
+        // only alternative was to hand the same values to every caller and trust each of them.
+        addressValues: addressSeen,
+      }),
+    );
   }
 
   // Two different findings, deliberately not collapsed into one reason.

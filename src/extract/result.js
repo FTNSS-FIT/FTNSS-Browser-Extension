@@ -46,8 +46,10 @@ export function found({ lat, lon, tier, source, precision }) {
  * to geocode; which of them may leave the browser is docs/DECISIONS.md 13 and is not phase 1's to
  * decide.
  */
-export function foundAddress({ address = null, source, tier = 3, reason = null }) {
-  return { status: 'found_address', address, source, tier, reason };
+export function foundAddress({ address = null, source, tier = 3, reason = null, addressValues = null }) {
+  // `addressValues` is INTERNAL — the runner uses it to corroborate one tier against another and
+  // strips it before returning. Nothing outside src/extract/ ever sees it.
+  return { status: 'found_address', address, source, tier, reason, addressValues };
 }
 
 /**
