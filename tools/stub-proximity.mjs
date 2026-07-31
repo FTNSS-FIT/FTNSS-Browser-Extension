@@ -47,20 +47,20 @@ function loadGyms() {
 const GYMS = loadGyms();
 
 /**
- * Haversine — NOT DISTANCE-AUTHORITATIVE, and measured against the real thing rather than assumed.
+ * Haversine — NOT DISTANCE-AUTHORITATIVE, and measured against the real service rather than assumed.
  *
- * Compared to prod PostGIS over six Toronto gyms: identical set, identical order, distances up to
- * 9m larger there — every delta positive and under 0.3%. That one-directional, proportional
- * signature is the WGS84 ellipsoid versus this sphere (R = 6,371,008.8 m). A sphere is a slightly
- * small model of the Earth; neither is wrong.
+ * Checked against the production implementation over a city-sized sample: identical result set,
+ * identical ordering, distances up to ~0.3% shorter here. Every delta was in the same direction and
+ * proportional to distance, which is the signature of this sphere (R = 6,371,008.8 m) standing in
+ * for the WGS84 ellipsoid. Neither is wrong; a sphere is a slightly small model of the Earth.
  *
- * Immaterial at our precision: we round to a 250m grid and display "about 3.7 km", so a 9m
- * disagreement is two orders of magnitude below what anyone sees. Written down because a future
- * reader comparing the two would otherwise have a discrepancy to chase.
+ * Immaterial at our precision: we round to a 250m grid and display "about 3.7 km", so a
+ * sub-percent disagreement sits two orders of magnitude below anything a person sees. Written down
+ * because a future reader comparing the two would otherwise have a discrepancy to chase.
  *
  * This file stays after the real endpoint exists. It is a TEST DOUBLE, not a placeholder: it runs
- * in CI with no network, and it is the only way to exercise timeout, HTTP 500, malformed payload
- * and empty-result paths without breaking production to do it.
+ * in CI with no network, and it is the only way to exercise the timeout, HTTP 500,
+ * malformed-payload and empty-result paths without breaking production to do it.
  */
 function metresBetween(a, b) {
   const R = 6371008.8;

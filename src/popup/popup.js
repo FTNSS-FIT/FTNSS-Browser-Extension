@@ -599,6 +599,26 @@ async function renderGyms() {
   say('Searching…');
   const answer = await gymsNear({ lat: result.lat, lon: result.lon }, { endpoint });
 
+  // THE PAGE MAY HAVE MOVED WHILE WE WERE ASKING.
+  //
+  // The read happens once and the request can run for four seconds — an eternity on a site that
+  // navigates without reloading, which is every site in the manifest. Listing A's gyms rendered
+  // under listing B is a confidently wrong answer of exactly the kind the extraction tiers refuse
+  // to produce, arriving through the one door they do not watch: time.
+  //
+  // `pageToken` is the same identity the recorder uses to refuse a stale Log, so the panel and the
+  // measurement agree on what "this page" means.
+  const after = await readActivePage();
+  if (
+    after?.pageToken !== reading.pageToken ||
+    after?.result?.status !== 'found' ||
+    after.result.lat !== result.lat ||
+    after.result.lon !== result.lon
+  ) {
+    say('The page changed while we were looking. Open the panel again.');
+    return;
+  }
+
   if (answer.status === 'unconfigured') return say('No endpoint set yet.');
   if (answer.status === 'error') {
     // One sentence for every failure. Which of them it was is our business, not the page's.
@@ -618,9 +638,12 @@ async function renderGyms() {
     // failing to find a gym is telling someone there isn't one.
     //
     // "of the area searched", not "of here": the query point is a 250m cell, not the hotel.
+    // NEVER CONCLUSIVE, whatever the precision. We searched around a point whose accuracy we have
+    // not established, rounded to a 250m cell — so "there are none" is a claim the evidence cannot
+    // carry in either case. It only gets weaker when the site publishes an area by design.
     say(result.precision === 'approximate'
-      ? 'No FTNSS gyms within 5km of the area searched — though this page gave only an approximate location, so that is not conclusive.'
-      : 'No FTNSS gyms within 5km of the area searched.');
+      ? 'No FTNSS gyms found within 5km of the area searched — and this page publishes only an approximate location, so treat that as inconclusive.'
+      : 'No FTNSS gyms found within 5km of the area searched — measured from a rounded point, so not conclusive.');
     return;
   }
 
@@ -638,6 +661,12 @@ async function renderGyms() {
   // approximate. Tier 2 reads a map pin rather than a published point and is labelled `approximate`
   // for that reason — stacking an approximate reading under a 250m grid and then printing a
   // confident distance is precisely the compounding this repo refuses to do elsewhere.
+  // NO READING HERE IS VERIFIED. This split used to be "approximate versus everything else", which
+  // quietly treated `unknown` as precise — and `unknown` is what tier 1 deliberately reports,
+  // because whether a published point is the building or a fuzzed area is a per-site fact this
+  // project measures rather than assumes. There is no 'exact' in the vocabulary at all, on purpose.
+  // So the honest split is "approximate by the site's design" versus "we have not established it",
+  // and neither justifies a confident number.
   const approximate = result.precision === 'approximate';
   const change = el('button', 'Change endpoint');
   change.addEventListener('click', () => {
@@ -650,8 +679,8 @@ async function renderGyms() {
     el(
       'div',
       approximate
-        ? `${answer.gyms.length} nearest — distances are rough: this page gave an approximate location, rounded to a 250m cell`
-        : `${answer.gyms.length} nearest, measured from a 250m cell — distances are approximate`,
+        ? `${answer.gyms.length} nearest — rough: this page publishes an approximate location, then we round to a 250m cell`
+        : `${answer.gyms.length} nearest — approximate: this page's precision is unverified, and we round to a 250m cell`,
       approximate ? 'warn' : 'muted',
     ),
   );
@@ -674,7 +703,15 @@ function endpointForm(current) {
   clear.addEventListener('click', async () => {
     // Saving an empty value removes it. Worth an explicit button rather than relying on someone
     // discovering that emptying the field and saving is the way out.
+    const previous = await loadEndpoint();
     await saveEndpoint('');
+    if (previous != null) {
+      try {
+        await chrome.permissions.remove({ origins: [`${new URL(previous).origin}/*`] });
+      } catch {
+        // Best effort — clearing the setting is the part that must succeed.
+      }
+    }
     await renderGyms();
   });
   save.addEventListener('click', async () => {
@@ -709,12 +746,24 @@ function endpointForm(current) {
         return;
       }
     }
+    // GIVE BACK WHAT WE NO LONGER NEED. Switching from localhost to production left both origins
+    // authorised forever, which contradicts the single-origin design the manifest exists to state.
+    // Best effort and deliberately non-fatal: failing to hand a permission back is untidy, while
+    // refusing to save a working endpoint over it would be worse.
+    const previous = await loadEndpoint();
     try {
       await saveEndpoint(value);
     } catch (err) {
       note.textContent = err?.message ?? 'Could not save that.';
       note.className = 'warn';
       return;
+    }
+    if (previous != null && previous !== value) {
+      try {
+        await chrome.permissions.remove({ origins: [`${new URL(previous).origin}/*`] });
+      } catch {
+        // Nothing to do about it, and nothing that should stop the save.
+      }
     }
     await renderGyms();
   });
