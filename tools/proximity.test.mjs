@@ -306,3 +306,36 @@ test('the byte limit stops the read and aborts, rather than reporting afterwards
   // 256KiB at 64KiB a chunk: it must stop within a handful, not read a thousand.
   assert.ok(served < 10, `stopped after ${served} chunks`);
 });
+
+test('a cancelled lookup is cancelled, not timed out', async () => {
+  // A caller aborts because the answer stopped being wanted — the endpoint changed, a newer lookup
+  // replaced it. Calling that a timeout would put "timeout" in an export for a request nobody was
+  // waiting for.
+  const controller = new AbortController();
+  controller.abort();
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    signal: controller.signal,
+    fetchImpl: async () => { throw new Error('should not be reached'); },
+  });
+  assert.equal(answer.status, 'error');
+  assert.equal(answer.reason, 'cancelled');
+});
+
+test("a caller's abort stops a request already in flight", async () => {
+  const controller = new AbortController();
+  const hanging = async (url, options) => new Promise((resolve, reject) => {
+    options.signal.addEventListener('abort', () => {
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      reject(err);
+    });
+  });
+  const pending = gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    signal: controller.signal,
+    fetchImpl: hanging,
+  });
+  controller.abort();
+  assert.equal((await pending).reason, 'cancelled');
+});

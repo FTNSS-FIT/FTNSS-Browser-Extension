@@ -77,7 +77,7 @@ function gymFrom(raw) {
  * nonsense" are the same event to somebody looking at a hotel — and the difference between them is
  * a detail about our infrastructure that a page we do not control should not be able to probe for.
  */
-export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {}) {
+export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch, signal } = {}) {
   if (typeof endpoint !== 'string' || endpoint.length === 0) {
     return { status: 'unconfigured' };
   }
@@ -89,6 +89,13 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
   if (point == null) return { status: 'error', reason: 'coordinate did not survive rounding' };
 
   const controller = new AbortController();
+  // The CALLER may cancel too, and its reasons are different from ours: the timeout below is about
+  // the server being slow, while the caller aborts because the answer stopped being wanted — the
+  // endpoint changed, or a newer lookup replaced this one. Both must stop the same request.
+  if (signal != null) {
+    if (signal.aborted) return { status: 'error', reason: 'cancelled' };
+    signal.addEventListener('abort', () => controller.abort(), { once: true });
+  }
   // The timer covers the WHOLE exchange, not just the headers. It used to be cleared as soon as
   // fetch resolved — which is when headers arrive, not when the body does — so a server that
   // answered and then stalled left the panel on "Searching…" forever. The most common way a
@@ -118,7 +125,10 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
       body: JSON.stringify({ lat: point.lat, lon: point.lon }),
     });
   } catch (err) {
-    return failed(err?.name === 'AbortError' ? 'timeout' : 'network');
+    if (err?.name !== 'AbortError') return failed('network');
+    // A caller's cancellation is not a timeout, and calling it one would put "timeout" in an export
+    // for a request nobody was waiting for any more.
+    return failed(signal?.aborted ? 'cancelled' : 'timeout');
   }
 
   if (!response.ok) return failed(`http ${response.status}`);

@@ -565,6 +565,8 @@ document.getElementById('clear').addEventListener('click', async () => {
  * gyms under listing B, arriving from the same direction: time.
  */
 let lookupGeneration = 0;
+/** The lookup currently in flight, so a new one can cancel it rather than race it. */
+let inFlight = null;
 
 /**
  * The resting state: an endpoint is configured and NOTHING has been sent.
@@ -583,6 +585,8 @@ async function renderGymsIdle() {
   // four-second-old lookup finished afterwards and painted stale gyms, or a false "none found",
   // over the resting state. The guard existed; the path back to idle simply never armed it.
   lookupGeneration += 1;
+  inFlight?.abort();
+  inFlight = null;
   const container = document.getElementById('gyms');
   if (container == null) return;
   const endpoint = await loadEndpoint();
@@ -612,6 +616,12 @@ async function renderGymsIdle() {
 }
 
 async function renderGyms() {
+  // ONE AT A TIME. Bumping the generation invalidates the previous lookup's renders, but the
+  // request it already sent keeps running — so this aborts it too, rather than leaving a
+  // coordinate in flight that nobody will ever look at.
+  inFlight?.abort();
+  const controller = new AbortController();
+  inFlight = controller;
   const generation = (lookupGeneration += 1);
   const container = document.getElementById('gyms');
   // Defensive for the same reason showVersion() is: this runs unawaited at startup, so anything it
@@ -661,8 +671,18 @@ async function renderGyms() {
     return;
   }
 
+  // CHECK AGAIN IMMEDIATELY BEFORE SENDING. The generation guard stopped stale answers being
+  // RENDERED, which is not the same as stopping them being ASKED — a double-click, or Look again
+  // during a search, or changing the endpoint while the page read was still pending, each fired
+  // another request. In a panel whose privacy claim is "one request, only when you ask", quietly
+  // sending two coordinates because a button was pressed twice is the wrong kind of extra.
+  if (stale()) return;
+
   say('Searching…');
-  const answer = await gymsNear({ lat: result.lat, lon: result.lon }, { endpoint });
+  const answer = await gymsNear(
+    { lat: result.lat, lon: result.lon },
+    { endpoint, signal: controller.signal },
+  );
 
   // THE PAGE MAY HAVE MOVED WHILE WE WERE ASKING.
   //

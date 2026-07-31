@@ -84,8 +84,17 @@ function metresBetween(a, b) {
  * than the thing it stands in for.
  *
  * A chrome-extension:// origin cannot be forged by a web page: the browser sets it, and a page's
- * own origin is always its site. The extension ID is not known until publish, so any extension
- * origin is accepted — that is a laptop-local development server, not an authorisation boundary.
+ * own origin is always its site.
+ *
+ * ACCEPTED LIMITATION: any installed extension is accepted, not one specific ID. Pinning it would
+ * mean an environment variable and a per-run nonce, and this whole localhost path is scheduled for
+ * deletion the moment the production route exists — at which point this file keeps only its CI job,
+ * where no browser and no extension is involved. Building an authorisation scheme for a server with
+ * that life expectancy is effort in the wrong place. The exposure is a laptop-local fixture,
+ * readable only by an extension the machine's owner installed, while they have deliberately started
+ * this server.
+ *
+ * If that trade ever stops holding — if this server outlives the production route — pin the ID.
  */
 function corsFor(origin) {
   if (typeof origin !== 'string' || !origin.startsWith('chrome-extension://')) return null;
@@ -102,9 +111,12 @@ function corsFor(origin) {
 const server = createServer((req, res) => {
   const cors = corsFor(req.headers.origin);
   if (cors == null) {
-    // No CORS headers at all, so a browser refuses the response regardless of what is in it. Say
-    // so plainly in the log, because the alternative is someone debugging a silent failure.
-    console.log(`refused origin: ${req.headers.origin ?? '(none)'}`);
+    // A CONSTANT, never the Origin header. CORS stops the browser USING the response; it does not
+    // stop the request arriving — so any page probing localhost had its hostname written to a log
+    // on the machine. That is a browsing trail, assembled outside the browser, by the one tool in
+    // this project whose entire purpose is not to build one. The irony is not the reason to fix it;
+    // the log file is.
+    console.log('refused a request from a non-extension origin');
     res.writeHead(403, { 'content-type': 'application/json' });
     res.end('{"error":"extension origins only"}');
     return;
