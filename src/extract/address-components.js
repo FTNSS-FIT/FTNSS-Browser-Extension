@@ -254,25 +254,20 @@ export function addressesOverlap(a, b) {
     // Californian cities share it, and with the locality omitted they merged, so the related
     // hotel's coordinate was shown as the listing's. A witness has to narrow the claim to a
     // building, and only a locality or a building-level postcode does.
+    // ONLY A LOCALITY. A postcode was a witness here until round 17, on the strength of the
+    // building-precise table — but "building-precise" was always a claim about GEOCODING RESOLUTION,
+    // not about uniqueness, and identity needs uniqueness. A Canadian postcode covers one side of a
+    // block, perhaps twenty addresses; a Dutch one a short run of houses. Good enough to geocode to,
+    // nowhere near good enough to say two nodes are the same hotel.
     if (a.locality !== '' && a.locality === b.locality) return true;
-    if (
-      a.postalCode !== '' &&
-      a.postalCode === b.postalCode &&
-      postcodeNamesABuilding(a.country, a.postalCode)
-    ) {
-      return true;
-    }
   }
   // A POSTCODE ONLY WHERE A POSTCODE NAMES A BUILDING — the same market caveat that governs it in
   // textCorroboratesAddress and describesAPlace, and it was missing here alone. Two hotels a few
   // streets apart share a US ZIP routinely, so a listing without coordinates merged with a related
   // hotel that had them and the related hotel's location was reported as a successful read.
-  return (
-    a.postalCode !== '' &&
-    a.postalCode === b.postalCode &&
-    a.country === b.country &&
-    postcodeNamesABuilding(a.country, a.postalCode)
-  );
+  // A postcode alone never establishes identity — see above. The remaining routes are a shared @id,
+  // a shared point, or a numbered street plus a matching locality.
+  return false;
 }
 
 /** Fill in what the other side knew. Neither overwrites the other; they have already agreed. */
@@ -365,7 +360,11 @@ export function addressComponentsOf(node) {
  */
 export function textCorroboratesAddress(values, text) {
   if (values == null || typeof text !== 'string') return true;
-  const haystack = text.trim().toLowerCase().replace(/\s+/g, ' ');
+  // NEWLINES SURVIVE HERE TOO. Tier 3 preserves block boundaries as newlines and this function
+  // collapsed them again on the first line, which made the boundary work upstream invisible — the
+  // second place in two files where a blanket whitespace collapse erased the structure the next
+  // step depended on.
+  const haystack = text.toLowerCase().replace(/[^\S\n]+/g, ' ').trim();
   if (haystack.length === 0) return true;
 
   const street = typeof values.street === 'string' ? values.street : '';
@@ -400,8 +399,13 @@ export function textCorroboratesAddress(values, text) {
     if (witnesses.length === 0) return true;
     if (witnesses.some((w) => containsWhole(segment, w))) return true;
   }
-  if (postalCode.length > 0 && postcodeNamesABuilding(values.country, postalCode) &&
-      containsWhole(haystack, postalCode)) {
+  // A POSTCODE ONLY SPEAKS WHEN THE STREET IS SILENT. Where the structured data states a street and
+  // the rendered text does not carry it, a matching postcode used to rescue the read — which is
+  // corroborating a conflicting street with a value that covers a block. Where no street was
+  // published there is nothing to conflict with, and the postcode is the best evidence available.
+  if (street.length === 0 && postalCode.length > 0 &&
+      postcodeNamesABuilding(values.country, postalCode) &&
+      haystack.split(SEGMENT_BREAK).some((seg) => containsWhole(seg, postalCode))) {
     return true;
   }
 

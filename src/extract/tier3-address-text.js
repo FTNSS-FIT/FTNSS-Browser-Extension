@@ -28,7 +28,11 @@ const MAX_READ_CHARS = 2000;
 export const EXPLICIT_ADDRESS_SOURCES = new Set([
   'text [itemprop="address"]',
   'text [itemtype*="PostalAddress"]',
-  'text address',
+  // `<address>` is NOT here. The HTML element means contact information for the nearest article or
+  // document — a support phone number, an email, a byline — and "Support 24/7: +1 212 555 0100"
+  // passes the digit-and-length shape test. It is a fine LAST-RESORT source for an address; it is
+  // not a strong enough claim to contradict one the site published in its structured data, which
+  // is all this set governs. (Codex, PR #10.)
 ]);
 
 const SELECTORS = [
@@ -48,6 +52,23 @@ const SELECTORS = [
  * the popup with it. Walking and stopping early bounds the work rather than bounding the result.
  * (Codex review round 24, PR #1.)
  */
+/**
+ * Elements whose boundaries are real boundaries in the rendered text.
+ *
+ * BLOCK-LEVEL ONLY, and the distinction is the whole point. Sites mark addresses up as a run of
+ * inline spans — one per component — constantly, so treating every element boundary as a separator
+ * would split "1 Oak St" from "Lisbon" and refuse the ordinary case. A block boundary is where the
+ * page itself decided one thing ended and another began.
+ *
+ * A tag list rather than computed styles: `getComputedStyle` is expensive and this runs on every
+ * readiness probe, four times a second.
+ */
+const BLOCK_TAGS = new Set([
+  'ADDRESS', 'ARTICLE', 'ASIDE', 'BR', 'DD', 'DIV', 'DL', 'DT', 'FIGURE', 'FOOTER', 'FORM',
+  'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HR', 'LI', 'MAIN', 'NAV', 'OL', 'P', 'SECTION',
+  'TABLE', 'TD', 'TH', 'TR', 'UL',
+]);
+
 function boundedText(node) {
   let out = '';
   const stack = [node];
@@ -60,6 +81,13 @@ function boundedText(node) {
       out += current.nodeValue ?? '';
       continue;
     }
+    // MARK THE BOUNDARY. Text nodes were concatenated with nothing between them, so
+    // `<div>1 Oak St, Porto</div><div>Lisbon</div>` arrived as one unbroken run — and the
+    // segmentation added in round 15 had nothing to segment on. It was reading a string that had
+    // already had every structural boundary erased from it, which is a fix that cannot work rather
+    // than a fix that works badly. (Codex, PR #10.)
+    if (BLOCK_TAGS.has(current.tagName)) out += '\n';
+
     const children = current.childNodes;
     if (children == null) {
       // A stand-in node in tests, or an element with no child list — fall back to its own text,
@@ -73,7 +101,13 @@ function boundedText(node) {
 }
 
 function cleanText(node) {
-  return boundedText(node).replace(/\s+/g, ' ').trim().slice(0, MAX_ADDRESS_CHARS);
+  // Newlines SURVIVE, everything else collapses. They are the block boundaries marked above, and
+  // corroboration needs them; a blanket `\s+ -> ' '` is what erased them.
+  return boundedText(node)
+    .replace(/[^\S\n]+/g, ' ')
+    .replace(/ *\n+ */g, '\n')
+    .trim()
+    .slice(0, MAX_ADDRESS_CHARS);
 }
 
 /**

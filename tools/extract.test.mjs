@@ -12,7 +12,7 @@ import {
 import { extractFromStructuredData } from '../src/extract/tier1-structured-data.js';
 import { extractFromMapLinks } from '../src/extract/tier2-map-links.js';
 import { extractFromAddressText } from '../src/extract/tier3-address-text.js';
-import { ldJsonDocument, linkDocument, fakeDocument, textNode, scriptNode, attrNode } from './fake-dom.mjs';
+import { ldJsonDocument, linkDocument, fakeDocument, textNode, elementNode, scriptNode, attrNode } from './fake-dom.mjs';
 
 // ─── geo ──────────────────────────────────────────────────────────────────────
 
@@ -1334,24 +1334,24 @@ test('a shared locality does not corroborate an otherwise different address', as
   assert.equal(runExtraction(withText(LISTING, '99 Elm Avenue, Lisbon, 4000-999')).result.status, 'ambiguous');
 });
 
-test('a postcode stands in for the street only where a postcode names a building', async () => {
+test('a postcode speaks only when the structured data states no street', async () => {
   const { runExtraction } = await import('../src/extract/index.js');
+  // Until round 17 a matching postcode rescued a read whose street the rendered text did not carry
+  // — corroborating a CONFLICTING street with a value that covers a block. Where no street was
+  // published there is nothing to conflict with, and the postcode is the best evidence available.
   const uk = JSON.stringify({
     '@type': 'Hotel',
     address: { streetAddress: '1 Oak St', addressLocality: 'London', postalCode: 'EC1A 1BB', addressCountry: 'GB' },
   });
-  // A UK postcode resolves to a building or a handful, so it can vouch for a street the page
-  // rendered differently. The same argument in a US ZIP would be worth several square kilometres —
-  // two hotels a few streets apart share one routinely.
-  const { result } = runExtraction(withText(uk, '1 Oak Street, London EC1A 1BB'));
-  assert.equal(result.status, 'found_address');
-  assert.equal(result.tier, 1);
+  assert.equal(runExtraction(withText(uk, '99 Elm Avenue, London EC1A 1BB')).result.status, 'ambiguous');
 
-  const us = JSON.stringify({
+  // No street published, so nothing conflicts and the postcode is all there is.
+  const noStreet = JSON.stringify({
     '@type': 'Hotel',
-    address: { streetAddress: '1 Oak St', addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' },
+    address: { addressLocality: 'London', postalCode: 'EC1A 1BB', addressCountry: 'GB' },
   });
-  assert.equal(runExtraction(withText(us, '99 Elm Avenue, Beverly Hills 90210')).result.status, 'ambiguous');
+  assert.equal(runExtraction(withText(noStreet, 'Somewhere, London EC1A 1BB')).result.tier ?? null, 3,
+    'tier 1 cannot call that a place, so tier 3 answers');
 });
 
 test('a page that references its own listing is not a page describing two', () => {
@@ -1608,8 +1608,11 @@ test('a US ZIP does not establish that two hotels are one', () => {
   assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
 });
 
-test('a UK postcode does establish it', () => {
-  // The same evidence, in a country where a postcode names a building.
+test('a postcode does not establish identity, even a full UK one', () => {
+  // This asserted the opposite until round 17. "Building-precise" was always a claim about GEOCODING
+  // RESOLUTION, not about uniqueness, and identity needs uniqueness: a Canadian postcode covers one
+  // side of a block, a Dutch one a short run of houses. Good enough to geocode to, nowhere near
+  // good enough to say two nodes are the same hotel.
   const doc = ldJsonDocument(
     JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' } }),
     JSON.stringify({
@@ -1618,7 +1621,7 @@ test('a UK postcode does establish it', () => {
       geo: { latitude: 51.5155, longitude: -0.1417 },
     }),
   );
-  assert.equal(extractFromStructuredData(doc).status, 'found');
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
 });
 
 test('one hotel published with an @id and again without is one candidate', () => {
@@ -1789,4 +1792,58 @@ test('a guessed visible address cannot veto a published one', async () => {
     runExtraction(withText(LISTING, '99 Elm Avenue, Porto, 4000-999')).result.status,
     'ambiguous',
   );
+});
+
+// --- Codex review round 17, PR #10 --------------------------------------------------------------
+
+test('a block boundary survives into corroboration', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Text nodes were concatenated with NOTHING between them, so <div>a</div><div>b</div> arrived as
+  // one unbroken run and round 15's segmentation had nothing to segment on. It was reading a string
+  // that had already had every structural boundary erased — a fix that cannot work, rather than one
+  // that works badly.
+  const split = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[itemprop="address"]': [
+      elementNode('DIV', [
+        elementNode('DIV', ['1 Oak St, Porto, 4000-999']),
+        elementNode('DIV', ['Popular destinations Lisbon Faro Braga']),
+      ]),
+    ],
+  });
+  assert.equal(runExtraction(split).result.status, 'ambiguous');
+});
+
+test('an address split across inline spans is NOT a boundary', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Sites mark addresses up as a run of inline spans, one per component, constantly. Treating every
+  // element boundary as a separator would split "1 Oak St" from "Lisbon" and refuse the ordinary
+  // case — which is why the boundary list is block-level tags rather than "any element".
+  const inline = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[itemprop="address"]': [
+      elementNode('DIV', [
+        elementNode('SPAN', ['1 Oak St']),
+        elementNode('SPAN', [', Lisbon']),
+        elementNode('SPAN', [' 1000-001']),
+      ]),
+    ],
+  });
+  const { result } = runExtraction(inline);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+});
+
+test('an <address> element cannot contradict structured data', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // The HTML element means contact information for the nearest article — a support number, an
+  // email, a byline — and "Support 24/7: +1 212 555 0100" passes the digit-and-length shape test.
+  // A fine last-resort SOURCE; not a strong enough claim to contradict published structured data.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    address: [textNode('Support 24/7 call +1 212 555 0100 or write to 500 Corporate Way, Dallas')],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
 });
