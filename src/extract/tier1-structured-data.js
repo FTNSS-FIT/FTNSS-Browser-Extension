@@ -10,7 +10,13 @@
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
 import { found, foundAddress, notFound, ambiguous } from './result.js';
-import { addressComponentsOf, describesAPlace, addressFingerprintOf } from './address-components.js';
+import {
+  addressComponentsOf,
+  describesAPlace,
+  addressValuesOf,
+  addressesCompatible,
+  mergeAddressValues,
+} from './address-components.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 /**
@@ -186,10 +192,12 @@ export function extractFromStructuredData(doc) {
   // geocoding. Presence only; see address-components.js for why.
   let addressComponents = null;
   /**
-   * What the first lodging address SAID, so a second one can be checked against it. Local only —
-   * compared and dropped, never returned. See addressFingerprintOf.
+   * What the lodging addresses SAID, so a later one can be checked against them. Local only —
+   * compared and dropped, never returned. See addressValuesOf.
    */
   let addressSeen = null;
+  /** Set when two nodes state different things. Does NOT stop the coordinate search — see below. */
+  let addressConflict = false;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -230,12 +238,15 @@ export function extractFromStructuredData(doc) {
         // block is enough to trigger it, and after the tier-1 change that merged phantom was
         // promoted to `found_address`. A confident address for the wrong hotel geocodes to a
         // confident coordinate for the wrong hotel.
-        const fingerprint = addressFingerprintOf(node);
-        if (fingerprint != null) {
-          if (addressSeen != null && addressSeen !== fingerprint) {
-            return { ...ambiguous('structured data described two different places'), addressComponents: null };
-          }
-          addressSeen = fingerprint;
+        // FLAG, DO NOT RETURN. Returning here abandoned the coordinate search the moment two
+        // addresses disagreed — so a page publishing the SAME point twice with "1 Main Street" and
+        // "1 Main St" threw away a perfectly good coordinate over a formatting difference. The
+        // conflict only matters if we end up answering FROM the address; a published point does not
+        // become less true because the page abbreviates a street name. (Codex, PR #10.)
+        const values = addressValuesOf(node);
+        if (values != null) {
+          if (!addressesCompatible(addressSeen, values)) addressConflict = true;
+          addressSeen = mergeAddressValues(addressSeen, values);
         }
         addressComponents =
           addressComponents == null ? nodeComponents : intersectComponents(addressComponents, nodeComponents);
@@ -268,8 +279,22 @@ export function extractFromStructuredData(doc) {
     }
   }
 
+  // A merged presence map across two different places is not evidence about either, and it feeds
+  // the geocoding measurement — so it is dropped whether or not a coordinate rescued the read.
+  if (addressConflict) addressComponents = null;
+
+  const withComponents = (result) => ({ ...result, addressComponents });
+
   if (best != null) {
-    return found({
+    // EXPLICITLY attached, via the same wrapper as every other return.
+    //
+    // This used to pass `addressComponents` inside the `found()` argument, where it was silently
+    // discarded — `found()` builds a fixed shape. Harmless while nothing depended on it, and a trap
+    // now that a conflict must clear the components: anyone adding the field to `found()`'s shape
+    // would have started leaking a merged phantom address onto coordinate-bearing pages. It also
+    // means we now learn which components a site publishes even when it publishes a point, which is
+    // the question every geocoding decision turns on and was being thrown away for free.
+    return withComponents(found({
       lat: best.lat,
       lon: best.lon,
       tier: 1,
@@ -285,11 +310,9 @@ export function extractFromStructuredData(doc) {
       // building-accurate on every single listing. The person records the precision verdict.
       // (Codex review round 1, PR #1.)
       precision: 'unknown',
-      addressComponents,
-    });
+    }));
   }
 
-  const withComponents = (result) => ({ ...result, addressComponents });
   if (!parsedAny) return withComponents(notFound('ld+json present but none parsed'));
 
   // NO COORDINATES IS NOT NO ANSWER.
@@ -308,6 +331,11 @@ export function extractFromStructuredData(doc) {
     : sawLodgingWithoutGeo
       ? 'lodging type found, no coordinates published'
       : 'no lodging type in structured data';
+
+  // Only NOW does the address conflict decide anything: we are about to answer from the address.
+  if (addressConflict) {
+    return { ...ambiguous('structured data described two different places'), addressComponents: null };
+  }
 
   if (describesAPlace(addressComponents)) {
     // `address: null` — presence, never values. See result.js.

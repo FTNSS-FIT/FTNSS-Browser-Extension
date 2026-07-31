@@ -98,31 +98,66 @@ function countryIsPublished(value) {
 }
 
 /**
- * A local, never-exported fingerprint of what an address SAYS.
+ * A local, never-exported reading of what an address SAYS.
  *
  * The presence map cannot tell two hotels apart: a Lisbon listing and a Tokyo listing both have a
  * street, a locality, a postcode and a country, so intersecting them yields a complete-looking
- * address describing neither. The coordinate path already fails closed when a page describes two
- * places; this is the same check for the path that has no coordinates.
+ * address describing neither. The coordinate path fails closed when a page describes two places;
+ * this is what lets the address path do the same.
  *
- * The values never leave this module — they are compared and discarded. Fields are truncated
- * because the input is page-controlled and unbounded, and a comparison does not need the tail.
+ * STRUCTURED FIELDS, not a joined string. A single fingerprint could not express "these two agree
+ * on everything they both state", and it silently dropped whatever it did not concatenate — the
+ * first version omitted the region, so Springfield, Illinois and Springfield, Massachusetts with no
+ * postcode compared equal and merged into one address. (Codex, PR #10.)
+ *
+ * Values never leave this module: they are compared and discarded. Fields are truncated because the
+ * input is page-controlled and unbounded, and a comparison does not need the tail.
  */
-export function addressFingerprintOf(node) {
+export function addressValuesOf(node) {
   const address = node?.address;
   if (address == null || typeof address !== 'object' || Array.isArray(address)) return null;
   const part = (value) => {
     const text = typeof value === 'string' ? value : '';
     return text.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
   };
-  const country = countryCode(address.addressCountry) ?? part(address.addressCountry);
-  const fields = [
-    part(address.streetAddress),
-    part(address.addressLocality),
-    part(address.postalCode),
-    country,
-  ];
-  return fields.some((f) => f.length > 0) ? fields.join('|') : null;
+  const values = {
+    street: part(address.streetAddress),
+    locality: part(address.addressLocality),
+    region: part(address.addressRegion),
+    postalCode: part(address.postalCode),
+    country: countryCode(address.addressCountry) ?? part(address.addressCountry),
+  };
+  return Object.values(values).some((v) => v.length > 0) ? values : null;
+}
+
+/**
+ * Could these two be the same place?
+ *
+ * UNKNOWN IS COMPATIBLE, and that is the whole design. Requiring equality treated a page that
+ * publishes its listing twice at different levels of detail — extremely common — as a page
+ * describing two places, which fails closed on the ordinary case and measures nothing. A field
+ * conflicts only when BOTH sides state something and the statements differ.
+ *
+ * Formatting still counts as a difference: "1 Main Street" and "1 Main St" conflict. That is
+ * deliberate and it is cheap, because a conflict no longer discards a coordinate — see the runner
+ * in tier1-structured-data.js.
+ */
+export function addressesCompatible(a, b) {
+  if (a == null || b == null) return true;
+  return Object.keys(a).every((key) => {
+    const left = a[key];
+    const right = b[key];
+    return left === '' || right === '' || left === right;
+  });
+}
+
+/** Fill in what the other side knew. Neither overwrites the other; they have already agreed. */
+export function mergeAddressValues(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  const out = {};
+  for (const key of Object.keys(a)) out[key] = a[key] || b[key];
+  return out;
 }
 
 /**
@@ -184,7 +219,17 @@ export function addressComponentsOf(node) {
  */
 export function describesAPlace(components) {
   if (components == null) return false;
-  return Boolean(components.countryPublished && (components.postalCode || components.locality));
+  if (!components.countryPublished) return false;
+  // A POSTCODE PINS A PLACE; A LOCALITY DOES NOT.
+  //
+  // `country + locality` was accepted at first, which promoted "Lisbon, Portugal" — a city, with no
+  // street and no postcode — to a successful read. Geocoding that returns the city centre, which is
+  // not where the hotel is, and the report would have counted it as an address we could locate.
+  // A wrong answer that looks like a success is the failure mode this project cares about most.
+  //
+  // So: a postcode, or a street WITH a locality to disambiguate it. Either pins a building; a
+  // locality alone pins a city.
+  return Boolean(components.postalCode || (components.street && components.locality));
 }
 
 /**

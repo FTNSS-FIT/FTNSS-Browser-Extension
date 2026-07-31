@@ -1055,3 +1055,61 @@ test('a nested Country object still counts as published', () => {
   assert.equal(r.addressComponents.countryPublished, true);
   assert.equal(r.status, 'found_address');
 });
+
+// --- Codex review round 2, PR #10 ---------------------------------------------------------------
+
+test('a formatting difference does not discard a valid coordinate', () => {
+  // The conflict check used to return immediately, so a page publishing the SAME point twice with
+  // "1 Main Street" and "1 Main St" was refused over an abbreviation. A published point does not
+  // become less true because the page abbreviates a street name.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      geo: { latitude: 38.7115, longitude: -9.1287 },
+      address: { streetAddress: '1 Main Street', addressLocality: 'Lisbon', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      geo: { latitude: 38.7115, longitude: -9.1287 },
+      address: { streetAddress: '1 Main St', addressLocality: 'Lisbon', addressCountry: 'PT' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  // The components are still dropped: they disagreed, and they feed the geocoding measurement.
+  assert.equal(r.addressComponents, null);
+});
+
+test('the same conflict still refuses the page when there is no coordinate to fall back on', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main Street', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' } }),
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('two Springfields are told apart by their region', () => {
+  // The first conflict check joined four fields into one string and omitted the region, so
+  // Springfield, Illinois and Springfield, Massachusetts compared equal and merged into one address.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Springfield', addressRegion: 'IL', addressCountry: 'US' } }),
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Springfield', addressRegion: 'MA', addressCountry: 'US' } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a city is not a listing', () => {
+  // `country + locality` promoted "Lisbon, Portugal" to a successful read. Geocoding that returns
+  // the city centre, which is not where the hotel is — and the report would have counted it as an
+  // address we could locate. A wrong answer that looks like a success is the worst outcome here.
+  const city = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'Lisbon', addressCountry: 'PT' } }),
+  );
+  assert.equal(extractFromStructuredData(city).status, 'not_found');
+
+  // A postcode pins it; so does a street with a locality to disambiguate it.
+  const pinned = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } }),
+  );
+  assert.equal(extractFromStructuredData(pinned).status, 'found_address');
+});
