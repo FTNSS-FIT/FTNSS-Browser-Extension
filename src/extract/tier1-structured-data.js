@@ -339,8 +339,15 @@ export function extractFromStructuredData(doc) {
       }
 
       const candidate = candidateList.find((c) => {
-        // An @id is the page telling us outright that these are one entity.
-        if (identity != null && c.ids.has(identity)) return true;
+        // An @id is the page telling us outright that these are one entity — but the page is the
+        // thing we are being careful about. An `@id` is attacker-controlled text like everything
+        // else here, and honouring it unconditionally meant two nodes could claim one identity
+        // while publishing different addresses, merge, and hand back whichever coordinate one of
+        // them carried. A claim of identity still has to survive the evidence. (Codex, PR #10.)
+        if (identity != null && c.ids.has(identity)) {
+          return addressesCompatible(c.values, nodeValues) &&
+            (c.point == null || nodePoint == null || samePoint(c));
+        }
         // A SHARED POINT IS THE STRONGEST EVIDENCE THERE IS, and it was being gated behind address
         // compatibility — so two nodes at the same coordinate whose streets read "1 Main Street"
         // and "1 Main St" failed to cluster, became two candidates, and the page was refused for

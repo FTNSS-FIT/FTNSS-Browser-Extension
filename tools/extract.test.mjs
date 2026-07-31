@@ -1140,10 +1140,17 @@ test('an address belonging to only ONE of several lodging candidates is not attr
   assert.equal(r.addressComponents, null);
 });
 
-test('address ambiguity about ONE listing does not veto a coordinate from another tier', async () => {
+test('two nodes claiming one @id while contradicting each other are refused', async () => {
   const { runExtraction } = await import('../src/extract/index.js');
-  // One entity — the same @id twice — stating its address two different ways. A page unsure how to
-  // spell its ADDRESS is not unsure which POINT it published.
+  // An @id is the page asserting these are one entity, and the page is the thing we are being
+  // careful about — it is attacker-controlled text like everything else here. Honouring it
+  // unconditionally let two nodes claim one identity while publishing different addresses, merge,
+  // and hand back whichever coordinate one of them carried.
+  //
+  // This test asserted the opposite until round 18, as the round-3 principle that address ambiguity
+  // must not veto a coordinate. That principle still holds — see the formatting-difference test
+  // above, where two nodes at the SAME POINT disagree about spelling and the point survives — but
+  // this fixture stopped being an example of it once an @id had to survive the evidence.
   const node = (street) => scriptNode(JSON.stringify({
     '@type': 'Hotel',
     '@id': 'https://example.test/#hotel',
@@ -1153,9 +1160,7 @@ test('address ambiguity about ONE listing does not veto a coordinate from anothe
     'script[type="application/ld+json"]': [node('1 Oak St'), node('9 Elm Ave')],
     'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
   });
-  const { result } = runExtraction(doc);
-  assert.equal(result.status, 'found');
-  assert.equal(result.tier, 2);
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
 
 test('a lone map link on a page about SEVERAL listings cannot be attributed', async () => {
@@ -1846,4 +1851,45 @@ test('an <address> element cannot contradict structured data', async () => {
   const { result } = runExtraction(doc);
   assert.equal(result.status, 'found_address');
   assert.equal(result.tier, 1);
+});
+
+// --- Codex review round 18, PR #10 --------------------------------------------------------------
+
+test('two hotels on a numbered road are not one hotel', () => {
+  // "Route 66" carries a standalone number that identifies the ROAD, so two different hotels on it
+  // in one town looked identical to every rule that treats a number as a building. The fourth
+  // round on this question, and the first three answers were each one qualification short.
+  const on = (extra) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: 'Route 66', addressLocality: 'Springfield', addressCountry: 'US' },
+    ...extra,
+  });
+  const doc = ldJsonDocument(on({}), on({ geo: { latitude: 37.2153, longitude: -93.2982 } }));
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+
+  // A house number still merges the ordinary duplicate — which is what deleting street identity
+  // outright would have broken, and is the Booking and Expedia shape.
+  const numbered = (extra) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'Springfield', addressCountry: 'US' },
+    ...extra,
+  });
+  const dup = ldJsonDocument(numbered({}), numbered({ geo: { latitude: 37.2153, longitude: -93.2982 } }));
+  assert.equal(extractFromStructuredData(dup).status, 'found');
+});
+
+test('a block boundary is emitted on the way OUT as well as in', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // A block followed by an inline sibling produced one segment, because nothing marked where the
+  // block ENDED.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[itemprop="address"]': [
+      elementNode('DIV', [
+        elementNode('DIV', ['1 Oak St, Porto, 4000-999']),
+        elementNode('SPAN', ['popular destinations Lisbon']),
+      ]),
+    ],
+  });
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });

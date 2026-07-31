@@ -69,6 +69,9 @@ const BLOCK_TAGS = new Set([
   'TABLE', 'TD', 'TH', 'TR', 'UL',
 ]);
 
+/** Marks the end of a block element during the traversal below. Never part of the output. */
+const BLOCK_END = Symbol('block end');
+
 function boundedText(node) {
   let out = '';
   const stack = [node];
@@ -86,6 +89,12 @@ function boundedText(node) {
     // segmentation added in round 15 had nothing to segment on. It was reading a string that had
     // already had every structural boundary erased from it, which is a fix that cannot work rather
     // than a fix that works badly. (Codex, PR #10.)
+    // A SENTINEL, not a node: the stack is LIFO, so pushing this before the children makes it pop
+    // AFTER them, closing the block.
+    if (current === BLOCK_END) {
+      out += '\n';
+      continue;
+    }
     if (BLOCK_TAGS.has(current.tagName)) out += '\n';
 
     const children = current.childNodes;
@@ -95,6 +104,10 @@ function boundedText(node) {
       out += (current.textContent ?? '').slice(0, MAX_READ_CHARS);
       continue;
     }
+    // OPENING A BLOCK IS NOT ENOUGH. A block followed by an inline sibling — "1 Oak St, Porto" in a
+    // div, then "popular destinations Lisbon" in a span beside it — produced one segment, because
+    // nothing marked where the block ENDED. (Codex, PR #10.)
+    if (BLOCK_TAGS.has(current.tagName)) stack.push(BLOCK_END);
     for (let i = children.length - 1; i >= 0; i -= 1) stack.push(children[i]);
   }
   return out.slice(0, MAX_READ_CHARS);

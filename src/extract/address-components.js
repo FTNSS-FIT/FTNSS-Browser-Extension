@@ -113,6 +113,23 @@ function hasNonOrdinalNumber(text) {
   return false;
 }
 
+/**
+ * Words that introduce a ROAD's own number rather than a building's.
+ *
+ * "Route 66" and "Highway 1" carry a standalone number that identifies the road, so two different
+ * hotels on one of them in one town look identical to every rule that treats a number as a
+ * building. Deliberately short: an unlisted designator means we decline to merge two nodes, which
+ * costs a duplicate-detection, while a wrongly-listed one costs nothing at all.
+ */
+const ROAD_DESIGNATORS = /\b(route|rte|highway|hwy|freeway|expressway|motorway|interstate|autoroute|autostrada|ruta|carretera)\b[^\p{L}\p{N}]*\p{N}/iu;
+
+/** Does this street name a numbered BUILDING, as opposed to a numbered road? */
+function isBuildingNumbered(street) {
+  if (typeof street !== 'string') return false;
+  if (ROAD_DESIGNATORS.test(street)) return false;
+  return hasNonOrdinalNumber(street);
+}
+
 function streetNamesABuilding(address) {
   if (!present(address.streetAddress)) return false;
   // A number that is not an ORDINAL. "1 Oak St" qualifies; "5th Avenue" does not, because there the
@@ -244,29 +261,34 @@ export function addressesOverlap(a, b) {
   // The shared street must NAME A BUILDING. Two hotels on Oxford Street share a road, and merging
   // them let a related hotel's coordinate be reported as the listing's — the same road-versus-
   // building distinction describesAPlace already makes, missing here.
-  // A SHARED STREET NEEDS A WITNESS TOO. "1 Main St" is a real address in thousands of towns, and
-  // compatibility permits silence — so a Springfield listing and an unrelated "1 Main St" node
-  // carrying the only coordinate on the page merged, and that coordinate was reported. The same
-  // correction the corroboration check needed one round earlier, in the other place a street was
-  // trusted alone.
-  if (a.street !== '' && a.street === b.street && hasNonOrdinalNumber(a.street)) {
-    // NOT `region`. A region is a state or a county: two hotels at "1 Main St" in different
-    // Californian cities share it, and with the locality omitted they merged, so the related
-    // hotel's coordinate was shown as the listing's. A witness has to narrow the claim to a
-    // building, and only a locality or a building-level postcode does.
-    // ONLY A LOCALITY. A postcode was a witness here until round 17, on the strength of the
-    // building-precise table — but "building-precise" was always a claim about GEOCODING RESOLUTION,
-    // not about uniqueness, and identity needs uniqueness. A Canadian postcode covers one side of a
-    // block, perhaps twenty addresses; a Dutch one a short run of houses. Good enough to geocode to,
-    // nowhere near good enough to say two nodes are the same hotel.
-    if (a.locality !== '' && a.locality === b.locality) return true;
+  // A STREET, IF ITS NUMBER IS A BUILDING'S AND NOT THE ROAD'S, PLUS A MATCHING LOCALITY.
+  //
+  // Fourth round on this question, and the first three answers were each one qualification short:
+  // a street, then a street naming a building, then a street with a locality as witness. The hole
+  // left is "Route 66" — two distinct hotels on a numbered road in one town, whose addresses agree
+  // on every field either of them states.
+  //
+  // Deleting street identity outright was the tempting answer and it is wrong: a page publishing
+  // its listing twice, once with the point and once without, is the ordinary Booking and Expedia
+  // shape, and without street identity those become two candidates and the coordinate is refused —
+  // the exact false ambiguity round 10 was raised to fix. Removing a mechanism is only simpler when
+  // it was not carrying anything.
+  //
+  // So the hole is closed directly: a number that a road-designator word introduces is the ROAD's
+  // number, not a building's. Narrow, explainable, and it fails in the safe direction — an
+  // unlisted designator means we decline to merge, which costs a duplicate-detection rather than
+  // producing a wrong location. (Codex, PR #10.)
+  if (
+    a.street !== '' &&
+    a.street === b.street &&
+    isBuildingNumbered(a.street) &&
+    a.locality !== '' &&
+    a.locality === b.locality
+  ) {
+    return true;
   }
-  // A POSTCODE ONLY WHERE A POSTCODE NAMES A BUILDING — the same market caveat that governs it in
-  // textCorroboratesAddress and describesAPlace, and it was missing here alone. Two hotels a few
-  // streets apart share a US ZIP routinely, so a listing without coordinates merged with a related
-  // hotel that had them and the related hotel's location was reported as a successful read.
-  // A postcode alone never establishes identity — see above. The remaining routes are a shared @id,
-  // a shared point, or a numbered street plus a matching locality.
+
+  // The remaining routes are a shared `@id` and a shared point, both handled by the caller.
   return false;
 }
 
