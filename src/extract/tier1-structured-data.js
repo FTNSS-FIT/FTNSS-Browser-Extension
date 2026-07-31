@@ -64,6 +64,14 @@ const MAX_DEPTH = 12;
 // (Codex review, PR #1.)
 const MAX_SCRIPTS = 25;
 const MAX_JSON_CHARS = 512 * 1024;
+/**
+ * How many DISTINCT lodging candidates a page may describe before we stop counting.
+ *
+ * Not a performance tuning knob so much as a statement about what a listing page is. Anything past
+ * a couple of dozen distinct hotels is a search results page or a hostile one, and either way the
+ * answer is the same refusal — so the work of telling them apart is work we never need to do.
+ */
+const MAX_CANDIDATES = 24;
 
 /** `@type` may be a string or an array. Normalise, and ignore anything that is neither. */
 function typesOf(node) {
@@ -247,6 +255,8 @@ export function extractFromStructuredData(doc) {
    * (Codex, PR #10.)
    */
   const candidateList = [];
+  /** Set when the page described more distinct listings than MAX_CANDIDATES. */
+  let candidateOverflow = false;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -298,6 +308,17 @@ export function extractFromStructuredData(doc) {
       if (nodeValues != null) {
         if (!addressesCompatible(addressSeen, nodeValues)) addressConflict = true;
         addressSeen = mergeAddressValues(addressSeen, nodeValues);
+      }
+
+      // BOUND THE WORK. Clustering compares each node against every candidate so far, and the
+      // existing limits allow 25 scripts of lodging nodes — tens of millions of comparisons on a
+      // hostile page, repeated by the readiness poll every 250ms until the tab stops responding.
+      // The bound costs nothing real: a page describing more than MAX_CANDIDATES distinct hotels is
+      // not a listing page, and it is already going to be refused as unattributable. Stop counting
+      // and say so. (Codex, PR #10.)
+      if (candidateList.length >= MAX_CANDIDATES) {
+        candidateOverflow = true;
+        break;
       }
 
       const candidate = candidateList.find((c) => {
@@ -364,12 +385,14 @@ export function extractFromStructuredData(doc) {
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
   const candidatesWithCoordinate = seenCandidates.filter((c) => c.coordinate).length;
-  if (candidatesWithAddress > 0 && candidatesWithAddress < candidates) addressConflict = true;
+  if (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates)) {
+    addressConflict = true;
+  }
   // Recorded separately from the conflict, because it means something stronger: the PAGE is about
   // more than one place. A conflict between two addresses is about which of them we believe; this
   // is about whether any single answer can be attributed to the listing at all, and the runner
   // needs it to judge a lone map link. (Codex, PR #10.)
-  const manyCandidates = candidates > 1;
+  const manyCandidates = candidates > 1 || candidateOverflow;
 
   // INTERSECT ACROSS CANDIDATES. A component counts as available only if EVERY distinct hotel on the
   // page has it, so the answer can understate viability but never overstate it. Within a candidate
@@ -394,7 +417,7 @@ export function extractFromStructuredData(doc) {
   // The cost is the risk #11 was written about: Airbnb reads 100% from this tier today, and if its
   // pages carry a lodging node without geo, those reads become ambiguous. The refusal carries its
   // own reason string so that shows up in the very next export rather than being inferred.
-  if (best != null && candidates > 1 && candidatesWithCoordinate < candidates) {
+  if (best != null && (candidateOverflow || (candidates > 1 && candidatesWithCoordinate < candidates))) {
     return withComponents(ambiguous('coordinates could not be attributed among several listings'));
   }
 

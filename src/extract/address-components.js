@@ -123,7 +123,7 @@ function streetNamesABuilding(address) {
   // welded between two characters, so the rule quietly reported China as unreadable — the exact
   // silent failure #12 warns about, produced by the fix meant to avoid it.
   if (hasNonOrdinalNumber(address.streetAddress)) return true;
-  return present(address.postalCode) && BUILDING_PRECISE_POSTCODES.has(countryCode(address.addressCountry));
+  return postcodeNamesABuilding(countryCode(address.addressCountry), address.postalCode);
 }
 
 /**
@@ -244,7 +244,15 @@ export function addressesOverlap(a, b) {
   // The shared street must NAME A BUILDING. Two hotels on Oxford Street share a road, and merging
   // them let a related hotel's coordinate be reported as the listing's — the same road-versus-
   // building distinction describesAPlace already makes, missing here.
-  if (a.street !== '' && a.street === b.street && hasNonOrdinalNumber(a.street)) return true;
+  // A SHARED STREET NEEDS A WITNESS TOO. "1 Main St" is a real address in thousands of towns, and
+  // compatibility permits silence — so a Springfield listing and an unrelated "1 Main St" node
+  // carrying the only coordinate on the page merged, and that coordinate was reported. The same
+  // correction the corroboration check needed one round earlier, in the other place a street was
+  // trusted alone.
+  if (a.street !== '' && a.street === b.street && hasNonOrdinalNumber(a.street)) {
+    const witnesses = ['locality', 'postalCode', 'region'];
+    if (witnesses.some((key) => a[key] !== '' && a[key] === b[key])) return true;
+  }
   // A POSTCODE ONLY WHERE A POSTCODE NAMES A BUILDING — the same market caveat that governs it in
   // textCorroboratesAddress and describesAPlace, and it was missing here alone. Two hotels a few
   // streets apart share a US ZIP routinely, so a listing without coordinates merged with a related
@@ -252,8 +260,8 @@ export function addressesOverlap(a, b) {
   return (
     a.postalCode !== '' &&
     a.postalCode === b.postalCode &&
-    BUILDING_PRECISE_POSTCODES.has(a.country) &&
-    a.country === b.country
+    a.country === b.country &&
+    postcodeNamesABuilding(a.country, a.postalCode)
   );
 }
 
@@ -371,7 +379,7 @@ export function textCorroboratesAddress(values, text) {
     if (witnesses.length === 0) return true;
     if (witnesses.some((w) => containsWhole(haystack, w))) return true;
   }
-  if (postalCode.length > 0 && BUILDING_PRECISE_POSTCODES.has(values.country) &&
+  if (postalCode.length > 0 && postcodeNamesABuilding(values.country, postalCode) &&
       containsWhole(haystack, postalCode)) {
     return true;
   }
@@ -389,7 +397,31 @@ export function textCorroboratesAddress(values, text) {
  * costs more than an omission does: a country left out means corroboration falls back to the
  * street, which is the strict answer. Add one only with the postcode system in front of you.
  */
-const BUILDING_PRECISE_POSTCODES = new Set(['GB', 'NL', 'IE', 'CA']);
+const BUILDING_PRECISE_POSTCODES = new Map([
+  // Full formats only. Membership in this table is a claim that the value NAMES A BUILDING, and a
+  // partial value does not: "W1" is a London postal district covering a large slice of the West End,
+  // and treating it as building-precise made "Oxford Street, W1" a successful read and let unrelated
+  // candidates merge. A country whose postcodes are building-precise does not make every string in
+  // its postcode field one. (Codex, PR #10.)
+  ['GB', /^[a-z]{1,2}\d[a-z\d]? ?\d[a-z]{2}$/],
+  ['NL', /^\d{4} ?[a-z]{2}$/],
+  ['IE', /^[a-z]\d{2} ?[a-z\d]{4}$/],
+  ['CA', /^[a-z]\d[a-z] ?\d[a-z]\d$/],
+]);
+
+/**
+ * Does this postcode name a building?
+ *
+ * TWO CONDITIONS, and the second was missing everywhere this was used: the country's postcodes must
+ * be building-level, AND the value must be a complete postcode in that country's format. Used by
+ * all three callers — identity, corroboration and the building test — so the answer cannot drift
+ * between them.
+ */
+export function postcodeNamesABuilding(country, postalCode) {
+  const format = BUILDING_PRECISE_POSTCODES.get(country);
+  if (format == null || typeof postalCode !== 'string') return false;
+  return format.test(postalCode.trim().toLowerCase().replace(/\s+/g, ' '));
+}
 
 /**
  * Substring matching, but not blind to word boundaries.

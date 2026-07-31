@@ -851,11 +851,11 @@ test('two appearances of one listing describe one complete address between them'
   const doc = ldJsonDocument(
     JSON.stringify({
       '@type': 'Hotel',
-      address: { streetAddress: 'A', addressLocality: 'B', addressRegion: 'R', postalCode: 'C', addressCountry: 'GB' },
+      address: { streetAddress: '1 Oak St', addressLocality: 'London', addressRegion: 'Greater London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
     }),
     JSON.stringify({
       '@type': 'Hotel',
-      address: { streetAddress: 'A', addressLocality: 'B', postalCode: 'C', addressCountry: 'GB' },
+      address: { streetAddress: '1 Oak St', addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
     }),
   );
   const components = extractFromStructuredData(doc).addressComponents;
@@ -1676,4 +1676,51 @@ test('a deeply nested country cannot take the extraction down', () => {
   const r = extractFromStructuredData(doc);
   assert.equal(r.status, 'found');
   assert.equal(r.addressComponents.countryParsed, false);
+});
+
+// --- Codex review round 14, PR #10 --------------------------------------------------------------
+
+test('a shared street needs a witness to establish identity', () => {
+  // "1 Main St" is a real address in thousands of towns, and compatibility permits silence — so a
+  // Springfield listing and an unrelated "1 Main St" node carrying the only coordinate on the page
+  // merged, and that coordinate was reported. The same correction corroboration needed, in the
+  // other place a street was trusted alone.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main St', addressLocality: 'Springfield', addressCountry: 'US' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Main St' },
+      geo: { latitude: 41.8781, longitude: -87.6298 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a partial postcode does not name a building', () => {
+  const uk = (postalCode) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'Oxford Street', addressLocality: 'London', postalCode, addressCountry: 'GB' },
+    }))).status;
+
+  // "W1" is a postal district covering a large slice of the West End. A country whose postcodes are
+  // building-precise does not make every string in its postcode field one.
+  assert.equal(uk('W1'), 'not_found');
+  assert.equal(uk('W1D 1BS'), 'found_address');
+  assert.equal(uk('w1d1bs'), 'found_address', 'formatting varies; the format does not');
+});
+
+test('a page describing hundreds of hotels is refused without doing the work', () => {
+  // Clustering compares each node against every candidate so far, and the limits allowed tens of
+  // millions of comparisons — repeated by the readiness poll every 250ms until the tab stopped
+  // responding. The bound costs nothing real: such a page is refused either way.
+  const many = Array.from({ length: 400 }, (unused, i) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: `${i} Oak St`, addressLocality: `Town${i}`, addressCountry: 'US' },
+    geo: { latitude: 40 + i / 1000, longitude: -70 },
+  }));
+  const started = performance.now();
+  const r = extractFromStructuredData(ldJsonDocument(...many));
+  assert.equal(r.status, 'ambiguous');
+  assert.ok(performance.now() - started < 500, 'must not scale with the page');
 });
