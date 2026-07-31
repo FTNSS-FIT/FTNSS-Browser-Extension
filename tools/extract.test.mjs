@@ -637,13 +637,23 @@ test('coordinates split across og:latitude and og:longitude are found', () => {
   assert.equal(extractFromMapLinks(doc).status, 'found');
 });
 
-test('coordinates in data attributes on a map container are found', () => {
+test('coordinates in data attributes on a MAP container are found', () => {
   const doc = fakeDocument({
-    '[data-lat][data-lng]': [attrNode({ 'data-lat': '38.7115', 'data-lng': '-9.1287' })],
+    '[class*="map" i][data-lat][data-lng]': [attrNode({ 'data-lat': '38.7115', 'data-lng': '-9.1287' })],
   });
   const r = extractFromMapLinks(doc);
   assert.equal(r.status, 'found');
   assert.equal(r.source, 'data attribute');
+});
+
+test('coordinates on an element that is NOT a map are ignored', () => {
+  // A weather widget, an analytics tag or a nearby-attractions strip can carry data-lat/data-lng.
+  // On a site where no other tier produces a coordinate there would be nothing to contradict it, so
+  // an unassociated pair must not become the listing's position.
+  const doc = fakeDocument({
+    '[data-lat][data-lng]': [attrNode({ 'data-lat': '51.5074', 'data-lng': '-0.1278' })],
+  });
+  assert.equal(extractFromMapLinks(doc).status, 'not_found');
 });
 
 test('a meta tag that disagrees with the map pin is ambiguous, not a coin toss', () => {

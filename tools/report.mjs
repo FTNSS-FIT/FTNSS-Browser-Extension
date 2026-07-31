@@ -40,15 +40,28 @@ function quantile(values, q) {
   return sorted[idx];
 }
 
-function summarise(rows, label) {
+function summarise(allRows, label) {
+  // A row logged BEFORE the reader gave up, that found no coordinate, is not evidence of absence:
+  // the coordinate may have appeared a second later. Counting those as completed extraction
+  // failures overstates the failure rate — and the button is deliberately available throughout, so
+  // this has to be handled in the statistics rather than by blocking the click.
+  // (Codex review, PR #6.)
+  const inconclusive = allRows.filter((r) => r.settled === false && r.outcome !== 'found');
+  const rows = allRows.filter((r) => !inconclusive.includes(r));
   const total = rows.length;
   const outcome = (name) => rows.filter((r) => r.outcome === name).length;
 
-  console.log(`\n${label}  (n=${total})`);
+  console.log(`\n${label}  (n=${total} conclusive of ${allRows.length} logged)`);
+  if (inconclusive.length > 0) {
+    console.log(
+      `  ${inconclusive.length} logged before the reader finished, with no coordinate — excluded from every rate below,`,
+    );
+    console.log('  because a coordinate may have appeared after the click. Not evidence of absence.');
+  }
 
   // ── WHAT WE COULD EXTRACT ──────────────────────────────────────────────────
   // Mechanical, measured on every logged page. This is the high-volume number.
-  console.log('  EXTRACTION (every logged page)');
+  console.log('  EXTRACTION (conclusive pages only)');
   console.log(`    coordinate                ${pct(outcome('found'), total)}   ${outcome('found')}/${total}`);
   console.log(`    address only              ${pct(outcome('found_address'), total)}   — geocodable, no point`);
   console.log(`    ambiguous (page disagreed) ${pct(outcome('ambiguous'), total)}`);
@@ -175,15 +188,43 @@ function summarise(rows, label) {
       r.timing.totalMs <= EXTRACT_BUDGET_MS,
   ).length;
 
-  console.log('  HIT RATE (correct AND in budget — the phase 1 number)');
+  // TWO RATES, AND ONLY ONE OF THEM IS THE PHASE 1 NUMBER.
+  //
+  // Dividing hits by the verified subsample gives a rate CONDITIONAL on having got a coordinate and
+  // having checked it. Labelling that "the phase 1 number" was badly wrong: one verified fast
+  // coordinate among a hundred logged pages would have reported 100%, while 99 of those pages
+  // produced no coordinate at all. That is precisely the number that would greenlight phase 2 on a
+  // sample that says the opposite. (Codex review, PR #6.)
+  //
+  // The overall rate is the product of the stages, and the correctness stage is SAMPLED — so it is
+  // an estimate, and is printed as one, with the assumption it rests on stated.
+  console.log('  HIT RATE');
   if (verified.length === 0) {
     console.log('    NOT COMPUTABLE — nothing was verified. Extraction alone cannot give a hit rate.');
   } else {
-    console.log(`    hits                      ${pct(hits, verified.length)}   ${hits}/${verified.length} verified`);
+    console.log(
+      `    conditional (of verified coordinates)   ${pct(hits, verified.length)}   ${hits}/${verified.length}`,
+    );
     const correctButUnqualified = correct.length - hits;
     if (correctButUnqualified > 0) {
       console.log(
-        `    correct but not a hit     ${pct(correctButUnqualified, verified.length)}  — too slow, straddling, or untimed`,
+        `      of which correct but too slow/straddling/untimed  ${pct(correctButUnqualified, verified.length)}`,
+      );
+    }
+    // P(coordinate) x P(hit | verified coordinate). Sound only if the verified rows are
+    // representative of the coordinate rows, which is an assumption about how they were chosen.
+    const coordinateRate = withCoordinate.length / total;
+    const conditional = hits / verified.length;
+    const estimated = coordinateRate * conditional;
+    console.log(
+      `    ESTIMATED overall                      ${(estimated * 100).toFixed(1)}%   = ${pct(withCoordinate.length, total)} with a coordinate x ${pct(hits, verified.length)} of those verified`,
+    );
+    console.log(
+      `      assumes the ${verified.length} verified rows are representative of all ${withCoordinate.length} coordinate rows`,
+    );
+    if (verified.length < withCoordinate.length / 4) {
+      console.log(
+        `      ⚠ only ${verified.length} of ${withCoordinate.length} coordinates checked — verify more before trusting this`,
       );
     }
   }

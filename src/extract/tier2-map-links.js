@@ -157,7 +157,17 @@ function collectMetadata(doc) {
     }
   }
 
-  // Data attributes on a map container — how a client-rendered map is usually told where to centre.
+  // Data attributes on something that is ACTUALLY A MAP.
+  //
+  // This used to accept the attributes on any element at all, which is far too loose: a single
+  // unrelated `<div data-lat data-lng>` — a weather widget, an analytics tag, a nearby-attractions
+  // strip — would be returned as the listing's own position, and on a site where no other tier
+  // produces a coordinate there would be nothing to contradict it. A confidently wrong point is the
+  // failure this project cares about most.
+  //
+  // The element must now say it is a map. That is still a heuristic, but it is a measured
+  // association rather than none at all. (Codex review, PR #6.)
+  const MAP_CONTEXT = ['[class*="map" i]', '[id*="map" i]', '[data-testid*="map" i]'];
   for (const [latAttr, lonAttr] of [
     ['data-lat', 'data-lng'],
     ['data-lat', 'data-lon'],
@@ -165,7 +175,9 @@ function collectMetadata(doc) {
   ]) {
     let nodes;
     try {
-      nodes = doc.querySelectorAll(`[${latAttr}][${lonAttr}]`);
+      nodes = MAP_CONTEXT.flatMap((context) => [
+        ...doc.querySelectorAll(`${context}[${latAttr}][${lonAttr}]`),
+      ]);
     } catch {
       continue;
     }
