@@ -60,8 +60,8 @@ export function foundAddress({ address = null, source, tier = 3, reason = null }
  * the failure this project cares about most, and it is worse than admitting we could not read the
  * page. (Codex review round 23, PR #1.)
  */
-export function ambiguous(reason) {
-  return { status: 'ambiguous', reason };
+export function ambiguous(reason, scope = 'coordinate') {
+  return { status: 'ambiguous', reason, scope };
 }
 
 /**
@@ -74,4 +74,11 @@ export function notFound(reason) {
 
 export const isFound = (r) => r != null && r.status === 'found';
 export const isAmbiguous = (r) => r != null && r.status === 'ambiguous';
+/**
+ * Ambiguity about WHICH ADDRESS the page is describing, which is weaker than ambiguity about which
+ * COORDINATE. It disqualifies the address fallback and nothing else: a tier that published a point
+ * is unaffected by two address blocks disagreeing, and treating the two the same threw away valid
+ * coordinates — the same mistake as the early return inside tier 1, one level up. (Codex, PR #10.)
+ */
+export const isAddressAmbiguous = (r) => isAmbiguous(r) && r.scope === 'address';
 export const isFoundAddress = (r) => r != null && r.status === 'found_address';

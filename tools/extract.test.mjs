@@ -1113,3 +1113,68 @@ test('a city is not a listing', () => {
   );
   assert.equal(extractFromStructuredData(pinned).status, 'found_address');
 });
+
+// --- Codex review round 3, PR #10 ---------------------------------------------------------------
+
+test('an address belonging to only ONE of several lodging candidates is not attributed', () => {
+  // The listing carries no address; a "related hotel" carries a complete one. Nothing conflicts,
+  // because only one node had anything to compare — and the related hotel's address was reported
+  // as the listing's. Unknown is compatible between two addresses; it is not compatible between an
+  // address and a node that has none, once the address is the answer.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', name: 'the listing' }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.equal(r.scope, 'address');
+  assert.equal(r.addressComponents, null);
+});
+
+test('address ambiguity does not veto a coordinate from another tier', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', name: 'the listing' })),
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+      })),
+    ],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  const { result } = runExtraction(doc);
+  // A page unsure which ADDRESS it describes is not unsure which POINT it published.
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 2);
+});
+
+test('tier 3 does not rescue an address the structured data could not attribute', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', name: 'the listing' })),
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+      })),
+    ],
+    '[itemprop="address"]': [textNode('1 Oak St, Lisbon, 1000-001')],
+  });
+  // Scraping the rendered text shows one of the very addresses in dispute. It is not new evidence.
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('a coordinate conflict still stops the read outright', () => {
+  // The scope distinction must not weaken the original guarantee.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.71, longitude: -9.12 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 35.68, longitude: 139.69 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.notEqual(r.scope, 'address');
+});

@@ -198,6 +198,17 @@ export function extractFromStructuredData(doc) {
   let addressSeen = null;
   /** Set when two nodes state different things. Does NOT stop the coordinate search — see below. */
   let addressConflict = false;
+  /**
+   * How many lodging candidates the page described, and how many of them carried an address.
+   *
+   * An address-LESS node used to be skipped silently, so a page with the listing (no address) and a
+   * "related hotel" (complete address) reported the related hotel's address as the listing's — with
+   * no conflict to detect, because only one node had anything to compare. Unknown is compatible
+   * between two addresses; it is not compatible between an address and a node that has none, once
+   * the address is the answer. (Codex, PR #10.)
+   */
+  let lodgingNodes = 0;
+  let lodgingNodesWithAddress = 0;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -229,7 +240,9 @@ export function extractFromStructuredData(doc) {
       // Intersecting is the conservative reading: a component counts as available only if EVERY
       // candidate has it, so the answer can understate viability but never overstate it.
       // (Codex review, PR #8.)
+      lodgingNodes += 1;
       const nodeComponents = addressComponentsOf(node);
+      if (nodeComponents != null) lodgingNodesWithAddress += 1;
       if (nodeComponents != null) {
         // FAIL CLOSED WHEN TWO NODES DESCRIBE DIFFERENT PLACES — the address path's version of the
         // coordinate check below, and it was missing. Intersecting presence flags across a Lisbon
@@ -278,6 +291,11 @@ export function extractFromStructuredData(doc) {
       if (best == null) best = geo;
     }
   }
+
+  // UNATTRIBUTABLE IS AS BAD AS CONFLICTING. If some lodging candidates carry an address and
+  // others do not, we have an address and no way to say whose it is — which is exactly the state
+  // that produces a confident answer about the wrong hotel.
+  if (lodgingNodesWithAddress > 0 && lodgingNodesWithAddress < lodgingNodes) addressConflict = true;
 
   // A merged presence map across two different places is not evidence about either, and it feeds
   // the geocoding measurement — so it is dropped whether or not a coordinate rescued the read.
@@ -334,7 +352,12 @@ export function extractFromStructuredData(doc) {
 
   // Only NOW does the address conflict decide anything: we are about to answer from the address.
   if (addressConflict) {
-    return { ...ambiguous('structured data described two different places'), addressComponents: null };
+    return {
+      // SCOPED. This ambiguity is about the address only; a coordinate tier below is still free to
+      // answer, and the runner relies on that distinction.
+      ...ambiguous('structured data described two different places', 'address'),
+      addressComponents: null,
+    };
   }
 
   if (describesAPlace(addressComponents)) {

@@ -238,7 +238,11 @@ async function render() {
       const latest = await readActivePage();
       if (latest == null || latest.pageToken !== reading.pageToken) return;
 
-      if (latest.result?.status !== reading.result?.status) {
+      // sameReading, not a status comparison. Tier 3 finding an address first and tier 1 catching
+      // up leaves the status identical and the TIER different, so the panel went on showing
+      // "Tier 3" while Log stored tier 1 — the operator verifying one reading and recording
+      // another. sameReading already compares tier and coordinates; it just was not being used.
+      if (!sameReading(latest, reading)) {
         pollsRemaining = MAX_POLLS;
         await render();
         return;

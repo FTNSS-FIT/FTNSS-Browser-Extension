@@ -9,7 +9,7 @@
 import { extractFromStructuredData } from './tier1-structured-data.js';
 import { extractFromMapLinks } from './tier2-map-links.js';
 import { extractFromAddressText } from './tier3-address-text.js';
-import { isFound, isFoundAddress, isAmbiguous, ambiguous } from './result.js';
+import { isFound, isFoundAddress, isAmbiguous, isAddressAmbiguous, ambiguous } from './result.js';
 import { distanceMetres } from '../lib/geo.js';
 
 /** Two coordinate-bearing tiers further apart than this are not describing the same listing. */
@@ -47,10 +47,19 @@ export function runExtraction(doc) {
   // A tier that found conflicting evidence used to report ordinary absence, and absence means "look
   // elsewhere" — so the runner fell through and answered from a lower tier, frequently using one of
   // the very coordinates that was in dispute. (Codex review round 23, PR #1.)
+  //
+  // ADDRESS AMBIGUITY IS NOT COORDINATE AMBIGUITY. Tier 1 can now be unsure which ADDRESS the page
+  // describes while a map link publishes a perfectly good point, and collapsing the two stopped the
+  // read — contradicting the coordinate-beats-address precedence three branches below. Address
+  // ambiguity disqualifies the address fallback and nothing else. (Codex, PR #10.)
+  const coordinateAmbiguity =
+    (isAmbiguous(t1.value) && !isAddressAmbiguous(t1.value)) ||
+    (isAmbiguous(t2.value) && !isAddressAmbiguous(t2.value));
+
   let result;
-  if (isAmbiguous(t1.value) || isAmbiguous(t2.value)) {
+  if (coordinateAmbiguity) {
     result = ambiguous(
-      isAmbiguous(t1.value) ? t1.value.reason : t2.value.reason,
+      isAmbiguous(t1.value) && !isAddressAmbiguous(t1.value) ? t1.value.reason : t2.value.reason,
     );
   } else if (isFound(t1.value) && isFound(t2.value) &&
              distanceMetres(t1.value, t2.value) > CROSS_TIER_CONFLICT_METRES) {
@@ -71,6 +80,11 @@ export function runExtraction(doc) {
     // whether the street can be withheld from a geocoder is answerable only when the parts arrive
     // apart. Tier 3 returns one rendered blob, which cannot be geocoded coarsely at all.
     result = t1.value;
+  } else if (isAddressAmbiguous(t1.value)) {
+    // No coordinate anywhere, and we cannot say whose address this is. Tier 3 must NOT rescue it:
+    // the page conflicting with itself in structured data is not fixed by scraping the same page's
+    // rendered text, which shows one of the very addresses in dispute.
+    result = ambiguous(t1.value.reason);
   } else if (isFoundAddress(t3.value)) {
     result = t3.value;
   } else {
