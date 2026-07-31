@@ -656,8 +656,18 @@ function endpointForm(current) {
     // host before anyone has decided which environment we call — and a broad one to cover the
     // choice. Requesting the origin the person just typed is both narrower and more truthful.
     if (value.length > 0) {
-      const origin = `${new URL(value).origin}/*`;
-      const granted = await chrome.permissions.request({ origins: [origin] });
+      // WRAPPED. Chrome REJECTS this call for an origin the manifest does not declare, rather than
+      // resolving false — and the rejection was outside any catch, so the click died silently and
+      // the person was left looking at a form that had apparently done nothing. A validation
+      // that leaves no visible error is the same as no validation.
+      let granted = false;
+      try {
+        granted = await chrome.permissions.request({ origins: [`${new URL(value).origin}/*`] });
+      } catch (err) {
+        note.textContent = `Chrome refused that origin: ${err?.message ?? 'unknown error'}`;
+        note.className = 'warn';
+        return;
+      }
       if (!granted) {
         note.textContent = 'Permission declined, so it was not saved.';
         note.className = 'warn';

@@ -9,8 +9,20 @@ import { toTransmittablePoint } from '../src/lib/geo.js';
 
 const ENDPOINT = 'https://example.test/api/proximity';
 
-/** Captures the request and replies with whatever the test wants. */
+/**
+ * Captures the request and replies with whatever the test wants.
+ *
+ * A well-formed payload gets `searchRadiusMetres` filled in, because a real server always sends it
+ * and the client now requires it on every response — including an empty one, where the radius is
+ * the entire content of what the panel then says. Tests that care about the radius set it
+ * explicitly and this leaves them alone.
+ */
 function stub(payload, { status = 200, capture = {} } = {}) {
+  const body =
+    payload != null && typeof payload === 'object' && Array.isArray(payload.gyms) &&
+    payload.searchRadiusMetres === undefined
+      ? { ...payload, searchRadiusMetres: 5000 }
+      : payload;
   return async (url, options) => {
     capture.url = url;
     capture.options = options;
@@ -18,7 +30,7 @@ function stub(payload, { status = 200, capture = {} } = {}) {
     return {
       ok: status >= 200 && status < 300,
       status,
-      json: async () => payload,
+      json: async () => body,
     };
   };
 }
@@ -153,6 +165,34 @@ test('a missing distance is not zero distance', async () => {
   }
 });
 
+test('an empty list without a stated radius is not evidence of an empty 5km', async () => {
+  // `{ gyms: [] }` alone became "no FTNSS gyms within 5km" — a claim about five kilometres made
+  // from a response that never mentioned a distance. An empty answer needs the radius MORE than a
+  // full one does, because the radius is the whole content of what we then say.
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ gyms: [] }) }),
+  });
+  assert.equal(answer.status, 'error');
+  assert.equal(answer.reason, 'radius mismatch');
+});
+
+test('the six shown are the six nearest, not the first six sent', async () => {
+  // The panel says "nearest", and that word was underwritten entirely by the server's ordering — so
+  // a response listing gyms by name would have had its closest entry discarded at position seven.
+  const far = Array.from({ length: 8 }, (unused, i) => ({ ...GYM, name: `Far ${i}`, distanceMetres: 4000 + i }));
+  const near = { ...GYM, name: 'Closest', distanceMetres: 120 };
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [...far, near] }),
+  });
+  assert.equal(answer.gyms[0].name, 'Closest');
+  assert.deepEqual(
+    answer.gyms.map((g) => g.distanceMetres),
+    [...answer.gyms.map((g) => g.distanceMetres)].sort((a, b) => a - b),
+  );
+});
+
 test('an unreadable answer is not an answer of "nothing here"', async () => {
   // A non-empty array whose every entry failed validation used to return `empty`, so a broken
   // server produced the panel's most reassuring sentence from evidence that said nothing of the
@@ -177,4 +217,22 @@ test('an answer computed over a different radius is refused', async () => {
   });
   assert.equal(answer.status, 'error');
   assert.equal(answer.reason, 'radius mismatch');
+});
+
+test('the endpoint allowlist is read from the manifest, not restated', async () => {
+  const { endpointProblem } = await import('../src/lib/storage.js');
+  const manifest = ['https://ftnss.fit/*', 'http://localhost/*'];
+
+  assert.equal(endpointProblem('https://ftnss.fit/api/proximity', manifest), null);
+  assert.equal(endpointProblem('http://localhost:8787/api/proximity', manifest), null);
+
+  // Chrome refuses to grant a permission for an undeclared origin, and refuses at the point of
+  // asking — so any other https URL was accepted here, silently failed to be granted, and left a
+  // saved endpoint that could never work.
+  assert.match(endpointProblem('https://evil.test/api/proximity', manifest), /not one this extension is allowed/);
+  assert.match(endpointProblem('https://www.ftnss.fit/api/proximity', manifest), /not one this extension is allowed/);
+
+  // Still enforced before the allowlist is consulted.
+  assert.match(endpointProblem('http://ftnss.fit/api/proximity', manifest), /https/);
+  assert.match(endpointProblem('not a url', manifest), /not a URL/);
 });

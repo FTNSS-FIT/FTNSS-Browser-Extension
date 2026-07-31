@@ -590,7 +590,7 @@ export async function loadEndpoint() {
  * Localhost is exempt because a stub server is the whole point of this being configurable, and
  * there is no network to sit in the middle of.
  */
-export function endpointProblem(value) {
+export function endpointProblem(value, allowedPatterns = manifestOrigins()) {
   let url;
   try {
     url = new URL(value);
@@ -601,7 +601,37 @@ export function endpointProblem(value) {
   if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
     return 'Must be https, or http on localhost.';
   }
+  // AND IT MUST BE AN ORIGIN THE MANIFEST DECLARES.
+  //
+  // Chrome refuses to grant a permission for an origin that is not in optional_host_permissions,
+  // and it refuses at the point of asking — so any other https URL was accepted here, then silently
+  // failed to be granted, and the person saw a saved endpoint that could never work. Two lists that
+  // must agree will eventually not, so this reads the manifest rather than restating it.
+  if (allowedPatterns.length > 0 && !allowedPatterns.some((pattern) => originMatches(pattern, url))) {
+    return 'That origin is not one this extension is allowed to call.';
+  }
   return null;
+}
+
+/** The manifest is the single source of truth; restating its list here would be a second one. */
+function manifestOrigins() {
+  try {
+    return chrome.runtime.getManifest().optional_host_permissions ?? [];
+  } catch {
+    // Outside an extension (tests, tooling) there is no manifest and nothing to check against.
+    return [];
+  }
+}
+
+/** Match a `scheme://host/*` pattern against a URL. Host wildcards are not used and not supported. */
+function originMatches(pattern, url) {
+  let candidate;
+  try {
+    candidate = new URL(pattern.replace(/\*$/, ''));
+  } catch {
+    return false;
+  }
+  return candidate.protocol === url.protocol && candidate.hostname === url.hostname;
 }
 
 export async function saveEndpoint(value) {

@@ -85,7 +85,16 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
   if (point == null) return { status: 'error', reason: 'coordinate did not survive rounding' };
 
   const controller = new AbortController();
+  // The timer covers the WHOLE exchange, not just the headers. It used to be cleared as soon as
+  // fetch resolved — which is when headers arrive, not when the body does — so a server that
+  // answered and then stalled left the panel on "Searching…" forever. The most common way a
+  // timeout fails to fire is being cancelled slightly too early.
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const failed = (reason) => {
+    clearTimeout(timer);
+    return { status: 'error', reason };
+  };
+
   let response;
   try {
     response = await fetchImpl(endpoint, {
@@ -105,33 +114,40 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
       body: JSON.stringify({ lat: point.lat, lon: point.lon }),
     });
   } catch (err) {
-    return { status: 'error', reason: err?.name === 'AbortError' ? 'timeout' : 'network' };
-  } finally {
-    clearTimeout(timer);
+    return failed(err?.name === 'AbortError' ? 'timeout' : 'network');
   }
 
-  if (!response.ok) return { status: 'error', reason: `http ${response.status}` };
+  if (!response.ok) return failed(`http ${response.status}`);
 
   let payload;
   try {
     payload = await response.json();
-  } catch {
-    return { status: 'error', reason: 'unparseable response' };
+  } catch (err) {
+    return failed(err?.name === 'AbortError' ? 'timeout' : 'unparseable response');
   }
+  clearTimeout(timer);
 
   if (!Array.isArray(payload?.gyms)) return { status: 'error', reason: 'no gyms array' };
 
-  // THE SERVER MUST BE ANSWERING THE QUESTION WE ASKED. A response computed over a different radius
-  // is not a smaller answer to our question, it is an answer to someone else's — and rendering it
-  // as "within 5km" would be us asserting a bound the server never applied.
-  if (payload.searchRadiusMetres !== undefined && payload.searchRadiusMetres !== SEARCH_RADIUS_METRES) {
+  // THE SERVER MUST STATE THE RADIUS IT SEARCHED, on every response including an empty one.
+  //
+  // Treating the field as optional was the more forgiving reading and it was wrong in the case that
+  // matters most: `{ gyms: [] }` alone became "no FTNSS gyms within 5km", which is a claim about
+  // five kilometres made from a response that never mentioned a distance. An empty answer needs the
+  // radius MORE than a full one does, because the radius is the entire content of what we then say.
+  if (payload.searchRadiusMetres !== SEARCH_RADIUS_METRES) {
     return { status: 'error', reason: 'radius mismatch' };
   }
 
   // FILTER, THEN CAP — in that order. Capping first let unusable entries consume the six slots, so
   // a response carrying three malformed gyms and six good ones rendered three. The cap is meant to
   // bound what we show, not to be spent on things we were never going to show.
-  const usable = payload.gyms.map(gymFrom).filter(Boolean);
+  // SORT, THEN CAP. The panel says "nearest", and that word was being underwritten entirely by the
+  // server's ordering — so a response that listed gyms by name, or by id, or by nothing in
+  // particular would have had its seventh entry discarded regardless of it being the closest. We
+  // assert what we display rather than trusting an ordering we did not compute.
+  const usable = payload.gyms.map(gymFrom).filter(Boolean)
+    .sort((a, b) => a.distanceMetres - b.distanceMetres);
   const gyms = usable.slice(0, MAX_GYMS);
 
   // "WE COULD NOT READ THE ANSWER" IS NOT "THERE IS NOTHING THERE".
