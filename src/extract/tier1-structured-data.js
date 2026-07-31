@@ -316,12 +316,17 @@ export function extractFromStructuredData(doc) {
   const candidatesWithAddress =
     [...lodgingCandidates.values()].filter(Boolean).length + anonymousWithAddress;
   if (candidatesWithAddress > 0 && candidatesWithAddress < candidates) addressConflict = true;
+  // Recorded separately from the conflict, because it means something stronger: the PAGE is about
+  // more than one place. A conflict between two addresses is about which of them we believe; this
+  // is about whether any single answer can be attributed to the listing at all, and the runner
+  // needs it to judge a lone map link. (Codex, PR #10.)
+  const manyCandidates = candidates > 1;
 
   // A merged presence map across two different places is not evidence about either, and it feeds
   // the geocoding measurement — so it is dropped whether or not a coordinate rescued the read.
   if (addressConflict) addressComponents = null;
 
-  const withComponents = (result) => ({ ...result, addressComponents });
+  const withComponents = (result) => ({ ...result, addressComponents, manyCandidates });
 
   if (best != null) {
     // EXPLICITLY attached, via the same wrapper as every other return.
@@ -377,6 +382,7 @@ export function extractFromStructuredData(doc) {
       // answer, and the runner relies on that distinction.
       ...ambiguous('structured data described two different places', 'address'),
       addressComponents: null,
+      manyCandidates,
     };
   }
 

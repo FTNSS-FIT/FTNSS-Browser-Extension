@@ -73,7 +73,17 @@ export function runExtraction(doc) {
     // beats a pin position, which beats a string we have not resolved.
     result = t1.value;
   } else if (isFound(t2.value)) {
-    result = t2.value;
+    // A LONE MAP LINK ON A PAGE ABOUT SEVERAL PLACES CANNOT BE ATTRIBUTED.
+    //
+    // Round 3 established that an address disagreement must not veto a coordinate, and that stands:
+    // two address blocks contradicting each other says nothing about a published point. But a page
+    // whose structured data describes several DISTINCT lodging candidates is a different statement
+    // — it is about more than one hotel, and a single pin somewhere on it belongs to whichever of
+    // them nobody can say. Tier 1 already refuses that page; letting tier 2 answer it would route
+    // around the refusal. (Codex, PR #10.)
+    result = t1.value.manyCandidates === true
+      ? ambiguous('structured data described two different places')
+      : t2.value;
   } else if (isFoundAddress(t1.value) && isFoundAddress(t3.value) &&
              !textCorroboratesAddress(t1.value.addressValues, t3.value.address)) {
     // THE TIERS DISAGREE ABOUT WHICH ADDRESS. Tier 1 used to win here without ever being compared,
@@ -107,7 +117,7 @@ export function runExtraction(doc) {
   // inside the browser. Storage projects through an allowlist and would have dropped them, but an
   // allowlist that is the only thing standing between an address and an export file is one edit
   // away from not being. Removed here, at the boundary that put them there.
-  const shed = ({ addressValues, ...rest }) => rest;
+  const shed = ({ addressValues, manyCandidates, ...rest }) => rest;
 
   return {
     // Which address components the page published, presence only — the question the geocoding

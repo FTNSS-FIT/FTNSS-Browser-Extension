@@ -1135,8 +1135,30 @@ test('an address belonging to only ONE of several lodging candidates is not attr
   assert.equal(r.addressComponents, null);
 });
 
-test('address ambiguity does not veto a coordinate from another tier', async () => {
+test('address ambiguity about ONE listing does not veto a coordinate from another tier', async () => {
   const { runExtraction } = await import('../src/extract/index.js');
+  // One entity — the same @id twice — stating its address two different ways. A page unsure how to
+  // spell its ADDRESS is not unsure which POINT it published.
+  const node = (street) => scriptNode(JSON.stringify({
+    '@type': 'Hotel',
+    '@id': 'https://example.test/#hotel',
+    address: { streetAddress: street, addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+  }));
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [node('1 Oak St'), node('9 Elm Ave')],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 2);
+});
+
+test('a lone map link on a page about SEVERAL listings cannot be attributed', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Two distinct lodging candidates and one pin. Tier 1 already refuses this page; letting tier 2
+  // answer it would route around the refusal, and the pin belongs to whichever of them nobody can
+  // say. This is where the round-3 principle stops: a page about more than one hotel is a
+  // different statement from a page unsure how to spell one address.
   const doc = fakeDocument({
     'script[type="application/ld+json"]': [
       scriptNode(JSON.stringify({ '@type': 'Hotel', name: 'the listing' })),
@@ -1147,10 +1169,7 @@ test('address ambiguity does not veto a coordinate from another tier', async () 
     ],
     'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
   });
-  const { result } = runExtraction(doc);
-  // A page unsure which ADDRESS it describes is not unsure which POINT it published.
-  assert.equal(result.status, 'found');
-  assert.equal(result.tier, 2);
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
 
 test('tier 3 does not rescue an address the structured data could not attribute', async () => {
@@ -1255,15 +1274,25 @@ test('structured data describing a DIFFERENT address than the page prints is ref
   assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
 
-test('a formatting difference between the tiers is NOT a conflict', async () => {
+test('the rendered street corroborates the structured one', async () => {
   const { runExtraction } = await import('../src/extract/index.js');
-  // The check is deliberately weak. Booking is 48 of 63 measured pages and renders addresses in its
-  // own format; demanding the tiers match would turn "1 Oak St" vs "1 Oak Street" into a page
-  // contradicting itself. Refusing a correct read is a real cost, not a free safety win.
-  const doc = withText(LISTING, '1 Oak Street, Lisbon 1000-001, Portugal');
-  const { result } = runExtraction(doc);
+  const { result } = runExtraction(withText(LISTING, '1 Oak St, Lisbon 1000-001, Portugal'));
   assert.equal(result.status, 'found_address');
   assert.equal(result.tier, 1);
+});
+
+test('a street rendered differently is a conflict where the postcode cannot vouch for it', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // "1 Oak Street" against a structured "1 Oak St", in Portugal. The postcode matches, but a
+  // Portuguese postcode is not a building-level fact, so it cannot stand in for the street.
+  //
+  // THIS IS THE KNOWN COST of the strict bar, recorded rather than hidden: nobody has measured how
+  // often a real page states the same street differently in its text and its JSON-LD. Over-refusing
+  // shows up as an ambiguity rate in the next export; a wrong row shows up as nothing at all.
+  assert.equal(
+    runExtraction(withText(LISTING, '1 Oak Street, Lisbon 1000-001, Portugal')).result.status,
+    'ambiguous',
+  );
 });
 
 test('the internal address values never leave the extractor', async () => {
@@ -1300,13 +1329,24 @@ test('a shared locality does not corroborate an otherwise different address', as
   assert.equal(runExtraction(withText(LISTING, '99 Elm Avenue, Lisbon, 4000-999')).result.status, 'ambiguous');
 });
 
-test('a postcode corroborates when the street is rendered differently', async () => {
+test('a postcode stands in for the street only where a postcode names a building', async () => {
   const { runExtraction } = await import('../src/extract/index.js');
-  // The point of accepting EITHER pinning field: sites abbreviate street names constantly, and a
-  // postcode is format-stable. Booking is 48 of 63 measured pages and this is its shape.
-  const { result } = runExtraction(withText(LISTING, 'Rua do Carvalho 1, Lisboa, 1000-001'));
+  const uk = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'London', postalCode: 'EC1A 1BB', addressCountry: 'GB' },
+  });
+  // A UK postcode resolves to a building or a handful, so it can vouch for a street the page
+  // rendered differently. The same argument in a US ZIP would be worth several square kilometres —
+  // two hotels a few streets apart share one routinely.
+  const { result } = runExtraction(withText(uk, '1 Oak Street, London EC1A 1BB'));
   assert.equal(result.status, 'found_address');
   assert.equal(result.tier, 1);
+
+  const us = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' },
+  });
+  assert.equal(runExtraction(withText(us, '99 Elm Avenue, Beverly Hills 90210')).result.status, 'ambiguous');
 });
 
 test('a page that references its own listing is not a page describing two', () => {

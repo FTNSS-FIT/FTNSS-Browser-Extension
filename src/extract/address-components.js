@@ -233,12 +233,17 @@ export function addressComponentsOf(node) {
  * itself, and Booking is 48 of our 63 measured pages. Refusing a correct read is a real cost, not
  * a free safety win.
  *
- * So: they conflict only when the rendered text corroborates NEITHER the street NOR the postcode —
- * a formatting difference on one of them is survivable as long as the other lands. A locality
- * deliberately cannot corroborate: it says which town both hotels are in, which is not evidence
- * that they are the same hotel, and accepting it waved the impostor through on the weakest evidence
- * available. If the structured data states neither a street nor a postcode there is nothing to
+ * So: the rendered text must corroborate the STREET, on word boundaries. A locality cannot — it
+ * says which town both hotels are in, which is not evidence they are the same hotel. A postcode can
+ * stand in only where a postcode identifies a building, which is a market-by-market fact and not a
+ * general one. If the structured data states neither a street nor a postcode there is nothing to
  * check, and that is an absence of evidence rather than a conflict.
+ *
+ * WATCH THE AMBIGUITY RATE. This bar was raised three times under review, each time on a plausible
+ * argument and none of them on a measurement — nobody has counted how often a real page's rendered
+ * text and JSON-LD state the same street differently. Over-refusing is the failure this project
+ * prefers, because it shows up as an ambiguity rate in the next export where a wrong row shows up
+ * as nothing at all. But it IS a cost, and if Booking's ambiguity rate jumps, this is the knob.
  *
  * This is a floor, not a proof of agreement, and it is written to be one.
  */
@@ -247,21 +252,37 @@ export function textCorroboratesAddress(values, text) {
   const haystack = text.trim().toLowerCase().replace(/\s+/g, ' ');
   if (haystack.length === 0) return true;
 
-  // ONLY A PINNING FIELD MAY CORROBORATE.
+  const street = typeof values.street === 'string' ? values.street : '';
+  const postalCode = typeof values.postalCode === 'string' ? values.postalCode : '';
+
+  // THE STREET IS THE CORROBORATION. A POSTCODE ONLY SOMETIMES IS.
   //
-  // The first version accepted a match on ANY stated field, so a related hotel in the same city
-  // corroborated on its locality and sailed through — the exact impostor this check exists to
-  // catch, waved past by the weakest possible evidence. A locality or region says which town both
-  // hotels are in, which is not evidence that they are the same hotel. A street or a postcode is.
-  const pinning = [values.street, values.postalCode].filter(
-    (v) => typeof v === 'string' && v.length > 0,
-  );
+  // Accepting either was too generous in the markets that matter most: two hotels a few streets
+  // apart share a US ZIP routinely — it covers several square kilometres — so a "nearby hotels"
+  // block validated the wrong structured address on exactly the pages a dense city produces. The
+  // postcode is only a building-level fact in the countries where postcodes are building-level, and
+  // that is the same market-by-market caveat already recorded in the findings: a UK, Dutch, Irish
+  // or Canadian postcode resolves to a building or a handful; a US ZIP to a neighbourhood.
+  if (street.length > 0 && containsWhole(haystack, street)) return true;
+  if (postalCode.length > 0 && BUILDING_PRECISE_POSTCODES.has(values.country) &&
+      containsWhole(haystack, postalCode)) {
+    return true;
+  }
+
   // Nothing to check against. Not a conflict — an absence of evidence either way, and inventing a
   // conflict from it would refuse pages for publishing less rather than for disagreeing.
-  if (pinning.length === 0) return true;
-
-  return pinning.some((value) => containsWhole(haystack, value));
+  if (street.length === 0 && postalCode.length === 0) return true;
+  return false;
 }
+
+/**
+ * Countries whose full postcode identifies a building or a small handful of them.
+ *
+ * SMALL AND CONSERVATIVE ON PURPOSE. Every entry here weakens a check, so an entry added on a hunch
+ * costs more than an omission does: a country left out means corroboration falls back to the
+ * street, which is the strict answer. Add one only with the postcode system in front of you.
+ */
+const BUILDING_PRECISE_POSTCODES = new Set(['GB', 'NL', 'IE', 'CA']);
 
 /**
  * Substring matching, but not blind to word boundaries.
