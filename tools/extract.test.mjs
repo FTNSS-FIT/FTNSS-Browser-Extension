@@ -1666,13 +1666,15 @@ test('a street agreeing across two different cities is not corroboration', async
 test('a deeply nested country cannot take the extraction down', () => {
   // A page could hand us {name: {name: {name: …}}} inside a block small enough to pass the size
   // check and blow the stack — discarding a coordinate the same node may have published.
-  let nested = { name: 'PT' };
-  for (let i = 0; i < 20000; i += 1) nested = { name: nested };
-  const doc = ldJsonDocument(JSON.stringify({
-    '@type': 'Hotel',
-    geo: { latitude: 38.7115, longitude: -9.1287 },
-    address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: nested },
-  }));
+  // Built as a STRING rather than an object graph. A reviewer flagged that JSON.stringify would
+  // overflow on the object form before the test reached the extractor; it does not on this Node
+  // (checked: 20,000 levels serialises fine), but stack limits are an engine and platform detail,
+  // and a regression test that depends on one is testing the wrong thing.
+  const nested = `${'{"name":'.repeat(20000)}"PT"${'}'.repeat(20000)}`;
+  const doc = ldJsonDocument(
+    `{"@type":"Hotel","geo":{"latitude":38.7115,"longitude":-9.1287},` +
+    `"address":{"streetAddress":"1 Oak St","addressLocality":"Lisbon","addressCountry":${nested}}}`,
+  );
   const r = extractFromStructuredData(doc);
   assert.equal(r.status, 'found');
   assert.equal(r.addressComponents.countryParsed, false);
@@ -1723,4 +1725,31 @@ test('a page describing hundreds of hotels is refused without doing the work', (
   const r = extractFromStructuredData(ldJsonDocument(...many));
   assert.equal(r.status, 'ambiguous');
   assert.ok(performance.now() - started < 500, 'must not scale with the page');
+});
+
+// --- Codex review round 15, PR #10 --------------------------------------------------------------
+
+test('a shared region is not a witness', () => {
+  // A region is a state or a county. Two hotels at "1 Main St" in different Californian cities
+  // share it, and with the locality omitted they merged — the related hotel's coordinate shown as
+  // the listing's. A witness has to narrow the claim to a building.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main St', addressRegion: 'CA', addressCountry: 'US' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Main St', addressRegion: 'CA', addressCountry: 'US' },
+      geo: { latitude: 37.7749, longitude: -122.4194 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('the witness must belong to the same rendered address', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Searching the whole blob let two unrelated fragments be assembled into an agreement neither of
+  // them states: the address says Porto, and the word Lisbon appears elsewhere on the page.
+  const mixed = '1 Oak St, Porto, 4000-999 — popular destinations: Lisbon, Faro, Braga';
+  assert.equal(runExtraction(withText(LISTING, mixed)).result.status, 'ambiguous');
+  // The same tokens, this time in one address.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon, 1000-001')).result.status, 'found_address');
 });

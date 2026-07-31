@@ -250,8 +250,18 @@ export function addressesOverlap(a, b) {
   // correction the corroboration check needed one round earlier, in the other place a street was
   // trusted alone.
   if (a.street !== '' && a.street === b.street && hasNonOrdinalNumber(a.street)) {
-    const witnesses = ['locality', 'postalCode', 'region'];
-    if (witnesses.some((key) => a[key] !== '' && a[key] === b[key])) return true;
+    // NOT `region`. A region is a state or a county: two hotels at "1 Main St" in different
+    // Californian cities share it, and with the locality omitted they merged, so the related
+    // hotel's coordinate was shown as the listing's. A witness has to narrow the claim to a
+    // building, and only a locality or a building-level postcode does.
+    if (a.locality !== '' && a.locality === b.locality) return true;
+    if (
+      a.postalCode !== '' &&
+      a.postalCode === b.postalCode &&
+      postcodeNamesABuilding(a.country, a.postalCode)
+    ) {
+      return true;
+    }
   }
   // A POSTCODE ONLY WHERE A POSTCODE NAMES A BUILDING — the same market caveat that governs it in
   // textCorroboratesAddress and describesAPlace, and it was missing here alone. Two hotels a few
@@ -375,9 +385,20 @@ export function textCorroboratesAddress(values, text) {
   const witnesses = [values.locality, values.postalCode].filter(
     (v) => typeof v === 'string' && v.length > 0,
   );
-  if (street.length > 0 && containsWhole(haystack, street)) {
+  // THE WITNESS MUST BELONG TO THE SAME ADDRESS. Searching the whole blob let a page carrying
+  // "1 Oak St, Porto — popular destinations: Lisbon" corroborate structured data for "1 Oak St,
+  // Lisbon": two unrelated fragments assembled into an agreement neither of them states.
+  //
+  // SEGMENTED, not windowed. The first attempt required the witness within N characters of the
+  // street, and there is no N that works — 120 swallowed the destinations list, and small enough to
+  // exclude it would refuse an ordinary address with a venue name in front. Distance was never the
+  // right question. The right one is whether the two tokens are part of the same run of text, and
+  // punctuation answers it: an address contains commas and never contains a dash-then-prose or a
+  // colon-then-list.
+  for (const segment of haystack.split(SEGMENT_BREAK)) {
+    if (!containsWhole(segment, street)) continue;
     if (witnesses.length === 0) return true;
-    if (witnesses.some((w) => containsWhole(haystack, w))) return true;
+    if (witnesses.some((w) => containsWhole(segment, w))) return true;
   }
   if (postalCode.length > 0 && postcodeNamesABuilding(values.country, postalCode) &&
       containsWhole(haystack, postalCode)) {
@@ -431,6 +452,15 @@ export function postcodeNamesABuilding(country, postalCode) {
  * numbers and postcodes are exactly the kind of short token where a prefix collision is likely
  * rather than exotic.
  */
+/**
+ * Separators that never appear INSIDE a postal address, used to cut a rendered blob into segments.
+ *
+ * Commas are deliberately absent: they are the punctuation an address is made of. Everything here
+ * is punctuation that joins an address to something that is not one — a dash before an editorial
+ * note, a colon before a list, a pipe or a newline between fields of a layout.
+ */
+const SEGMENT_BREAK = /[\n\r\t|;:·•—–]|\s{3,}/;
+
 function containsWhole(haystack, needle) {
   let from = 0;
   for (;;) {
