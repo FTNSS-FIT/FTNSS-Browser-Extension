@@ -319,6 +319,7 @@ function exportableTiming(timing) {
     // exported from a browser, not by any test, because every test built its own fixtures.
     navigationDelayMs: asDuration(timing.navigationDelayMs) ?? 0,
     probeDelayMs: asDuration(timing.probeDelayMs) ?? 0,
+    scriptStartedMs: asDuration(timing.scriptStartedMs),
   };
 }
 

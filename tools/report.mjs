@@ -81,9 +81,13 @@ function summarise(rows, label) {
   }
 
   const unsettled = rows.filter((r) => r.settled === false).length;
+  // NOT a warning by itself. On a site that never publishes a coordinate this is 100% by definition —
+  // the reader keeps looking for something that is not there, and logging before it times out is the
+  // correct thing to do, not a compromised reading. It matters only for `nothing found` outcomes,
+  // where a coordinate genuinely might have been a moment away.
   if (unsettled > 0) {
     console.log(
-      `    logged while still settling  ${pct(unsettled, total)}  — a coordinate might still have appeared`,
+      `    logged before the reader gave up  ${pct(unsettled, total)}`,
     );
   }
 
@@ -143,6 +147,16 @@ function summarise(rows, label) {
   console.log(
     `    extraction     p50 ${ms(quantile(extractTimes, 0.5))}   p95 ${ms(quantile(extractTimes, 0.95))}   (budget ${EXTRACT_BUDGET_MS}ms)`,
   );
+  // WHOSE FAULT THE LATENCY IS. Without this split, a p50 over budget reads as an extraction problem
+  // when it is usually the page taking its time to reach document_idle — which no change of ours can
+  // fix, and which the product's panel would wait for too.
+  const startTimes = timed.map((r) => r.timing?.scriptStartedMs).filter(Number.isFinite);
+  if (startTimes.length > 0) {
+    console.log(
+      `    of which, waiting for the page  p50 ${ms(quantile(startTimes, 0.5))}   p95 ${ms(quantile(startTimes, 0.95))}`,
+    );
+    console.log('      (time until a content script may run at all — a fact about the site, not us)');
+  }
 
   const errors = rows.map((r) => r.errorMetres).filter(Number.isFinite);
   if (errors.length > 0) {
