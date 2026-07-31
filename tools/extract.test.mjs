@@ -752,8 +752,17 @@ test('a country name is resolved through a fixed table, and nothing else passes'
   const code = (country) => addressComponentsOf({ address: { postalCode: 'X', addressCountry: country } }).country;
 
   // Booking publishes names on most pages. Reading only codes discarded a component that was there.
-  assert.equal(code('Portugal'), 'GB');
+  assert.equal(code('Portugal'), 'PT');
   assert.equal(code('United States'), 'US');
+  // The whole table, not one entry. A careless bulk replace mapped Portugal to GB and a test that
+  // checked only one country locked the wrong answer in — so this checks every mapping it relies on.
+  for (const [name, want] of Object.entries({
+    Portugal: 'PT', Spain: 'ES', France: 'FR', Germany: 'DE', Italy: 'IT', Ireland: 'IE',
+    Canada: 'CA', Mexico: 'MX', Brazil: 'BR', Netherlands: 'NL', Australia: 'AU', Japan: 'JP',
+    Greece: 'GR', Norway: 'NO', Sweden: 'SE', 'New Zealand': 'NZ',
+  })) {
+    assert.equal(code(name), want, `${name} should map to ${want}`);
+  }
   assert.equal(code('united kingdom'), 'GB');
   assert.equal(code('España'), 'ES');
 
@@ -810,4 +819,31 @@ test('a country we cannot read does not count as usable', async () => {
   const absent = addressComponentsOf({ address: { postalCode: 'X' } });
   assert.equal(absent.countryPublished, false);
   assert.equal(absent.countryParsed, false);
+});
+
+test('address components are intersected across lodging nodes, not taken from the first', () => {
+  // A page carrying a complete "related hotel" ahead of an incomplete target would otherwise be
+  // reported as coarse-geocodable when the listing itself is not — the same first-wins mistake as
+  // the coordinate tiers, in the one place it had not been fixed.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'A', addressLocality: 'B', postalCode: 'C', addressCountry: 'GB' },
+    }),
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: 'D', addressLocality: 'E' } }),
+  );
+  const components = extractFromStructuredData(doc).addressComponents;
+  assert.equal(components.street, true, 'both have a street');
+  assert.equal(components.postalCode, false, 'only one has a postcode — the answer must not overstate');
+  assert.equal(components.countryParsed, false);
+});
+
+test('two lodging nodes in different countries yield no country at all', async () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'A', addressCountry: 'GB' } }),
+    JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'B', addressCountry: 'FR' } }),
+  );
+  // We do not know which listing the page is about, and a geocoder aimed at the wrong country
+  // returns nothing or somewhere wrong.
+  assert.equal(extractFromStructuredData(doc).addressComponents.country, null);
 });

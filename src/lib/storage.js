@@ -142,7 +142,7 @@ export async function migrateAwayLocalCohort() {
  * and messaging our own content script is not a new capability. Returns null when there is no
  * content script to answer — which is the correct answer for a page we do not measure.
  */
-export async function readActivePage({ attempts = 1 } = {}) {
+export async function readActivePage({ attempts = 1, intervalMs = 300 } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (tab?.id == null) return null;
 
@@ -161,7 +161,7 @@ export async function readActivePage({ attempts = 1 } = {}) {
       return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_READ' });
     } catch {
       if (attempt === attempts - 1) return null;
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }
   }
   return null;

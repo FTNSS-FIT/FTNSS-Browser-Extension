@@ -131,7 +131,10 @@ async function render() {
   // Read the page as it is right now, retrying while the content script may still be attaching.
   readingEl.className = 'muted';
   readingEl.textContent = 'reading the page…';
-  let reading = await readActivePage({ attempts: 12 });
+  // Long enough to cover the SLOWEST attachment actually measured — 5.8 seconds on a Booking page,
+  // where 12 attempts at 300ms covered only 3.3 and gave up while the page was still coming up. A
+  // retry budget shorter than the thing it retries for is a retry that reports a false negative.
+  let reading = await readActivePage({ attempts: 30, intervalMs: 300 });
 
   if (reading == null) {
     readingEl.className = 'muted';
@@ -348,17 +351,21 @@ async function render() {
       const afterRounding =
         roundedRead && roundedTruth ? Math.round(distanceMetres(roundedRead, roundedTruth)) : null;
 
+      // NEUTRAL ABOVE ONE CELL.
+      //
+      // Calling anything up to a kilometre "adjacent" and "small" was wrong twice: a kilometre spans
+      // four 250m cells, and near the edge of a 5km search it can change which gyms appear at all.
+      // Worse, it was leading the operator toward "correct" — and their verdict is the ground truth
+      // the whole measurement rests on, so nudging it corrupts the one thing we cannot recompute.
+      // State the distances; let them judge. (Codex review, PR #8.)
+      const cells = afterRounding == null ? null : Math.round(afterRounding / (TRANSMIT_KM * 1000));
       if (sameCell) {
         truthFeedback.className = 'ok';
         truthFeedback.textContent = `${metres}m out — rounds into the same cell, so this is a match.`;
-      } else if (afterRounding != null && afterRounding <= 1000) {
+      } else {
         truthFeedback.className = 'muted';
         truthFeedback.textContent =
-          `${metres}m out, ${afterRounding}m after rounding — adjacent cell, small against a 5km search. Borderline.`;
-      } else {
-        truthFeedback.className = 'warn';
-        truthFeedback.textContent =
-          `${metres}m out, ${afterRounding ?? metres}m after rounding — far enough to change which gyms are shown.`;
+          `${metres}m out, ${afterRounding}m after rounding — ${cells} cell${cells === 1 ? '' : 's'} away. Your call.`;
       }
     });
   }

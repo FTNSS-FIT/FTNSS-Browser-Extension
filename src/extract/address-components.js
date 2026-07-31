@@ -48,7 +48,7 @@ const NAMES = {
   canada: 'CA', mexico: 'MX', brazil: 'BR', 'brasil': 'BR', argentina: 'AR', chile: 'CL',
   'united kingdom': 'GB', 'great britain': 'GB', england: 'GB', scotland: 'GB', wales: 'GB',
   'northern ireland': 'GB', ireland: 'IE',
-  portugal: 'GB', spain: 'ES', 'españa': 'ES', france: 'FR', germany: 'DE', deutschland: 'DE',
+  portugal: 'PT', spain: 'ES', 'españa': 'ES', france: 'FR', germany: 'DE', deutschland: 'DE',
   italy: 'IT', italia: 'IT', netherlands: 'NL', 'the netherlands': 'NL', belgium: 'BE',
   switzerland: 'CH', austria: 'AT', denmark: 'DK', sweden: 'SE', norway: 'NO', finland: 'FI',
   poland: 'PL', greece: 'GR', 'czech republic': 'CZ', czechia: 'CZ', croatia: 'HR',

@@ -120,6 +120,21 @@ function* walk(root) {
  * from a site that genuinely withholds them. That is the difference between "a market we cannot
  * serve" and "a bug in our reader", which is the most consequential distinction this phase makes.
  */
+/** Conservative merge: a component survives only if both candidates have it. */
+function intersectComponents(a, b) {
+  return {
+    street: a.street && b.street,
+    locality: a.locality && b.locality,
+    region: a.region && b.region,
+    postalCode: a.postalCode && b.postalCode,
+    countryPublished: a.countryPublished && b.countryPublished,
+    countryParsed: a.countryParsed && b.countryParsed,
+    // Only if they agree; two different countries on one page means we do not know which listing
+    // this is, and a geocoder pointed at the wrong country returns nothing or somewhere wrong.
+    country: a.country === b.country ? a.country : null,
+  };
+}
+
 function coordinatesIn(node) {
   const candidates = [];
   const geo = node.geo;
@@ -193,7 +208,19 @@ export function extractFromStructuredData(doc) {
     for (const node of walk(parsed)) {
       const types = typesOf(node);
       if (!types.some((t) => LODGING_TYPES.has(t))) continue;
-      addressComponents = addressComponents ?? addressComponentsOf(node);
+      // INTERSECT across every lodging node, never take the first.
+      //
+      // Taking the first meant a page carrying a complete "related hotel" node ahead of an
+      // incomplete target node was reported as coarse-geocodable when the listing itself was not —
+      // the same first-wins mistake as the coordinate tiers, in the one place it had not been fixed.
+      // Intersecting is the conservative reading: a component counts as available only if EVERY
+      // candidate has it, so the answer can understate viability but never overstate it.
+      // (Codex review, PR #8.)
+      const nodeComponents = addressComponentsOf(node);
+      if (nodeComponents != null) {
+        addressComponents =
+          addressComponents == null ? nodeComponents : intersectComponents(addressComponents, nodeComponents);
+      }
       const coordinates = coordinatesIn(node);
       if (coordinates.conflicting) {
         return { ...ambiguous('structured data described two different places'), addressComponents };
