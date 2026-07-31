@@ -80,6 +80,13 @@ function summarise(rows, label) {
     }
   }
 
+  const unsettled = rows.filter((r) => r.settled === false).length;
+  if (unsettled > 0) {
+    console.log(
+      `    logged while still settling  ${pct(unsettled, total)}  — a coordinate might still have appeared`,
+    );
+  }
+
   // ── WHETHER IT WAS RIGHT ───────────────────────────────────────────────────
   //
   // A SEPARATE denominator, stated every time. Only a person can say whether a coordinate is the

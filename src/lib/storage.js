@@ -250,6 +250,8 @@ const EXPORT_FIELDS = [
   // `outcome` in the report, because an extraction rate over 100 pages and a correctness rate over
   // 12 are different numbers and must never be quoted as one.
   'verified',
+  // Whether the page had finished settling when the record was taken.
+  'settled',
   'precisionVerdict',
   'softNavigation',
   'domSettled',

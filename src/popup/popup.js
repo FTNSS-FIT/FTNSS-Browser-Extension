@@ -140,25 +140,31 @@ async function render() {
   const cohortEl = document.getElementById('cohort');
   cohortEl.replaceChildren(el('div', detected === 'other' ? 'not a listed site' : detected, 'muted'));
 
-  if (reading.provisional === true) {
-    // Still working out whether the page is readable. Shown, so the operator knows the extension is
-    // alive, and not recordable — "no read" here would write a false miss for a page whose
-    // coordinates are about to appear.
-    //
-    // AND WE COME BACK. Rendering once and returning left the popup saying "still reading" forever:
-    // the content script settled a second later and nothing asked it again, so that listing could
-    // never be recorded at all. The pages that take a moment to settle are the slow, heavy ones, so
-    // silently losing them raises the measured hit rate — the same direction as every other defect
-    // this instrument has had. (Codex review rounds 24 and 25, PR #1.)
-    readingEl.appendChild(el('div', 'still reading this page…', 'muted'));
-    await refreshCount();
+  // STILL SETTLING — SHOWN, NOT BLOCKING.
+  //
+  // This used to return before rendering any controls, so while the page was settling there was no
+  // Log button at all. On a site whose address appears at 600ms and whose coordinate never appears,
+  // that is five seconds of an instrument that will not let you record anything, with no indication
+  // of how long it intends to keep you waiting.
+  //
+  // The reason the block existed is still valid — logging "nothing found" on a page whose
+  // coordinate is a second away writes a false miss. But the answer is to SHOW the state and let the
+  // person decide, not to take the button away: they are looking at the page and can see whether it
+  // has finished loading. The record carries whether it had settled, so the report can separate them.
+  const settling = reading.provisional === true;
+  if (settling) {
+    const elapsed = ((MAX_POLLS - pollsRemaining) * POLL_INTERVAL_MS) / 1000;
     if (pollsRemaining > 0) {
+      readingEl.appendChild(
+        el('div', `still reading… ${elapsed.toFixed(1)}s — a coordinate may still appear`, 'muted'),
+      );
       pollsRemaining -= 1;
-      setTimeout(() => void render(), 400);
+      pollTimer = setTimeout(() => void render(), POLL_INTERVAL_MS);
     } else {
-      readingEl.appendChild(el('div', 'This page did not settle. Reload it and try again.', 'warn'));
+      readingEl.appendChild(
+        el('div', 'stopped waiting — this is what the page gives us. Logging it is fine.', 'warn'),
+      );
     }
-    return;
   }
 
   const hasCoordinate = reading.result?.status === 'found';
@@ -222,6 +228,11 @@ async function render() {
   let recorded = false;
   async function log({ notAListing = false } = {}) {
     if (recorded) return; // one record per popup opening
+    // Stop re-reading: a refresh mid-log would replace the controls under the person's hands.
+    if (pollTimer != null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
     if (detected === 'other') {
       statusEl.replaceChildren(el('span', 'This is not one of the listed sites.', 'warn'));
       return;
@@ -273,6 +284,10 @@ async function render() {
         outcome: reading.result?.status ?? 'not_found',
         // WHETHER A PERSON CHECKED IT — null when nobody did, which is the common case by design.
         verified,
+        // Whether the page had finished settling when this was logged. A reading taken while a
+        // coordinate might still have appeared is usable but weaker, and the report says so rather
+        // than mixing it in silently.
+        settled: !settling,
         precisionVerdict,
         timing: reading.timing,
         tiers: reading.tiers,
@@ -289,7 +304,9 @@ async function render() {
 
     recorded = true;
     const what = reading.result?.status === 'found' ? 'coordinate' : reading.result?.status ?? 'nothing';
-    controlsEl.replaceChildren(el('div', `Logged: ${what}${verified ? ` (${verified})` : ''}`, 'ok'));
+    controlsEl.replaceChildren(
+      el('div', `Logged: ${what}${verified ? ` (${verified})` : ''}${settling ? ' — while still settling' : ''}`, 'ok'),
+    );
     statusEl.replaceChildren(el('span', 'Open the popup again on the next listing.', 'muted'));
     await refreshCount();
   }
