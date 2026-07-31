@@ -142,14 +142,29 @@ export async function migrateAwayLocalCohort() {
  * and messaging our own content script is not a new capability. Returns null when there is no
  * content script to answer — which is the correct answer for a page we do not measure.
  */
-export async function readActivePage() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id == null) return null;
-    return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_READ' });
-  } catch {
-    return null;
+export async function readActivePage({ attempts = 1, intervalMs = 300 } = {}) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id == null) return null;
+
+  // RETRY WHILE THE CONTENT SCRIPT IS STILL ATTACHING.
+  //
+  // A content script cannot run until the page reaches document_idle, and Booking listings were
+  // measured taking a median of 1.3 SECONDS to get there, with 7 of 27 over two seconds and one at
+  // 5.8. Open the popup before then and `sendMessage` throws because there is nobody listening —
+  // which was reported as "No reading for this page", indistinguishable from a page we cannot read.
+  //
+  // So it looked frozen and broken while being neither, and clicking again a moment later worked.
+  // A tool that is right on the second try and says nothing useful on the first teaches its operator
+  // to distrust it. (Jordan, on 27 Booking pages.)
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_READ' });
+    } catch {
+      if (attempt === attempts - 1) return null;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
   }
+  return null;
 }
 
 export async function loadRecords() {
@@ -295,6 +310,10 @@ const EXPORT_FIELDS = [
   'verified',
   // Whether the page had finished settling when the record was taken.
   'settled',
+  // Which address components the page published — presence only, plus a country code. The question
+  // "can we geocode without sending the street?" turns on this, and it is answerable without ever
+  // transmitting an address. (docs/DECISIONS.md 13.)
+  'addressComponents',
   'precisionVerdict',
   'softNavigation',
   'domSettled',
@@ -400,6 +419,30 @@ const KNOWN_REASONS = new Set([
 const knownReason = (value) =>
   typeof value === 'string' && KNOWN_REASONS.has(value) ? value : null;
 
+/** Rebuilt, like every other nested object: an allowlist that stops at the top level is not one. */
+function exportableAddressComponents(components) {
+  if (components == null || typeof components !== 'object') return null;
+  return {
+    street: components.street === true,
+    locality: components.locality === true,
+    region: components.region === true,
+    postalCode: components.postalCode === true,
+    // PRESENCE ONLY. The country CODE was carried to answer one question — is coarse geocoding
+    // viable, and how much is it worth in each market, given that postcode precision is not
+    // comparable across countries. That question is answered: 100% of Booking pages publish a
+    // country, and the market-by-market caveat is recorded in DECISIONS 13.
+    //
+    // Keeping it now costs privacy for no remaining benefit. Unlike a coordinate — which only
+    // exists on pages that published one — a country code would introduce location onto records
+    // that otherwise carry none at all. If a future session needs it, re-add it deliberately for
+    // that session. (Codex review, PR #8.)
+    countryPublished: components.countryPublished === true,
+    // Whether we could turn it into a code — the thing that decides whether it is usable — without
+    // carrying which country it was.
+    countryParsed: components.countryParsed === true,
+  };
+}
+
 function exportableTiers(tiers) {
   if (tiers == null || typeof tiers !== 'object') return null;
   const tier = (value) => (TIER_STATUSES.has(value) ? value : 'not_found');
@@ -439,6 +482,9 @@ export function exportableRecords(records) {
     // untouched, which is the same failure the allowlist exists to prevent, one level down.
     if (out.timing !== undefined) out.timing = exportableTiming(out.timing);
     if (out.tiers !== undefined) out.tiers = exportableTiers(out.tiers);
+    if (out.addressComponents !== undefined) {
+      out.addressComponents = exportableAddressComponents(out.addressComponents);
+    }
     out.result = exportableResult(record.result);
     return out;
   });

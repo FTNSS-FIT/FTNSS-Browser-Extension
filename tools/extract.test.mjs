@@ -217,7 +217,7 @@ test('tier 2 survives a malformed url', () => {
 // ─── tier 3 ───────────────────────────────────────────────────────────────────
 
 test('tier 3 returns an address string, not a coordinate', () => {
-  const doc = fakeDocument({ '[itemprop="address"]': [textNode('Travessa das Merceeiras 27, Lisboa')] });
+  const doc = fakeDocument({ '[itemprop="address"]': [textNode('12 Example Street, Exampleton')] });
   const r = extractFromAddressText(doc);
   assert.equal(r.status, 'found_address');
   assert.equal(r.lat, undefined);
@@ -341,11 +341,22 @@ test('rounding never produces an out-of-range point at the edges of the world', 
   }
 });
 
-test('longitude wraps across the antimeridian rather than clamping', () => {
-  // Clamping 180.001 to 180 would be wrong by a whole grid cell; wrapping puts it where it belongs.
-  const rounded = toTransmittablePoint(0, 179.999);
-  assert.ok(rounded.lon < 0, 'should have wrapped to the western hemisphere');
-  assert.ok(distanceMetres({ lat: 0, lon: 179.999 }, rounded) < TRANSMIT_KM * 1000);
+test('longitude wraps across the antimeridian rather than clamping', async () => {
+  const { isInRange } = await import('../src/lib/geo.js');
+  // Tests the PROPERTY, not one input. Which longitude rounds past 180 depends on the cell size, so
+  // hardcoding an example ties the test to a particular TRANSMIT_KM — it passed at 500m and failed
+  // at 250m for a reason that had nothing to do with the behaviour being checked.
+  //
+  // Clamping 180.001 to 180 would be wrong by a whole cell; wrapping puts it where it belongs.
+  let wrapped = 0;
+  for (let i = 0; i < 200; i += 1) {
+    const lon = 180 - i * 0.0005;
+    const rounded = toTransmittablePoint(0, lon);
+    assert.ok(rounded && isInRange(rounded.lat, rounded.lon), `out of range at ${lon}`);
+    assert.ok(distanceMetres({ lat: 0, lon }, rounded) < TRANSMIT_KM * 1000);
+    if (rounded.lon < 0) wrapped += 1;
+  }
+  assert.ok(wrapped > 0, 'at least one longitude near 180 must wrap to the western hemisphere');
 });
 
 test('tier 2 fails closed when map urls disagree about where the listing is', () => {
@@ -539,7 +550,7 @@ test('an ambiguous tier is never rescued by a lower tier', async () => {
       scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } })),
       scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 51.5074, longitude: -0.1278 } })),
     ],
-    '[itemprop="address"]': [textNode('Travessa das Merceeiras 27, Lisboa')],
+    '[itemprop="address"]': [textNode('12 Example Street, Exampleton')],
   });
   assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
@@ -572,7 +583,7 @@ test('nested objects are rebuilt, not carried over', async () => {
 test('tier 3 bounds how much work a page can commission', () => {
   // textContent materialises the whole subtree before any cap applies, and readiness probes re-run
   // extraction every 250ms — so an unbounded read is work a page can ask for repeatedly.
-  const huge = 'x '.repeat(500_000) + '27 Travessa das Merceeiras';
+  const huge = 'x '.repeat(500_000) + '12 Example Street';
   const many = Array.from({ length: 5000 }, () => textNode(huge));
   const doc = fakeDocument({ '[class*="address" i]': many });
   const started = Date.now();
@@ -669,4 +680,170 @@ test('a blank or malformed metadata coordinate is refused, not coerced', () => {
     const doc = fakeDocument({ 'meta[name="geo.position" i]': [attrNode({ content })] });
     assert.equal(extractFromMapLinks(doc).status, 'not_found', `should have refused "${content}"`);
   }
+});
+
+// ─── structured address components ───────────────────────────────────────────
+
+test('address components are captured from a lodging node with no coordinates', () => {
+  // The case that matters: Booking publishes a Hotel with an address and no point, so this is
+  // exactly the page that would need geocoding — and the only page where knowing which components
+  // exist decides whether geocoding can be done safely.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      name: 'Riu Plaza',
+      address: {
+        '@type': 'PostalAddress',
+        streetAddress: '12 Example Street',
+        addressLocality: 'Exampleton',
+        postalCode: 'EX1 2AB',
+        addressCountry: 'GB',
+      },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'not_found');
+  assert.deepEqual(r.addressComponents, {
+    street: true,
+    locality: true,
+    region: false,
+    postalCode: true,
+    countryPublished: true,
+    countryParsed: true,
+    country: 'GB',
+  });
+  // The exported record keeps only presence — see storage.js.
+});
+
+test('components report PRESENCE, never the address itself', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '12 Example Street', addressLocality: 'Exampleton', addressCountry: 'GB' },
+    }),
+  );
+  const serialised = JSON.stringify(extractFromStructuredData(doc).addressComponents);
+  // A measurement that requires the thing whose safety it is measuring is not worth taking.
+  for (const leak of ['Example Street', 'Exampleton', '12']) {
+    assert.ok(!serialised.includes(leak), `components leaked "${leak}"`);
+  }
+  assert.ok(serialised.includes('GB'), 'the country is carried deliberately — see the module comment');
+});
+
+test('coarse geocodability needs a postcode AND a country', async () => {
+  const { coarselyGeocodable } = await import('../src/extract/address-components.js');
+  assert.equal(coarselyGeocodable({ postalCode: true, country: 'GB' }), true);
+  // A postcode with no country is ambiguous worldwide; a country with no postcode is a nation.
+  assert.equal(coarselyGeocodable({ postalCode: true, country: null }), false);
+  assert.equal(coarselyGeocodable({ postalCode: false, country: 'GB' }), false);
+  assert.equal(coarselyGeocodable(null), false);
+});
+
+test('a nested Country object still yields a country code', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  const components = addressComponentsOf({
+    address: { postalCode: 'M5V 2T6', addressCountry: { '@type': 'Country', name: 'ca' } },
+  });
+  assert.equal(components.country, 'CA');
+});
+
+test('a country name is resolved through a fixed table, and nothing else passes', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  const code = (country) => addressComponentsOf({ address: { postalCode: 'X', addressCountry: country } }).country;
+
+  // Booking publishes names on most pages. Reading only codes discarded a component that was there.
+  assert.equal(code('Portugal'), 'PT');
+  assert.equal(code('United States'), 'US');
+  // The whole table, not one entry. A careless bulk replace mapped Portugal to GB and a test that
+  // checked only one country locked the wrong answer in — so this checks every mapping it relies on.
+  for (const [name, want] of Object.entries({
+    Portugal: 'PT', Spain: 'ES', France: 'FR', Germany: 'DE', Italy: 'IT', Ireland: 'IE',
+    Canada: 'CA', Mexico: 'MX', Brazil: 'BR', Netherlands: 'NL', Australia: 'AU', Japan: 'JP',
+    Greece: 'GR', Norway: 'NO', Sweden: 'SE', 'New Zealand': 'NZ',
+  })) {
+    assert.equal(code(name), want, `${name} should map to ${want}`);
+  }
+  assert.equal(code('united kingdom'), 'GB');
+  assert.equal(code('España'), 'ES');
+
+  // The input is page-controlled text, so the table is the whole allowance: an unknown name yields
+  // null and is reported as unparsed, never carried through as an arbitrary string.
+  assert.equal(code('Freedonia'), null);
+  assert.equal(code('<script>alert(1)</script>'), null);
+});
+
+test('"UK" is normalised to GB rather than passed to a geocoder as-is', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Measured on real Booking pages. The UK's actual code is GB; "UK" is a reserved exception that
+  // everyone uses anyway, and it would be a lookup that quietly fails.
+  assert.equal(addressComponentsOf({ address: { postalCode: 'W1', addressCountry: 'UK' } }).country, 'GB');
+});
+
+test('a country published in a form we cannot parse is distinguished from one that is absent', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Opposite findings: one is about the site, the other is about us. The first Booking measurements
+  // came back null on 24 of 27 pages with no way to tell which had happened.
+  const unparsed = addressComponentsOf({ address: { postalCode: 'M5V', addressCountry: 'Ruritania' } });
+  assert.equal(unparsed.countryPublished, true, 'they published something');
+  assert.equal(unparsed.country, null, 'we could not turn it into a code');
+
+  const absent = addressComponentsOf({ address: { postalCode: 'M5V', addressLocality: 'Toronto' } });
+  assert.equal(absent.countryPublished, false);
+  assert.equal(absent.country, null);
+});
+
+test('the exported record carries no country code, only whether one was published', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  // The code answered its question — coarse geocoding is viable, and its worth varies by market
+  // (DECISIONS 13). Keeping it now would introduce location onto records that carry none.
+  const [out] = exportableRecords([
+    { addressComponents: { street: true, locality: true, region: false, postalCode: true, countryPublished: true, country: 'GB' } },
+  ]);
+  assert.equal(out.addressComponents.countryPublished, true);
+  assert.equal(out.addressComponents.country, undefined);
+  assert.ok(!JSON.stringify(out).includes('GB'));
+});
+
+test('a country we cannot read does not count as usable', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Three states, not two. Collapsing "published but unreadable" into "published" overstated
+  // geocoding viability — a country we cannot turn into a code is no more use to a geocoder than
+  // one that was never there, but it looked identical in the report.
+  const unreadable = addressComponentsOf({ address: { postalCode: 'X', addressCountry: 'Ruritania' } });
+  assert.equal(unreadable.countryPublished, true);
+  assert.equal(unreadable.countryParsed, false);
+
+  const usable = addressComponentsOf({ address: { postalCode: 'X', addressCountry: 'Canada' } });
+  assert.equal(usable.countryParsed, true);
+
+  const absent = addressComponentsOf({ address: { postalCode: 'X' } });
+  assert.equal(absent.countryPublished, false);
+  assert.equal(absent.countryParsed, false);
+});
+
+test('address components are intersected across lodging nodes, not taken from the first', () => {
+  // A page carrying a complete "related hotel" ahead of an incomplete target would otherwise be
+  // reported as coarse-geocodable when the listing itself is not — the same first-wins mistake as
+  // the coordinate tiers, in the one place it had not been fixed.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'A', addressLocality: 'B', postalCode: 'C', addressCountry: 'GB' },
+    }),
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: 'D', addressLocality: 'E' } }),
+  );
+  const components = extractFromStructuredData(doc).addressComponents;
+  assert.equal(components.street, true, 'both have a street');
+  assert.equal(components.postalCode, false, 'only one has a postcode — the answer must not overstate');
+  assert.equal(components.countryParsed, false);
+});
+
+test('two lodging nodes in different countries yield no country at all', async () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'A', addressCountry: 'GB' } }),
+    JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'B', addressCountry: 'FR' } }),
+  );
+  // We do not know which listing the page is about, and a geocoder aimed at the wrong country
+  // returns nothing or somewhere wrong.
+  assert.equal(extractFromStructuredData(doc).addressComponents.country, null);
 });

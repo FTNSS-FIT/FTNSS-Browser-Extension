@@ -29,14 +29,24 @@
  * times coarser than a GPS fix, and in any city it contains dozens of buildings. The privacy
  * difference between 500m and 1.11km is small; the accuracy difference is not.
  *
- * 250m cells (174m error) were considered and declined. Below 500m you start distinguishing
- * individual city blocks, and the claim gets harder to state plainly in a store listing — which
- * matters, because per spec §1 the privacy story is a marketing asset and not only an engineering
- * property. 500m buys most of the accuracy without weakening the sentence.
+ * REVISED TO 250m once there was data. The first four verified readings measured the extractor's own
+ * error at 24, 29, 42 and 52 metres — so rounding, not reading, is what limits the answer:
  *
- * (Jordan, 2026-07-31, on seeing that 1.11km was inherited rather than chosen.)
+ *     500m cells: extraction ~52m + rounding up to 320m = up to 372m, rounding 6.2x the extraction
+ *     250m cells: extraction ~52m + rounding up to 174m = up to 226m, rounding 3.3x the extraction
+ *
+ * At 500m we were discarding precision the extractor had actually earned. 250m halves the dominant
+ * term and still leaves ~3x margin over the reading error, so the reading stays the thing being
+ * measured rather than the grid.
+ *
+ * The earlier objection — that below 500m the privacy sentence gets harder to state plainly — was
+ * made without data and does not survive it. A 250m cell still contains a city block's worth of
+ * buildings and is ~50x coarser than a GPS fix; it identifies a neighbourhood, not an address.
+ *
+ * (Jordan, 2026-07-31: 1.11km inherited -> 500m on measured rounding error -> 250m once the
+ * extractor's own accuracy was known.)
  */
-export const TRANSMIT_KM = 0.5;
+export const TRANSMIT_KM = 0.25;
 
 /** Degrees of latitude per kilometre is very nearly constant; degrees of longitude are not. */
 const KM_PER_DEGREE_LATITUDE = 111.32;

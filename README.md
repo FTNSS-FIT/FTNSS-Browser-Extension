@@ -43,7 +43,7 @@ Four properties carry the claim:
    other page — a limit enforced by the browser, not by us.
 2. **The URL never leaves your browser.** Not the address bar, not the page title, not the content.
    Our servers cannot reconstruct what you were looking at, because it was never sent.
-3. **Coordinates are rounded before they are sent.** Cells 500m across — plenty to answer "is
+3. **Coordinates are rounded before they are sent.** Cells 250m across — plenty to answer "is
    there a gym near this hotel", uselessly coarse as a location trail. The grid is **latitude-aware**:
    a fixed number of decimal places is ~1.1km near the equator and about 190m at 80°, so the
    longitude step is derived from the latitude.
@@ -65,6 +65,7 @@ step at all, which is the strongest form of that promise: the extension you load
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — how it runs, how it relates to the FTNSS platform, and where
   cross-browser support actually stands
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — the architectural decisions and why
+- [`docs/PHASE-1-FINDINGS.md`](docs/PHASE-1-FINDINGS.md) — **what the measurement actually found**
 - [`docs/PHASE-1-MEASUREMENT.md`](docs/PHASE-1-MEASUREMENT.md) — the measurement protocol
 - [`AGENTS.md`](AGENTS.md) — the standards a change is held to
 

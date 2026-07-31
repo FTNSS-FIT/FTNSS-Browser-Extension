@@ -22,7 +22,13 @@ import {
   migrateAwayLocalCohort,
   migrateStoredRecords,
 } from '../lib/storage.js';
-import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
+import {
+  TRANSMIT_KM,
+  toTransmittablePoint,
+  distanceMetres,
+  parseCoordinate,
+  isUsableCoordinate,
+} from '../lib/geo.js';
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -122,13 +128,21 @@ async function render() {
     statusEl.appendChild(el('span', pendingNotice, 'warn'));
     pendingNotice = null;
   }
-  // Read the page as it is right now.
-  let reading = await readActivePage();
+  // Read the page as it is right now, retrying while the content script may still be attaching.
+  readingEl.className = 'muted';
+  readingEl.textContent = 'reading the page…';
+  // Long enough to cover the SLOWEST attachment actually measured — 5.8 seconds on a Booking page,
+  // where 12 attempts at 300ms covered only 3.3 and gave up while the page was still coming up. A
+  // retry budget shorter than the thing it retries for is a retry that reports a false negative.
+  let reading = await readActivePage({ attempts: 30, intervalMs: 300 });
 
   if (reading == null) {
     readingEl.className = 'muted';
+    // Says which of the two it is. "No reading for this page" covered both a page we do not measure
+    // and a page that simply had not finished loading, and they need different responses from the
+    // person holding the instrument.
     readingEl.textContent =
-      'No reading for this page. Open a listing on one of the sites in the manifest, or reload the tab.';
+      'Nothing here to read. Either this is not a listing on a site we measure, or the page is still loading — reload and try again.';
     await refreshCount();
     return;
   }
@@ -290,7 +304,71 @@ async function render() {
 
   const truth = el('input');
   truth.placeholder = 'Optional — ground truth "lat, lon"';
-  if (hasCoordinate) controlsEl.appendChild(truth);
+  const truthFeedback = el('div', null, 'muted');
+
+  if (hasCoordinate) {
+    controlsEl.appendChild(truth);
+    controlsEl.appendChild(truthFeedback);
+
+    // SHOW THE DISTANCE THE MOMENT IT CAN BE COMPUTED.
+    //
+    // Without this the person judges by eye, and by eye a pin that sits slightly off looks wrong.
+    // It happened on the first verified reading: a coordinate was marked WRONG whose measured error
+    // was 42 metres — inside the 500m grid cell, so literally invisible after rounding, and
+    // irrelevant against a 5km search radius. One record, and it drove the reported wrong-rate to
+    // 100%.
+    //
+    // The instrument was asking for a judgement it had all the information to inform, and didn't.
+    // (Jordan's first verification session.)
+    truth.addEventListener('input', () => {
+      const raw = truth.value.trim();
+      if (raw === '') {
+        truthFeedback.className = 'muted';
+        truthFeedback.textContent = '';
+        return;
+      }
+      const groundTruth = parseGroundTruth(raw);
+      if (groundTruth == null) {
+        truthFeedback.className = 'muted';
+        truthFeedback.textContent = 'waiting for "lat, lon"…';
+        return;
+      }
+      const point = { lat: reading.result.lat, lon: reading.result.lon };
+      const metres = Math.round(distanceMetres(point, groundTruth));
+
+      // COMPARE THE ROUNDED POINTS. "Smaller than the cell means rounding erases it" is FALSE, and
+      // provably so: two points ONE METRE apart either side of a cell boundary round into different
+      // cells and end up 333m apart. Cell size bounds the error rounding ADDS; it says nothing about
+      // whether a particular pair survives it. Only rounding both and comparing answers that.
+      // (Codex review, PR #8.)
+      const roundedRead = toTransmittablePoint(point.lat, point.lon);
+      const roundedTruth = toTransmittablePoint(groundTruth.lat, groundTruth.lon);
+      const sameCell =
+        roundedRead != null &&
+        roundedTruth != null &&
+        roundedRead.lat === roundedTruth.lat &&
+        roundedRead.lon === roundedTruth.lon;
+      const afterRounding =
+        roundedRead && roundedTruth ? Math.round(distanceMetres(roundedRead, roundedTruth)) : null;
+
+      // NEUTRAL ABOVE ONE CELL.
+      //
+      // Calling anything up to a kilometre "adjacent" and "small" was wrong twice: a kilometre spans
+      // four 250m cells, and near the edge of a 5km search it can change which gyms appear at all.
+      // Worse, it was leading the operator toward "correct" — and their verdict is the ground truth
+      // the whole measurement rests on, so nudging it corrupts the one thing we cannot recompute.
+      // State the distances; let them judge. (Codex review, PR #8.)
+      const cells = afterRounding == null ? null : Math.round(afterRounding / (TRANSMIT_KM * 1000));
+      if (sameCell) {
+        truthFeedback.className = 'ok';
+        truthFeedback.textContent = `${metres}m out — rounds into the same cell, so this is a match.`;
+      } else {
+        truthFeedback.className = 'muted';
+        truthFeedback.textContent =
+          `${metres}m out, ${afterRounding}m after rounding — ${cells} cell${cells === 1 ? '' : 's'} away. Your call.`;
+      }
+    });
+  }
 
   async function log({ notAListing = false } = {}) {
     if (recorded) return; // one record per popup opening
@@ -386,6 +464,7 @@ async function render() {
         precisionVerdict,
         timing: reading.timing,
         tiers: reading.tiers,
+        addressComponents: reading.addressComponents ?? null,
         errorMetres,
         result: reading.result,
         // Recomputed from the reading we are actually logging, not from the render-time snapshot.

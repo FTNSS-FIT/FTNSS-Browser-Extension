@@ -216,6 +216,8 @@
       // and the only verdicts available without a coordinate are "no read" and "can't tell", so a
       // page whose coordinate was one second away could be recorded as a miss.
       // (Codex review round 22, PR #1.)
+      // Presence flags and a country code, never an address. See extract/address-components.js.
+      addressComponents: extraction.addressComponents,
       provisional: !readinessSettled && extraction.result.status !== 'found',
       pageToken,
       // Compared against the operator's declared cohort IN THE BROWSER, to catch a mislabelled

@@ -44,7 +44,7 @@ open-source question of "is it safe to publish this key?" does not arise. There 
 
 ## 3. Coordinates are rounded at the outbound boundary
 
-**Decided:** rounding to 500m cells happens in one place, at the point of transmission, and no caller can
+**Decided:** rounding to 250m cells happens in one place, at the point of transmission, and no caller can
 bypass it.
 
 **Why.** Rounding performed by each caller is correct only for as long as every caller remembers. The
@@ -186,9 +186,9 @@ be mostly empty at current supply, and beyond about 5km a gym stops being somewh
 a hotel. 5km is a short taxi or metro ride in a city, which is still a usable answer.
 
 **How this interacts with the rounding — they are different things.** The rounding is about
-*precision of the query point*: we are told roughly where, to within about 320m. The radius is about *how
+*precision of the query point*: we are told roughly where, to within about 160m. The radius is about *how
 far we then look*. They are unrelated numbers, but the first constrains what the second can claim:
-because the query point carries about 320m of uncertainty, **a displayed distance cannot be more
+because the query point carries about 160m of uncertainty, **a displayed distance cannot be more
 precise than that**. The panel says "about 2km" or "a short walk", never "400m from this hotel",
 which the spec's own mock-up shows and which is not a claim the architecture can support.
 
@@ -204,7 +204,7 @@ has to be able to state.
 Booking.com published no coordinates on 8 of 8 pages: a `Hotel` block with an address, no usable map
 URL. If that holds, the Booking path needs a geocoder, and that collides with the architecture.
 
-**A hotel's street address is the listing identity.** "27 Travessa das Merceeiras, Lisboa" identifies
+**A hotel's street address is the listing identity.** "12 Example Street, Exampleton" identifies
 which property someone is looking at as precisely as the URL does. So sending it anywhere to be
 geocoded gives away the thing §4.2 of the spec promises we cannot know:
 
@@ -214,7 +214,7 @@ geocoded gives away the thing §4.2 of the spec promises we cannot know:
 | Extension → our own server | **We** learn which property is being viewed. "We don't log it" is a policy promise, and this project's argument is that its guarantees are architectural |
 | Client-side, offline | Not viable — street-level data for one country is far too large to ship in an extension |
 
-**The likely resolution: geocode coarsely.** We round to 500m cells anyway, so we do not need street
+**The likely resolution: geocode coarsely.** We round to 250m cells anyway, so we do not need street
 precision. Geocoding **postcode plus locality** lands inside our own rounding error and does not
 transmit the listing identity. A coarser query is a better answer than a broken promise.
 
@@ -223,6 +223,50 @@ autocomplete for humans typing into a box. Nothing here is typed; the input is a
 address. For structured forward geocoding the realistic options are Nominatim or Pelias, both of
 which can be **self-hosted** — which matters more than their accuracy difference, because a
 self-hosted geocoder means no third party is in the path at all.
+
+**Measuring it before building it.** The harness now reads the structured `PostalAddress` from the
+same lodging node tier 1 already finds, and records **which components exist** — never their values.
+That answers the question the decision turns on without transmitting anything:
+
+- Does the page publish components *separately*? A scraped address string cannot be split, so coarse
+  geocoding is impossible on a page that only renders one.
+- Is there a postcode **and** a country? That is the minimum that resolves anywhere.
+- Which country? This is the part most likely to be underestimated: **postcode precision is not
+  comparable across countries.** A UK or Dutch postcode identifies a building — finer than the 250m
+  we round to, so geocoding one would be no coarser than sending the street. A US ZIP covers several
+  square kilometres, which is coarser than our search radius is tight. "Coarse-geocodable" means
+  something different in each market, and a single global answer would be wrong in both directions.
+
+The report prints all three. If the answer is that most pages carry a postcode and a country, coarse
+geocoding is viable and the street never has to leave the browser. If most carry only a street, the
+decision is harder and belongs back with Jordan.
+
+### Measured, 2026-07-31 — 34 Booking pages
+
+| | |
+|---|---|
+| Structured `PostalAddress` published | **100%** |
+| Street, locality, postcode | **100%** |
+| Country published | **100%** |
+
+**Coarse geocoding is viable.** Postcode and country are present on every page measured, so the
+street never has to leave the browser. That resolves the tension above in the good direction.
+
+Two caveats that survive the measurement:
+
+**Postcode precision is not comparable across markets, and this is the part that decides how much
+the privacy win is worth.** A UK, Dutch or Canadian postcode resolves to a building or a handful of
+them — *finer than the 250m we round to*, so geocoding one leaks no less than the street would. A US
+ZIP covers several square kilometres — coarser than the panel's own search radius, so results would
+be materially worse. The honest position is that coarse geocoding is a genuine privacy improvement
+in some countries, an empty gesture in others, and a quality regression in the US. Whether to vary
+behaviour by country is an open product question, not an engineering one.
+
+**Our reader was the bottleneck, not the sites.** The first measurement reported a country on 11% of
+pages; the truth was 100%. Booking publishes names (`"Canada"`), not codes, and the parser accepted
+only codes — so a component that was there all along was reported absent. Recording *published* and
+*parsed* separately is what surfaced it, and it is the same distinction that separated
+"no coordinates published" from "coordinates present but refused".
 
 **Before any of this, confirm the premise.** Coordinate probing was extended to meta tags
 (`geo.position`, `ICBM`, `og:latitude`, `place:location:*`) and `data-lat`/`data-lng` attributes,

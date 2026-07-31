@@ -10,6 +10,7 @@
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
 import { found, notFound, ambiguous } from './result.js';
+import { addressComponentsOf } from './address-components.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 /**
@@ -119,6 +120,21 @@ function* walk(root) {
  * from a site that genuinely withholds them. That is the difference between "a market we cannot
  * serve" and "a bug in our reader", which is the most consequential distinction this phase makes.
  */
+/** Conservative merge: a component survives only if both candidates have it. */
+function intersectComponents(a, b) {
+  return {
+    street: a.street && b.street,
+    locality: a.locality && b.locality,
+    region: a.region && b.region,
+    postalCode: a.postalCode && b.postalCode,
+    countryPublished: a.countryPublished && b.countryPublished,
+    countryParsed: a.countryParsed && b.countryParsed,
+    // Only if they agree; two different countries on one page means we do not know which listing
+    // this is, and a geocoder pointed at the wrong country returns nothing or somewhere wrong.
+    country: a.country === b.country ? a.country : null,
+  };
+}
+
 function coordinatesIn(node) {
   const candidates = [];
   const geo = node.geo;
@@ -165,6 +181,10 @@ export function extractFromStructuredData(doc) {
   let parsedAny = false;
   let sawLodgingWithoutGeo = false;
   let sawUnusableGeo = false;
+  // Captured from the same lodging node whether or not it carries coordinates — the case that
+  // matters most is precisely the one where it does NOT, because that is the page that would need
+  // geocoding. Presence only; see address-components.js for why.
+  let addressComponents = null;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -188,9 +208,22 @@ export function extractFromStructuredData(doc) {
     for (const node of walk(parsed)) {
       const types = typesOf(node);
       if (!types.some((t) => LODGING_TYPES.has(t))) continue;
+      // INTERSECT across every lodging node, never take the first.
+      //
+      // Taking the first meant a page carrying a complete "related hotel" node ahead of an
+      // incomplete target node was reported as coarse-geocodable when the listing itself was not —
+      // the same first-wins mistake as the coordinate tiers, in the one place it had not been fixed.
+      // Intersecting is the conservative reading: a component counts as available only if EVERY
+      // candidate has it, so the answer can understate viability but never overstate it.
+      // (Codex review, PR #8.)
+      const nodeComponents = addressComponentsOf(node);
+      if (nodeComponents != null) {
+        addressComponents =
+          addressComponents == null ? nodeComponents : intersectComponents(addressComponents, nodeComponents);
+      }
       const coordinates = coordinatesIn(node);
       if (coordinates.conflicting) {
-        return ambiguous('structured data described two different places');
+        return { ...ambiguous('structured data described two different places'), addressComponents };
       }
       if (!coordinates.found) {
         // Distinguish "no coordinates published" from "coordinates published in a form we refused".
@@ -233,12 +266,14 @@ export function extractFromStructuredData(doc) {
       // building-accurate on every single listing. The person records the precision verdict.
       // (Codex review round 1, PR #1.)
       precision: 'unknown',
+      addressComponents,
     });
   }
 
-  if (!parsedAny) return notFound('ld+json present but none parsed');
+  const withComponents = (result) => ({ ...result, addressComponents });
+  if (!parsedAny) return withComponents(notFound('ld+json present but none parsed'));
   // Two different findings, deliberately not collapsed into one reason.
-  if (sawUnusableGeo) return notFound('lodging type found, coordinates present but refused');
-  if (sawLodgingWithoutGeo) return notFound('lodging type found, no coordinates published');
-  return notFound('no lodging type in structured data');
+  if (sawUnusableGeo) return withComponents(notFound('lodging type found, coordinates present but refused'));
+  if (sawLodgingWithoutGeo) return withComponents(notFound('lodging type found, no coordinates published'));
+  return withComponents(notFound('no lodging type in structured data'));
 }

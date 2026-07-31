@@ -25,7 +25,7 @@ architecturally, not by policy. Four properties carry that claim:
 
 1. Narrow, named host permissions. Never `<all_urls>`, never a wildcard TLD pattern.
 2. The URL, hostname, page title and page content never leave the browser.
-3. Coordinates are rounded to 500m cells **at the outbound boundary** before transmission.
+3. Coordinates are rounded to 250m cells **at the outbound boundary** before transmission.
 4. The source is published, so any of the above can be checked rather than believed.
 
 A change that erodes one of these is the most serious thing that can land here, including when it

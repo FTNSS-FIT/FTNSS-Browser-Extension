@@ -9,6 +9,7 @@
 // one "accuracy" figure is how a project ships on a number that looked fine.
 
 import { readFileSync } from 'node:fs';
+import { TRANSMIT_KM } from '../src/lib/geo.js';
 
 const LATENCY_BUDGET_MS = 800;
 const EXTRACT_BUDGET_MS = 150;
@@ -104,6 +105,60 @@ function summarise(allRows, label) {
     );
   }
 
+  // ── CAN THE PAGES WITHOUT COORDINATES BE GEOCODED, AND HOW SAFELY? ─────────
+  //
+  // The question DECISIONS 13 turns on. Geocoding a street address gives away the listing identity,
+  // which is exactly what the architecture promises we cannot learn — so the only acceptable form is
+  // coarse: postcode plus country, never the street. That is only possible if the page publishes
+  // those components SEPARATELY, which a scraped address string cannot tell us.
+  const needsGeocoding = rows.filter((r) => r.outcome === 'found_address' || r.outcome === 'not_found');
+  if (needsGeocoding.length > 0) {
+    const withComponents = needsGeocoding.filter((r) => r.addressComponents != null);
+    const coarse = withComponents.filter(
+      (r) => r.addressComponents.postalCode && r.addressComponents.countryParsed,
+    );
+    const streetOnly = withComponents.filter(
+      (r) =>
+        r.addressComponents.street &&
+        !(r.addressComponents.postalCode && r.addressComponents.countryParsed),
+    );
+
+    console.log(`  GEOCODING VIABILITY (${needsGeocoding.length} pages with no coordinate)`);
+    console.log(
+      `    structured address published   ${pct(withComponents.length, needsGeocoding.length)}`,
+    );
+    console.log(
+      `    COARSE-geocodable (postcode + country, no street)   ${pct(coarse.length, needsGeocoding.length)}`,
+    );
+    if (streetOnly.length > 0) {
+      console.log(
+        `    street only — would require sending the address   ${pct(streetOnly.length, needsGeocoding.length)}`,
+      );
+    }
+
+    // The per-country split is gone with the country code itself — see storage.js. The finding it
+    // produced is recorded in DECISIONS 13: postcode precision is not comparable across markets, so
+    // "coarse-geocodable" means something different in each. That does not need re-deriving from
+    // every future session.
+    // PUBLISHED BUT UNPARSED is a finding about US; absent is a finding about the site. Collapsing
+    // them would have hidden that Booking publishes a country on every page and we were failing to
+    // read it.
+    // Our bug and their absence are different findings, and neither is usable — but only one of
+    // them is fixable by us.
+    const unreadable = withComponents.filter(
+      (r) => r.addressComponents.countryPublished && !r.addressComponents.countryParsed,
+    );
+    if (unreadable.length > 0) {
+      console.log(
+        `    ⚠ country published but unreadable   ${pct(unreadable.length, withComponents.length)}  — our parser, not their markup`,
+      );
+    }
+    const absent = withComponents.filter((r) => !r.addressComponents.countryPublished);
+    if (absent.length > 0) {
+      console.log(`    country genuinely absent       ${pct(absent.length, withComponents.length)}`);
+    }
+  }
+
   // ── WHETHER IT WAS RIGHT ───────────────────────────────────────────────────
   //
   // A SEPARATE denominator, stated every time. Only a person can say whether a coordinate is the
@@ -121,6 +176,30 @@ function summarise(allRows, label) {
   } else {
     console.log(`    correct                   ${pct(correct.length, verified.length)}   ${correct.length}/${verified.length}`);
     console.log(`    WRONG                     ${pct(wrong, verified.length)}   ${wrong}/${verified.length}   <- must be ~0`);
+    // A verdict that disagrees with its own measurement is worth surfacing, because it is the one
+    // thing in this dataset a person can get wrong in a way no other check catches. On the first
+    // verification session a coordinate was marked WRONG whose measured error was 42m — inside the
+    // grid cell, so rounding erases it — and that single row drove the reported wrong-rate to 100%.
+    // Derived, not literal: this threshold is "inside the grid cell", so it has to move when the
+    // grid does or it starts flagging the wrong rows.
+    const cell = TRANSMIT_KM * 1000;
+    // A measured error smaller than the cell does NOT mean rounding erased it — two points a metre
+    // apart can straddle a boundary and land 333m apart. Without the rounded points we cannot say,
+    // and records do not carry the exact coordinate by design. So this flags rows worth RE-CHECKING
+    // rather than asserting they were fine, which is the strongest claim the stored data supports.
+    // (Codex review, PR #8.)
+    const disputed = rows.filter(
+      (r) => r.verified === 'wrong' && Number.isFinite(r.errorMetres) && r.errorMetres <= cell,
+    );
+    if (disputed.length > 0) {
+      console.log(
+        `    ⚠ ${disputed.length} marked WRONG with a measured error under ${cell}m (the cell size):`,
+      );
+      for (const r of disputed) {
+        console.log(`        ${r.errorMetres}m — likely inconsequential, though only re-checking can confirm`);
+      }
+      console.log('      An error this small usually cannot change which gyms are shown. Worth re-checking.');
+    }
     if (verified.length < 10) {
       console.log(`    ⚠ ${verified.length} verified is too few to trust this rate.`);
     }

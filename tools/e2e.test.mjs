@@ -57,12 +57,12 @@ const LISTING = {
           { '@type': 'BreadcrumbList', itemListElement: [] },
           {
             '@type': ['Hotel', 'LocalBusiness'],
-            name: 'Memmo Alfama',
+            name: 'The Example Hotel',
             address: {
               '@type': 'PostalAddress',
-              streetAddress: 'Travessa das Merceeiras 27',
-              addressLocality: 'Lisboa',
-              addressCountry: 'PT',
+              streetAddress: '12 Example Street',
+              addressLocality: 'Exampleton',
+              addressCountry: 'GB',
             },
             geo: { latitude: '38.7115', longitude: '-9.1287' },
           },
@@ -74,7 +74,7 @@ const LISTING = {
     { getAttribute: (n) => (n === 'href' ? '/reviews/12345' : null) },
     { getAttribute: (n) => (n === 'href' ? 'https://maps.example/?ll=38.7116,-9.1288' : null) },
   ],
-  '[itemprop="address"]': [{ textContent: 'Travessa das Merceeiras 27, 1100-348 Lisboa' }],
+  '[itemprop="address"]': [{ textContent: '12 Example Street, EX1 2AB Exampleton' }],
 };
 
 const documentFrom = (map) => ({ querySelectorAll: (selector) => map[selector] ?? [] });
@@ -125,7 +125,7 @@ test('a realistic listing goes all the way through to a report row', async () =>
   const stored = await storage.loadRecords();
   assert.equal(stored.length, 1);
   const serialised = JSON.stringify(stored);
-  for (const leak of ['Memmo', 'Merceeiras', 'Lisboa', 'http', '.com']) {
+  for (const leak of ['Example Hotel', 'Example Street', 'Exampleton', 'http', '.com']) {
     assert.ok(!serialised.includes(leak), `stored record leaked "${leak}"`);
   }
 
@@ -208,14 +208,14 @@ test('legacy records on disk are sanitised by the startup migration', async () =
       url: 'https://www.booking.com/hotel/pt/memmo-alfama.html',
       note: 'the Smiths, room 4',
       verdict: 'correct',
-      result: { status: 'found_address', address: 'Travessa das Merceeiras 27', lat: 38.7115, lon: -9.1287 },
+      result: { status: 'found_address', address: '12 Example Street', lat: 38.7115, lon: -9.1287 },
     },
   ]);
 
   await storage.migrateStoredRecords();
 
   const after = JSON.stringify(await storage.loadRecords());
-  for (const leak of ['booking.com', 'Merceeiras', 'the Smiths', '38.7115']) {
+  for (const leak of ['booking.com', 'Example Street', 'the Smiths', '38.7115']) {
     assert.ok(!after.includes(leak), `migration left "${leak}" on disk`);
   }
   assert.ok(after.includes('found_address'), 'the measurement itself must survive the migration');
