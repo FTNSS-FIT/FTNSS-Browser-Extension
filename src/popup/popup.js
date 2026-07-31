@@ -578,6 +578,11 @@ let lookupGeneration = 0;
  * this extension does anything a user did not directly ask for.
  */
 async function renderGymsIdle() {
+  // INVALIDATE ANYTHING IN FLIGHT. Returning to this view is a statement that the previous question
+  // no longer applies — the endpoint changed, or was cleared — and without bumping the generation a
+  // four-second-old lookup finished afterwards and painted stale gyms, or a false "none found",
+  // over the resting state. The guard existed; the path back to idle simply never armed it.
+  lookupGeneration += 1;
   const container = document.getElementById('gyms');
   if (container == null) return;
   const endpoint = await loadEndpoint();
@@ -599,6 +604,7 @@ async function renderGymsIdle() {
   }
   const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
   change.addEventListener('click', () => {
+    lookupGeneration += 1;
     container.replaceChildren(endpointForm(endpoint ?? ''));
   });
   row.appendChild(change);
@@ -630,6 +636,7 @@ async function renderGyms() {
     row.appendChild(again);
     const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
     change.addEventListener('click', () => {
+      lookupGeneration += 1;
       row.replaceChildren(endpointForm(endpoint ?? ''));
     });
     row.appendChild(change);
@@ -729,6 +736,7 @@ async function renderGyms() {
   const approximate = result.precision === 'approximate';
   const change = el('button', 'Change endpoint');
   change.addEventListener('click', () => {
+    lookupGeneration += 1;
     container.replaceChildren(endpointForm(endpoint));
   });
   const changeRow = el('div', null, 'row');

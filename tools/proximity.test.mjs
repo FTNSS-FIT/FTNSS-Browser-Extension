@@ -275,3 +275,34 @@ test('an absurd number of gyms is a contract violation, not a list to trim', asy
   assert.equal(answer.status, 'error');
   assert.equal(answer.reason, 'too many gyms');
 });
+
+test('the byte limit stops the read and aborts, rather than reporting afterwards', async () => {
+  // text() moved the problem rather than fixing it: it buffers the whole body first, so the
+  // advertised limit was checked against memory already committed. The point is not to avoid
+  // holding a large string — it is to stop receiving one.
+  let aborted = false;
+  const chunk = new TextEncoder().encode('x'.repeat(64 * 1024));
+  let served = 0;
+  const streaming = async (url, options) => {
+    options.signal.addEventListener('abort', () => { aborted = true; });
+    return {
+      ok: true,
+      status: 200,
+      body: {
+        getReader: () => ({
+          read: async () => {
+            served += 1;
+            // Far more than the limit if it were ever allowed to finish.
+            return served > 1000 ? { done: true } : { done: false, value: chunk };
+          },
+        }),
+      },
+    };
+  };
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, { endpoint: ENDPOINT, fetchImpl: streaming });
+  assert.equal(answer.status, 'error');
+  assert.equal(answer.reason, 'response too large');
+  assert.ok(aborted, 'the connection must be aborted, not drained');
+  // 256KiB at 64KiB a chunk: it must stop within a handful, not read a thousand.
+  assert.ok(served < 10, `stopped after ${served} chunks`);
+});

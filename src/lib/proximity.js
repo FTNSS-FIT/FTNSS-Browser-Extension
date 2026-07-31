@@ -123,18 +123,21 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
 
   if (!response.ok) return failed(`http ${response.status}`);
 
-  // BOUND THE BODY BEFORE PARSING IT. `response.json()` reads to completion, so an endpoint
-  // returning a gigabyte of JSON is parsed in full before any of the checks below get a look — and
-  // by then the abort timer has served its purpose, because the bytes did arrive. The freeze
-  // happens in the parse, not the wait.
+  // BOUND THE BODY WHILE READING IT, not after.
+  //
+  // `response.json()` reads to completion, so a gigabyte of JSON is parsed in full before any check
+  // gets a look — and by then the abort timer has served its purpose, because the bytes did arrive.
+  // `text()` moved the problem rather than fixing it: it still buffers the whole thing first, so
+  // the advertised limit was checked on memory we had already committed. Streaming stops at the
+  // limit and aborts the connection, which is the difference between a limit and a report.
   let raw;
   try {
-    raw = await response.text();
+    raw = await readBounded(response, controller);
   } catch (err) {
+    if (err?.message === 'too large') return failed('response too large');
     return failed(err?.name === 'AbortError' ? 'timeout' : 'network');
   }
   clearTimeout(timer);
-  if (raw.length > MAX_RESPONSE_BYTES) return { status: 'error', reason: 'response too large' };
 
   let payload;
   try {
@@ -188,6 +191,39 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
   // over the most common correct answer we have. Early in a marketplace's life, "no gyms near here"
   // is the true response almost everywhere on Earth, and it stays true until supply catches up.
   return gyms.length === 0 ? { status: 'empty' } : { status: 'ok', gyms };
+}
+
+/**
+ * Read a response body, stopping at MAX_RESPONSE_BYTES.
+ *
+ * Aborts the request on overflow rather than reading to the end and discarding — the point is not
+ * to avoid holding a large string, it is to stop receiving one.
+ */
+async function readBounded(response, controller) {
+  // Some environments (and every test double) have no stream. Falling back to text() is bounded by
+  // whatever the caller sent, which is exactly the weakness being fixed — so it is used ONLY where
+  // no stream exists, and the size is still checked.
+  if (response.body?.getReader == null) {
+    const text = await response.text();
+    if (text.length > MAX_RESPONSE_BYTES) throw new Error('too large');
+    return text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let out = '';
+  let bytes = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > MAX_RESPONSE_BYTES) {
+      controller.abort();
+      throw new Error('too large');
+    }
+    out += decoder.decode(value, { stream: true });
+  }
+  return out + decoder.decode();
 }
 
 /**
