@@ -17,14 +17,10 @@ import {
   saveRecord,
   exportableRecords,
   readActivePage,
-  currentCohort,
-  setCurrentCohort,
-  batchCohortLabel,
-  clearBatchCohortLabel,
+  cohortRecordFor,
   siteLabelFor,
   migrateAwayLocalCohort,
   migrateStoredRecords,
-  SITE_LABELS,
 } from '../lib/storage.js';
 import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
 

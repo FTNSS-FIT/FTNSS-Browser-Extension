@@ -113,3 +113,33 @@ test('every timing field the content script emits survives the export allowlist'
     );
   }
 });
+
+test('every storage helper a file uses is actually imported', () => {
+  // The other test checks imports RESOLVE. This checks the reverse, which is the failure that
+  // actually shipped: `cohortRecordFor` was used in the popup and never imported, so the popup threw
+  // `cohortRecordFor is not defined` the moment someone pressed Log — after loading fine, looking
+  // fine, and reading the page fine. A missing import is not a syntax error and not a resolution
+  // error; it is a runtime error on one code path, which is the hardest kind to notice.
+  const exportedByStorage = exportsOf(readFileSync(join(SRC, 'lib/storage.js'), 'utf8'));
+  const problems = [];
+
+  for (const file of sourceFiles(SRC)) {
+    if (file.endsWith('storage.js')) continue;
+    const code = readFileSync(file, 'utf8');
+    const imported = new Set(importsOf(code).flatMap(({ names }) => names));
+    // Strip comments and strings so prose and error messages don't produce phantom uses.
+    const body = code
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+      .replace(/(['"`])(?:\\.|(?!\1).)*\1/g, "''");
+
+    for (const name of exportedByStorage) {
+      const used = new RegExp(`\\b${name}\\s*\\(`).test(body);
+      if (used && !imported.has(name)) {
+        problems.push(`${file.replace(SRC, 'src/')} calls ${name}() without importing it`);
+      }
+    }
+  }
+
+  assert.deepEqual(problems, [], `missing imports:\n${problems.join('\n')}`);
+});
