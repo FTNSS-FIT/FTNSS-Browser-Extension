@@ -156,7 +156,8 @@ npm run bump          # patch: 0.2.1 -> 0.2.2
 npm run bump minor    # 0.2.1 -> 0.3.0
 ```
 
-Bump on every change that reaches the browser. Reloading an unpacked extension gives no confirmation
+**Bump on every change that reaches the browser** — treat an unbumped version on a `src/` change as
+something to fix before merging. Reloading an unpacked extension gives no confirmation
 that anything changed — during the first testing sessions a fix was pushed, reloaded, and the old
 behaviour persisted several times, with no way to tell a failed reload from a failed fix.
 

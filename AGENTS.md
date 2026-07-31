@@ -95,14 +95,6 @@ alike.
 
 ## Working conventions
 
-**A change under `src/` must bump the manifest version.** Flag a PR that does not.
-
-This is a review rule, not a command to run: reloading an unpacked extension confirms nothing, so an
-unbumped version means a tester cannot tell a failed reload from a failed fix — and files bug reports
-about code that is not running. The build steps live in `ARCHITECTURE.md`, deliberately: an
-instruction file that automated agents read should describe what to check, never a command to
-execute, because a PR author can edit it. (Codex review, PR #7.)
-
 - One feature per branch, cut from `main`, small enough to review in a single pass.
 - Self-review the full diff before opening a PR.
 - Never commit anything you would not want published, in any commit, at any point.
