@@ -219,12 +219,23 @@ export function addressesCompatible(a, b) {
  *
  * Clustering needs the second. Using compatibility to cluster meant an address-less stub merged
  * into whichever node had an address, which is precisely the "related hotel's address attributed to
- * the listing" failure the candidate census exists to catch. (Codex, PR #10.)
+ * the listing" failure the candidate census exists to catch.
+ *
+ * And the evidence has to be BUILDING-LEVEL. Accepting a match on any field let two hotels in the
+ * same country overlap on `country` — the broadest fact on the page establishing the narrowest
+ * claim. A shared country is a shared market; a shared locality is a shared city; neither is a
+ * shared hotel. (Codex, PR #10.)
  */
 export function addressesOverlap(a, b) {
   if (a == null || b == null) return false;
   if (!addressesCompatible(a, b)) return false;
-  return Object.keys(a).some((key) => a[key] !== '' && a[key] === b[key]);
+  // ONLY A PINNING FIELD ESTABLISHES IDENTITY — the same street, or the same postcode.
+  //
+  // Checking every field meant two Portuguese hotels overlapped on `country`, so a listing in
+  // Lisbon and a related hotel with coordinates merged into one candidate and the attribution guard
+  // was bypassed by the broadest fact on the page. A shared country is a shared market. A shared
+  // locality is a shared city. Neither is a shared hotel. (Codex, PR #10.)
+  return ['street', 'postalCode'].some((key) => a[key] !== '' && a[key] === b[key]);
 }
 
 /** Fill in what the other side knew. Neither overwrites the other; they have already agreed. */

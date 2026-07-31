@@ -1525,3 +1525,49 @@ test('a CJK address keeps its house number', () => {
   })));
   assert.equal(r.status, 'found_address');
 });
+
+// --- Codex review round 11, PR #10 --------------------------------------------------------------
+
+test('a shared country is not a shared hotel', () => {
+  // Overlap checked every field, so two Portuguese hotels matched on `country` and merged into one
+  // candidate — the broadest fact on the page establishing the narrowest claim, and the attribution
+  // guard bypassed by it.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', postalCode: '4000-999', addressCountry: 'PT' },
+      geo: { latitude: 41.1579, longitude: -8.6291 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a shared locality is not a shared hotel either', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '9 Elm Ave', addressLocality: 'Lisbon', postalCode: '1000-999', addressCountry: 'PT' },
+      geo: { latitude: 38.7115, longitude: -9.1287 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a shared street still merges the same hotel described twice', () => {
+  // The rule must stay usable: a street or a postcode in common is building-level evidence, and
+  // that is what the round-10 case depends on.
+  const address = { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' };
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address, geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', address }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
