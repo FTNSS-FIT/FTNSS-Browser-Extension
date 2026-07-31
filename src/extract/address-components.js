@@ -89,7 +89,9 @@ const present = (value) => typeof value === 'string' && value.trim().length > 0;
  * number this phase exists to produce. Two things can rescue it, and both were too loose at first:
  *
  *   A HOUSE NUMBER — but "any digit anywhere" also accepted "5th Avenue", where the digit is part
- *   of the road's own name. Requires a standalone numeric token now.
+ *   of the road's own name, and later "Route 66", where it is the road's number. Ordinals and road
+ *   numbers are both excluded now, and the same helper decides it here and for identity, so the two
+ *   cannot drift apart.
  *
  *   A POSTCODE — but only where a postcode names a building. That is the same market-by-market fact
  *   the corroboration check already uses, and applying it here too means "Oxford Street, W1D 1BS"
@@ -121,13 +123,20 @@ function hasNonOrdinalNumber(text) {
  * building. Deliberately short: an unlisted designator means we decline to merge two nodes, which
  * costs a duplicate-detection, while a wrongly-listed one costs nothing at all.
  */
-const ROAD_DESIGNATORS = /\b(route|rte|highway|hwy|freeway|expressway|motorway|interstate|autoroute|autostrada|ruta|carretera)\b[^\p{L}\p{N}]*\p{N}/iu;
+const ROAD_NUMBER = /\b(route|rte|highway|hwy|freeway|expressway|motorway|interstate|autoroute|autostrada|ruta|carretera)\b[^\p{L}\p{N}]*\p{N}+/giu;
 
-/** Does this street name a numbered BUILDING, as opposed to a numbered road? */
+/**
+ * Does this street name a numbered BUILDING, as opposed to a numbered road?
+ *
+ * REMOVE THE ROAD'S NUMBER, THEN LOOK. The first version rejected the whole string on any
+ * designator match, which got "123 Route 66" exactly backwards: a valid house number on a numbered
+ * road was discarded, so repeated nodes for that address became distinct candidates and suppressed
+ * a coordinate that was perfectly attributable. Wrong in both directions from one line — "Route 66"
+ * passing and "123 Route 66" failing are the same mistake seen from either side. (Codex, PR #10.)
+ */
 function isBuildingNumbered(street) {
   if (typeof street !== 'string') return false;
-  if (ROAD_DESIGNATORS.test(street)) return false;
-  return hasNonOrdinalNumber(street);
+  return hasNonOrdinalNumber(street.replace(ROAD_NUMBER, ' '));
 }
 
 function streetNamesABuilding(address) {
@@ -139,7 +148,7 @@ function streetNamesABuilding(address) {
   // token, which is a Latin-script assumption: "中山路1号" is No. 1 Zhongshan Road with the number
   // welded between two characters, so the rule quietly reported China as unreadable — the exact
   // silent failure #12 warns about, produced by the fix meant to avoid it.
-  if (hasNonOrdinalNumber(address.streetAddress)) return true;
+  if (isBuildingNumbered(address.streetAddress)) return true;
   return postcodeNamesABuilding(countryCode(address.addressCountry), address.postalCode);
 }
 

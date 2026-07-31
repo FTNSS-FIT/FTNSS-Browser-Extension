@@ -1893,3 +1893,30 @@ test('a block boundary is emitted on the way OUT as well as in', async () => {
   });
   assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
+
+// --- Codex review round 19, PR #10 --------------------------------------------------------------
+
+test('a road number and a house number on the same street are told apart', () => {
+  const place = (streetAddress) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress, addressLocality: 'Springfield', addressCountry: 'US' },
+    }))).status;
+
+  // The road's own number is not a building.
+  assert.equal(place('Route 66'), 'not_found');
+  // A house number ON that road is. Rejecting the whole string on any designator match got this
+  // exactly backwards — the two are the same mistake seen from either side.
+  assert.equal(place('123 Route 66'), 'found_address');
+
+  // And the identity half, which uses the same helper so the two cannot drift apart.
+  const dup = (extra) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '123 Route 66', addressLocality: 'Springfield', addressCountry: 'US' },
+    ...extra,
+  });
+  assert.equal(
+    extractFromStructuredData(ldJsonDocument(dup({}), dup({ geo: { latitude: 37.2153, longitude: -93.2982 } }))).status,
+    'found',
+  );
+});
