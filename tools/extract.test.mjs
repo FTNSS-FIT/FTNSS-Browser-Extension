@@ -1427,3 +1427,48 @@ test('word boundaries are Unicode, not ASCII', async () => {
   assert.equal(runExtraction(withText(cn, '新中山路1号, 上海市 200000')).result.status, 'ambiguous');
   assert.equal(runExtraction(withText(cn, '中山路1号, 上海市 200000')).result.status, 'found_address');
 });
+
+// --- Codex review round 9, PR #10 ---------------------------------------------------------------
+
+test('the same anonymous hotel published twice is one candidate, not two', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Repeating a block without an @id is the ordinary way a site publishes the same hotel twice.
+  // Counting nodes made that look like a page about two hotels, and the round-8 attribution check
+  // then threw away a perfectly good coordinate. A regression introduced by this PR, not a
+  // pre-existing one.
+  const block = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+  });
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(block), scriptNode(block)],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 2);
+
+  // Two anonymous nodes saying DIFFERENT things are still two candidates.
+  const other = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', postalCode: '4000-999', addressCountry: 'PT' },
+  });
+  const two = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(block), scriptNode(other)],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  assert.equal(runExtraction(two).result.status, 'ambiguous');
+});
+
+test('an anonymous stub does not split a candidate that has evidence', () => {
+  // An anonymous node carrying neither an address nor a point says nothing that could distinguish
+  // it from anything else, so it cannot be counted as a rival listing.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel' }),
+    JSON.stringify({ '@type': 'Hotel' }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  // Two distinct candidates remain: the evidence-free one and the one with a point. Still refused,
+  // and that is correct — but the two stubs did not inflate it to three.
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});

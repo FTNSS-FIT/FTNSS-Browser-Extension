@@ -218,9 +218,16 @@ export function extractFromStructuredData(doc) {
    * `@id` cannot be identified with anything and each count alone. (Codex, PR #10.)
    */
   const lodgingCandidates = new Map();
-  let anonymousLodging = 0;
-  let anonymousWithAddress = 0;
-  let anonymousWithCoordinate = 0;
+  /**
+   * Anonymous nodes keyed by WHAT THEY SAY, not counted.
+   *
+   * Counting them made a page publishing the same hotel twice without an `@id` — the ordinary way
+   * a site repeats a block — look like a page about two hotels, and the round-8 attribution check
+   * then threw away its perfectly good coordinate. Raw node count is not evidence of distinct
+   * listings. Two anonymous nodes stating the same address and the same point ARE one candidate;
+   * two stating different things are two. (Codex, PR #10.)
+   */
+  const anonymousCandidates = new Map();
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -258,9 +265,18 @@ export function extractFromStructuredData(doc) {
         : null;
       const nodeHasCoordinate = coordinatesIn(node).found;
       if (identity == null) {
-        anonymousLodging += 1;
-        if (nodeComponents != null) anonymousWithAddress += 1;
-        if (nodeHasCoordinate) anonymousWithCoordinate += 1;
+        const nodeCoordinates = coordinatesIn(node);
+        // The evidence itself is the key. An anonymous node carrying neither an address nor a point
+        // says nothing that could distinguish it, so every such node folds into one candidate.
+        const evidence = JSON.stringify([
+          addressValuesOf(node),
+          nodeCoordinates.found ? [nodeCoordinates.lat, nodeCoordinates.lon] : null,
+        ]);
+        const seen = anonymousCandidates.get(evidence) ?? { address: false, coordinate: false };
+        anonymousCandidates.set(evidence, {
+          address: seen.address || nodeComponents != null,
+          coordinate: seen.coordinate || nodeHasCoordinate,
+        });
       } else {
         const seen = lodgingCandidates.get(identity) ?? { address: false, coordinate: false };
         lodgingCandidates.set(identity, {
@@ -320,12 +336,10 @@ export function extractFromStructuredData(doc) {
   // UNATTRIBUTABLE IS AS BAD AS CONFLICTING. If some lodging candidates carry an address and
   // others do not, we have an address and no way to say whose it is — which is exactly the state
   // that produces a confident answer about the wrong hotel.
-  const candidates = lodgingCandidates.size + anonymousLodging;
-  const seenCandidates = [...lodgingCandidates.values()];
-  const candidatesWithAddress =
-    seenCandidates.filter((c) => c.address).length + anonymousWithAddress;
-  const candidatesWithCoordinate =
-    seenCandidates.filter((c) => c.coordinate).length + anonymousWithCoordinate;
+  const seenCandidates = [...lodgingCandidates.values(), ...anonymousCandidates.values()];
+  const candidates = seenCandidates.length;
+  const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
+  const candidatesWithCoordinate = seenCandidates.filter((c) => c.coordinate).length;
   if (candidatesWithAddress > 0 && candidatesWithAddress < candidates) addressConflict = true;
   // Recorded separately from the conflict, because it means something stronger: the PAGE is about
   // more than one place. A conflict between two addresses is about which of them we believe; this
