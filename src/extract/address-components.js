@@ -235,7 +235,17 @@ export function addressesOverlap(a, b) {
   // Lisbon and a related hotel with coordinates merged into one candidate and the attribution guard
   // was bypassed by the broadest fact on the page. A shared country is a shared market. A shared
   // locality is a shared city. Neither is a shared hotel. (Codex, PR #10.)
-  return ['street', 'postalCode'].some((key) => a[key] !== '' && a[key] === b[key]);
+  if (a.street !== '' && a.street === b.street) return true;
+  // A POSTCODE ONLY WHERE A POSTCODE NAMES A BUILDING — the same market caveat that governs it in
+  // textCorroboratesAddress and describesAPlace, and it was missing here alone. Two hotels a few
+  // streets apart share a US ZIP routinely, so a listing without coordinates merged with a related
+  // hotel that had them and the related hotel's location was reported as a successful read.
+  return (
+    a.postalCode !== '' &&
+    a.postalCode === b.postalCode &&
+    BUILDING_PRECISE_POSTCODES.has(a.country) &&
+    a.country === b.country
+  );
 }
 
 /** Fill in what the other side knew. Neither overwrites the other; they have already agreed. */

@@ -843,10 +843,11 @@ test('a complete "related hotel" alongside a different listing is refused, not m
   assert.equal(r.addressComponents, null);
 });
 
-test('components are still intersected when the nodes agree on the place', () => {
-  // The conflict check keys on street, locality, postcode and country; two blocks describing the
-  // SAME listing at different levels of detail are not a conflict, and the answer must reflect the
-  // less complete one rather than the more flattering.
+test('two appearances of one listing describe one complete address between them', () => {
+  // UNIONED, because they are the same hotel. This test asserted the INTERSECTION until round 12,
+  // which dropped whatever either appearance omitted — so a candidate whose street came from the
+  // other appearance was reported as naming no building, and the page was called unreadable for
+  // publishing itself twice. Intersection is for DIFFERENT candidates; union is for one.
   const doc = ldJsonDocument(
     JSON.stringify({
       '@type': 'Hotel',
@@ -859,7 +860,7 @@ test('components are still intersected when the nodes agree on the place', () =>
   );
   const components = extractFromStructuredData(doc).addressComponents;
   assert.equal(components.street, true);
-  assert.equal(components.region, false, 'only one carried a region — the answer must not overstate');
+  assert.equal(components.region, true, 'one appearance carried a region — the hotel has one');
 });
 
 test('two lodging nodes in different countries are refused', async () => {
@@ -1570,4 +1571,67 @@ test('a shared street still merges the same hotel described twice', () => {
     JSON.stringify({ '@type': 'Hotel', address }),
   );
   assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+// --- Codex review round 12, PR #10 --------------------------------------------------------------
+
+test('a US ZIP does not establish that two hotels are one', () => {
+  // Postcodes became identity evidence in round 11 without the market caveat that governs them
+  // everywhere else: two hotels a few streets apart share a US ZIP routinely, so a listing without
+  // coordinates merged with a related hotel that had them, and the related hotel's location was
+  // shown as a successful read.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '9 Elm Ave', addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' },
+      geo: { latitude: 34.0901, longitude: -118.4065 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a UK postcode does establish it', () => {
+  // The same evidence, in a country where a postcode names a building.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oxford St', addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
+      geo: { latitude: 51.5155, longitude: -0.1417 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+test('one hotel published with an @id and again without is one candidate', () => {
+  // Named and anonymous nodes were kept in SEPARATE collections, so a page describing itself twice
+  // in two different styles counted as two hotels. There is one question here — how many distinct
+  // hotels is this page about — and it now has one mechanism.
+  const address = { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' };
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/#hotel', address, geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', address }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+test('a candidate whose street arrives in a second appearance still names a building', () => {
+  // The @id case of the union: one appearance publishes the full address, another omits the street.
+  // Intersecting made streetNamesABuilding false and reported the page unreadable.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { addressLocality: 'Lisbon', addressCountry: 'PT' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found_address');
+  assert.equal(r.addressComponents.streetNamesABuilding, true);
 });
