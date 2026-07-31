@@ -330,22 +330,35 @@ async function render() {
         truthFeedback.textContent = 'waiting for "lat, lon"…';
         return;
       }
-      const metres = Math.round(
-        distanceMetres({ lat: reading.result.lat, lon: reading.result.lon }, groundTruth),
-      );
-      const cell = TRANSMIT_KM * 1000;
-      if (metres <= cell) {
+      const point = { lat: reading.result.lat, lon: reading.result.lon };
+      const metres = Math.round(distanceMetres(point, groundTruth));
+
+      // COMPARE THE ROUNDED POINTS. "Smaller than the cell means rounding erases it" is FALSE, and
+      // provably so: two points ONE METRE apart either side of a cell boundary round into different
+      // cells and end up 333m apart. Cell size bounds the error rounding ADDS; it says nothing about
+      // whether a particular pair survives it. Only rounding both and comparing answers that.
+      // (Codex review, PR #8.)
+      const roundedRead = toTransmittablePoint(point.lat, point.lon);
+      const roundedTruth = toTransmittablePoint(groundTruth.lat, groundTruth.lon);
+      const sameCell =
+        roundedRead != null &&
+        roundedTruth != null &&
+        roundedRead.lat === roundedTruth.lat &&
+        roundedRead.lon === roundedTruth.lon;
+      const afterRounding =
+        roundedRead && roundedTruth ? Math.round(distanceMetres(roundedRead, roundedTruth)) : null;
+
+      if (sameCell) {
         truthFeedback.className = 'ok';
-        truthFeedback.textContent =
-          `${metres}m out — inside the ${cell}m grid cell, so rounding erases it. This is a match.`;
-      } else if (metres <= 1500) {
+        truthFeedback.textContent = `${metres}m out — rounds into the same cell, so this is a match.`;
+      } else if (afterRounding != null && afterRounding <= 1000) {
         truthFeedback.className = 'muted';
         truthFeedback.textContent =
-          `${metres}m out — outside the grid cell but small against a 5km search. Borderline.`;
+          `${metres}m out, ${afterRounding}m after rounding — adjacent cell, small against a 5km search. Borderline.`;
       } else {
         truthFeedback.className = 'warn';
         truthFeedback.textContent =
-          `${metres}m out — far enough to change which gyms are shown. This is wrong.`;
+          `${metres}m out, ${afterRounding ?? metres}m after rounding — far enough to change which gyms are shown.`;
       }
     });
   }

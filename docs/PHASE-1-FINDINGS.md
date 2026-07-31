@@ -71,6 +71,9 @@ What Booking *does* publish, on 100% of pages carrying structured data:
 | Postcode | 100% |
 | Country | 100% |
 
+(The country *code* was recorded only while that question was open. It has been dropped from records
+since — the finding is written down, and keeping it would put location onto rows that carry none.)
+
 **So the Booking path is: address → geocoder → coordinate.** That is the tier spec §3 calls "the
 least reliable" and puts last, and it is the main path for roughly half the market.
 

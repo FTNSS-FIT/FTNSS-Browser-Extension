@@ -422,17 +422,21 @@ const knownReason = (value) =>
 /** Rebuilt, like every other nested object: an allowlist that stops at the top level is not one. */
 function exportableAddressComponents(components) {
   if (components == null || typeof components !== 'object') return null;
-  const country =
-    typeof components.country === 'string' && /^[A-Z]{2}$/.test(components.country)
-      ? components.country
-      : null;
   return {
     street: components.street === true,
     locality: components.locality === true,
     region: components.region === true,
     postalCode: components.postalCode === true,
+    // PRESENCE ONLY. The country CODE was carried to answer one question — is coarse geocoding
+    // viable, and how much is it worth in each market, given that postcode precision is not
+    // comparable across countries. That question is answered: 100% of Booking pages publish a
+    // country, and the market-by-market caveat is recorded in DECISIONS 13.
+    //
+    // Keeping it now costs privacy for no remaining benefit. Unlike a coordinate — which only
+    // exists on pages that published one — a country code would introduce location onto records
+    // that otherwise carry none at all. If a future session needs it, re-add it deliberately for
+    // that session. (Codex review, PR #8.)
     countryPublished: components.countryPublished === true,
-    country,
   };
 }
 

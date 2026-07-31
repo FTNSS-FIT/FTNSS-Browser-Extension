@@ -115,10 +115,12 @@ function summarise(allRows, label) {
   if (needsGeocoding.length > 0) {
     const withComponents = needsGeocoding.filter((r) => r.addressComponents != null);
     const coarse = withComponents.filter(
-      (r) => r.addressComponents.postalCode && r.addressComponents.country,
+      (r) => r.addressComponents.postalCode && r.addressComponents.countryPublished,
     );
     const streetOnly = withComponents.filter(
-      (r) => r.addressComponents.street && !(r.addressComponents.postalCode && r.addressComponents.country),
+      (r) =>
+        r.addressComponents.street &&
+        !(r.addressComponents.postalCode && r.addressComponents.countryPublished),
     );
 
     console.log(`  GEOCODING VIABILITY (${needsGeocoding.length} pages with no coordinate)`);
@@ -134,30 +136,14 @@ function summarise(allRows, label) {
       );
     }
 
-    // Postcode precision varies enormously by country: a UK or Dutch postcode resolves to a
-    // building, a US ZIP to several square kilometres. "Coarse-geocodable" means something
-    // different in each, so the split matters more than the total.
-    const byCountry = new Map();
-    for (const r of withComponents) {
-      const c = r.addressComponents.country ?? 'unknown';
-      byCountry.set(c, (byCountry.get(c) ?? 0) + 1);
-    }
-    if (byCountry.size > 0) {
-      const parts = [...byCountry].sort((a, b) => b[1] - a[1]).map(([c, n]) => `${c}:${n}`);
-      console.log(`    by country                     ${parts.join('  ')}`);
-      console.log('      (postcode precision differs by country — a UK postcode is a building, a US ZIP is a district)');
-    }
-
+    // The per-country split is gone with the country code itself — see storage.js. The finding it
+    // produced is recorded in DECISIONS 13: postcode precision is not comparable across markets, so
+    // "coarse-geocodable" means something different in each. That does not need re-deriving from
+    // every future session.
     // PUBLISHED BUT UNPARSED is a finding about US; absent is a finding about the site. Collapsing
     // them would have hidden that Booking publishes a country on every page and we were failing to
     // read it.
-    const unparsed = withComponents.filter((r) => r.addressComponents.countryPublished && !r.addressComponents.country);
     const absent = withComponents.filter((r) => !r.addressComponents.countryPublished);
-    if (unparsed.length > 0) {
-      console.log(
-        `    ⚠ country PUBLISHED but not parsed as a code   ${pct(unparsed.length, withComponents.length)}  — our bug, not theirs`,
-      );
-    }
     if (absent.length > 0) {
       console.log(`    country genuinely absent       ${pct(absent.length, withComponents.length)}`);
     }
@@ -187,18 +173,22 @@ function summarise(allRows, label) {
     // Derived, not literal: this threshold is "inside the grid cell", so it has to move when the
     // grid does or it starts flagging the wrong rows.
     const cell = TRANSMIT_KM * 1000;
+    // A measured error smaller than the cell does NOT mean rounding erased it — two points a metre
+    // apart can straddle a boundary and land 333m apart. Without the rounded points we cannot say,
+    // and records do not carry the exact coordinate by design. So this flags rows worth RE-CHECKING
+    // rather than asserting they were fine, which is the strongest claim the stored data supports.
+    // (Codex review, PR #8.)
     const disputed = rows.filter(
-      (r) =>
-        r.verified === 'wrong' && Number.isFinite(r.errorMetres) && r.errorMetres <= cell,
+      (r) => r.verified === 'wrong' && Number.isFinite(r.errorMetres) && r.errorMetres <= cell,
     );
     if (disputed.length > 0) {
       console.log(
-        `    ⚠ ${disputed.length} marked WRONG with a measured error inside the ${cell}m grid cell:`,
+        `    ⚠ ${disputed.length} marked WRONG with a measured error under ${cell}m (the cell size):`,
       );
       for (const r of disputed) {
-        console.log(`        ${r.errorMetres}m — rounding erases this; it cannot change the result`);
+        console.log(`        ${r.errorMetres}m — likely inconsequential, though only re-checking can confirm`);
       }
-      console.log('      Re-check these. A wrong-rate built from them is not measuring the extractor.');
+      console.log('      An error this small usually cannot change which gyms are shown. Worth re-checking.');
     }
     if (verified.length < 10) {
       console.log(`    ⚠ ${verified.length} verified is too few to trust this rate.`);

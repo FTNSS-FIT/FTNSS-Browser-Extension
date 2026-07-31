@@ -711,6 +711,7 @@ test('address components are captured from a lodging node with no coordinates', 
     countryPublished: true,
     country: 'PT',
   });
+  // The exported record keeps only presence — see storage.js.
 });
 
 test('components report PRESENCE, never the address itself', () => {
@@ -779,4 +780,16 @@ test('a country published in a form we cannot parse is distinguished from one th
   const absent = addressComponentsOf({ address: { postalCode: 'M5V', addressLocality: 'Toronto' } });
   assert.equal(absent.countryPublished, false);
   assert.equal(absent.country, null);
+});
+
+test('the exported record carries no country code, only whether one was published', async () => {
+  const { exportableRecords } = await import('../src/lib/storage.js');
+  // The code answered its question — coarse geocoding is viable, and its worth varies by market
+  // (DECISIONS 13). Keeping it now would introduce location onto records that carry none.
+  const [out] = exportableRecords([
+    { addressComponents: { street: true, locality: true, region: false, postalCode: true, countryPublished: true, country: 'PT' } },
+  ]);
+  assert.equal(out.addressComponents.countryPublished, true);
+  assert.equal(out.addressComponents.country, undefined);
+  assert.ok(!JSON.stringify(out).includes('PT'));
 });
