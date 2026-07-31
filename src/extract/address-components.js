@@ -58,7 +58,12 @@ const NAMES = {
 };
 
 /** ISO 3166-1 alpha-2, or null. Codes only — never a country NAME, which is page-controlled text. */
-function countryCode(value) {
+function countryCode(value, depth = 0) {
+  // DEPTH-BOUNDED. schema.org allows a nested Country, and following it recursively meant a page
+  // could hand us `{name: {name: {name: …}}}` inside a block small enough to pass the size check and
+  // blow the stack — taking down the extraction of a page that may have published a perfectly good
+  // coordinate in the same node. Two levels is more than the schema needs. (Codex, PR #10.)
+  if (depth > 2) return null;
   if (typeof value === 'string') {
     const trimmed = value.trim();
     const upper = trimmed.toUpperCase();
@@ -70,7 +75,7 @@ function countryCode(value) {
   }
   // schema.org allows a nested Country object.
   if (value != null && typeof value === 'object' && !Array.isArray(value)) {
-    return countryCode(value.name ?? value.identifier);
+    return countryCode(value.name ?? value.identifier, depth + 1);
   }
   return null;
 }
@@ -165,14 +170,15 @@ export function addressValuesOf(node) {
   // cap was there to bound page-controlled input, and it is not needed for that: tier 1 refuses any
   // ld+json block over MAX_JSON_CHARS before parsing it, so every value here is already bounded.
   // A bound that turns a difference into a match is not a safety measure. (Codex, PR #10.)
-  const part = (value) => {
+  const part = (value, depth = 0) => {
     if (typeof value === 'string') return value.trim().toLowerCase().replace(/\s+/g, ' ');
+    if (depth > 2) return '';
     // A NESTED OBJECT IS NOT AN EMPTY FIELD. schema.org allows `addressCountry: {name: "Hungary"}`,
     // and returning '' for it made Hungary and Romania compare EQUAL — both unknown, therefore
     // compatible, therefore one valid address. The country is where this costs most: a geocoder
     // aimed at the wrong country returns nothing, or somewhere confidently wrong.
     if (value != null && typeof value === 'object' && !Array.isArray(value)) {
-      return part(value.name ?? value.identifier);
+      return part(value.name ?? value.identifier, depth + 1);
     }
     return '';
   };
@@ -235,7 +241,10 @@ export function addressesOverlap(a, b) {
   // Lisbon and a related hotel with coordinates merged into one candidate and the attribution guard
   // was bypassed by the broadest fact on the page. A shared country is a shared market. A shared
   // locality is a shared city. Neither is a shared hotel. (Codex, PR #10.)
-  if (a.street !== '' && a.street === b.street) return true;
+  // The shared street must NAME A BUILDING. Two hotels on Oxford Street share a road, and merging
+  // them let a related hotel's coordinate be reported as the listing's — the same road-versus-
+  // building distinction describesAPlace already makes, missing here.
+  if (a.street !== '' && a.street === b.street && hasNonOrdinalNumber(a.street)) return true;
   // A POSTCODE ONLY WHERE A POSTCODE NAMES A BUILDING — the same market caveat that governs it in
   // textCorroboratesAddress and describesAPlace, and it was missing here alone. Two hotels a few
   // streets apart share a US ZIP routinely, so a listing without coordinates merged with a related
@@ -352,7 +361,16 @@ export function textCorroboratesAddress(values, text) {
   // postcode is only a building-level fact in the countries where postcodes are building-level, and
   // that is the same market-by-market caveat already recorded in the findings: a UK, Dutch, Irish
   // or Canadian postcode resolves to a building or a handful; a US ZIP to a neighbourhood.
-  if (street.length > 0 && containsWhole(haystack, street)) return true;
+  // A STREET NEEDS A WITNESS. "1 Oak St, Lisbon" and a rendered "1 Oak St, Porto" agreed on the
+  // street and described different cities, and the read was recorded as successful. Where the
+  // structured data also states a locality or a postcode, one of them must appear too.
+  const witnesses = [values.locality, values.postalCode].filter(
+    (v) => typeof v === 'string' && v.length > 0,
+  );
+  if (street.length > 0 && containsWhole(haystack, street)) {
+    if (witnesses.length === 0) return true;
+    if (witnesses.some((w) => containsWhole(haystack, w))) return true;
+  }
   if (postalCode.length > 0 && BUILDING_PRECISE_POSTCODES.has(values.country) &&
       containsWhole(haystack, postalCode)) {
     return true;

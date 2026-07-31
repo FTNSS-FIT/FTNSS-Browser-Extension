@@ -1635,3 +1635,45 @@ test('a candidate whose street arrives in a second appearance still names a buil
   assert.equal(r.status, 'found_address');
   assert.equal(r.addressComponents.streetNamesABuilding, true);
 });
+
+// --- Codex review round 13, PR #10 --------------------------------------------------------------
+
+test('two hotels on the same road are not the same hotel', () => {
+  // A shared road name merged the candidates, so a related hotel's point was reported as the
+  // listing's. The same road-versus-building distinction describesAPlace makes, missing from
+  // identity.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: 'Oxford Street', addressLocality: 'London', addressCountry: 'GB' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'Oxford Street', addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
+      geo: { latitude: 51.5155, longitude: -0.1417 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a street agreeing across two different cities is not corroboration', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // "1 Oak St, Lisbon" against a rendered "1 Oak St, Porto" agreed on the street and described
+  // different cities, and the read was recorded as successful.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Porto, 4000-999')).result.status, 'ambiguous');
+  // The witness can be either the locality or the postcode.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon')).result.status, 'found_address');
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, 1000-001')).result.status, 'found_address');
+});
+
+test('a deeply nested country cannot take the extraction down', () => {
+  // A page could hand us {name: {name: {name: …}}} inside a block small enough to pass the size
+  // check and blow the stack — discarding a coordinate the same node may have published.
+  let nested = { name: 'PT' };
+  for (let i = 0; i < 20000; i += 1) nested = { name: nested };
+  const doc = ldJsonDocument(JSON.stringify({
+    '@type': 'Hotel',
+    geo: { latitude: 38.7115, longitude: -9.1287 },
+    address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: nested },
+  }));
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.addressComponents.countryParsed, false);
+});
