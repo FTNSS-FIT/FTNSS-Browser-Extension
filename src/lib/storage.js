@@ -485,6 +485,7 @@ const KNOWN_REASONS = new Set([
   'all three tiers failed',
   'structured data and map link disagreed about the location',
   'structured data and rendered address disagreed',
+  'coordinates could not be attributed among several listings',
   'page did not settle after navigation',
 ]);
 
@@ -496,6 +497,10 @@ function exportableAddressComponents(components) {
   if (components == null || typeof components !== 'object') return null;
   return {
     street: components.street === true,
+    // Whether that street NAMES A BUILDING rather than a road. Exported because it is the
+    // difference between an address we could locate and a mile of Oxford Street, and the read-rate
+    // number means different things depending on which one the sites publish.
+    streetNamesABuilding: components.streetNamesABuilding === true,
     locality: components.locality === true,
     region: components.region === true,
     postalCode: components.postalCode === true,

@@ -130,6 +130,7 @@ function* walk(root) {
 function intersectComponents(a, b) {
   return {
     street: a.street && b.street,
+    streetNamesABuilding: a.streetNamesABuilding && b.streetNamesABuilding,
     locality: a.locality && b.locality,
     region: a.region && b.region,
     postalCode: a.postalCode && b.postalCode,
@@ -219,6 +220,7 @@ export function extractFromStructuredData(doc) {
   const lodgingCandidates = new Map();
   let anonymousLodging = 0;
   let anonymousWithAddress = 0;
+  let anonymousWithCoordinate = 0;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -254,11 +256,17 @@ export function extractFromStructuredData(doc) {
       const identity = typeof node['@id'] === 'string' && node['@id'].trim().length > 0
         ? node['@id'].trim()
         : null;
+      const nodeHasCoordinate = coordinatesIn(node).found;
       if (identity == null) {
         anonymousLodging += 1;
         if (nodeComponents != null) anonymousWithAddress += 1;
+        if (nodeHasCoordinate) anonymousWithCoordinate += 1;
       } else {
-        lodgingCandidates.set(identity, (lodgingCandidates.get(identity) ?? false) || nodeComponents != null);
+        const seen = lodgingCandidates.get(identity) ?? { address: false, coordinate: false };
+        lodgingCandidates.set(identity, {
+          address: seen.address || nodeComponents != null,
+          coordinate: seen.coordinate || nodeHasCoordinate,
+        });
       }
       if (nodeComponents != null) {
         // FAIL CLOSED WHEN TWO NODES DESCRIBE DIFFERENT PLACES — the address path's version of the
@@ -313,8 +321,11 @@ export function extractFromStructuredData(doc) {
   // others do not, we have an address and no way to say whose it is — which is exactly the state
   // that produces a confident answer about the wrong hotel.
   const candidates = lodgingCandidates.size + anonymousLodging;
+  const seenCandidates = [...lodgingCandidates.values()];
   const candidatesWithAddress =
-    [...lodgingCandidates.values()].filter(Boolean).length + anonymousWithAddress;
+    seenCandidates.filter((c) => c.address).length + anonymousWithAddress;
+  const candidatesWithCoordinate =
+    seenCandidates.filter((c) => c.coordinate).length + anonymousWithCoordinate;
   if (candidatesWithAddress > 0 && candidatesWithAddress < candidates) addressConflict = true;
   // Recorded separately from the conflict, because it means something stronger: the PAGE is about
   // more than one place. A conflict between two addresses is about which of them we believe; this
@@ -327,6 +338,19 @@ export function extractFromStructuredData(doc) {
   if (addressConflict) addressComponents = null;
 
   const withComponents = (result) => ({ ...result, addressComponents, manyCandidates });
+
+  // THE COORDINATE HAS THE SAME ATTRIBUTION PROBLEM THE ADDRESS DID, and it was filed as #11 to be
+  // decided against a lodging-node census rather than in the dark. It is fixed here instead,
+  // because the failure it produces — the listing publishes no point, a "related hotel" block does,
+  // and we report the related hotel's location as the listing's — is a confidently wrong location,
+  // which is the outcome this project treats as worse than no answer at all.
+  //
+  // The cost is the risk #11 was written about: Airbnb reads 100% from this tier today, and if its
+  // pages carry a lodging node without geo, those reads become ambiguous. The refusal carries its
+  // own reason string so that shows up in the very next export rather than being inferred.
+  if (best != null && candidates > 1 && candidatesWithCoordinate < candidates) {
+    return withComponents(ambiguous('coordinates could not be attributed among several listings'));
+  }
 
   if (best != null) {
     // EXPLICITLY attached, via the same wrapper as every other return.

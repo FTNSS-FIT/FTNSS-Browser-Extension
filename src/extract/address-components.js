@@ -196,6 +196,14 @@ export function addressComponentsOf(node) {
   const rawCountry = address.addressCountry;
   const components = {
     street: present(address.streetAddress),
+    // A STREET IS NOT AUTOMATICALLY A BUILDING. "Oxford Street" is a mile long, and accepting it as
+    // an address we could locate inflated exactly the number this phase exists to produce. A house
+    // number is what usually distinguishes the two; where a building is named rather than numbered
+    // — "The Savoy" — a postcode does the same job. Neither present means we have a road.
+    // (Codex, PR #10.)
+    streetNamesABuilding:
+      present(address.streetAddress) &&
+      (/\p{N}/u.test(address.streetAddress) || present(address.postalCode)),
     locality: present(address.addressLocality),
     region: present(address.addressRegion),
     postalCode: present(address.postalCode),
@@ -299,7 +307,10 @@ function containsWhole(haystack, needle) {
     if (at === -1) return false;
     const before = at === 0 ? '' : haystack[at - 1];
     const after = haystack[at + needle.length] ?? '';
-    const isWordish = (c) => c !== '' && /[a-z0-9]/.test(c);
+    // UNICODE, not ASCII. `/[a-z0-9]/` classified every non-Latin character as punctuation, so
+    // "中山路1号" read as a whole-token match inside "新中山路1号" — a different street, admitted by a
+    // boundary check that could not see the boundary. (Codex, PR #10.)
+    const isWordish = (c) => c !== '' && /[\p{L}\p{N}]/u.test(c);
     if (!isWordish(before) && !isWordish(after)) return true;
     from = at + 1;
   }
@@ -341,7 +352,7 @@ export function describesAPlace(components) {
   // identified the listing — the bar for calling a read a success. That one asks which components
   // may leave the browser, and deliberately excludes the street we are requiring here. Knowing the
   // street and choosing not to send it is the entire coarse-geocoding design. (DECISIONS 13.)
-  if (!components.street) return false;
+  if (!components.streetNamesABuilding) return false;
   return Boolean(components.locality || components.postalCode);
 }
 

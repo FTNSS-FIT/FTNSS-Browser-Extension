@@ -709,6 +709,7 @@ test('address components are captured from a lodging node with no coordinates', 
   assert.equal(r.reason, 'lodging type found, no coordinates published');
   assert.deepEqual(r.addressComponents, {
     street: true,
+    streetNamesABuilding: true,
     locality: true,
     region: false,
     postalCode: true,
@@ -1373,4 +1374,56 @@ test('a page that references its own listing is not a page describing two', () =
     }),
   );
   assert.equal(extractFromStructuredData(two).status, 'ambiguous');
+});
+
+// --- Codex review round 8, PR #10 ---------------------------------------------------------------
+
+test('a related hotel with coordinates is not read as the listing without them', () => {
+  // The listing publishes no point; a "related hotel" block does. Reporting the related hotel's
+  // location as the listing's is a confidently wrong location, which this project treats as worse
+  // than no answer at all. Filed as #11 to be decided against a page census; fixed here because
+  // the failure is the one the whole design is organised around avoiding.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', name: 'the listing' }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  // Its own reason, so the cost of this refusal is visible in the next export rather than inferred.
+  assert.equal(r.reason, 'coordinates could not be attributed among several listings');
+});
+
+test('several listings that ALL publish a point are attributable if they agree', () => {
+  // The refusal is about attribution, not about counting nodes. Where every candidate carries a
+  // coordinate the existing agreement check already governs, and it still does.
+  const near = (lat) => JSON.stringify({ '@type': 'Hotel', geo: { latitude: lat, longitude: -9.1287 } });
+  assert.equal(extractFromStructuredData(ldJsonDocument(near(38.7115), near(38.7115))).status, 'found');
+});
+
+test('a road is not a building', () => {
+  const address = (street, extra = {}) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: street, addressLocality: 'London', addressCountry: 'GB', ...extra },
+    }))).status;
+
+  // "Oxford Street" is a mile long. Counting it as an address we could locate inflates exactly the
+  // number this phase exists to produce.
+  assert.equal(address('Oxford Street'), 'not_found');
+  // A house number names the building.
+  assert.equal(address('1 Oxford Street'), 'found_address');
+  // So does a postcode, where the building is named rather than numbered.
+  assert.equal(address('The Savoy', { postalCode: 'WC2R 0EZ' }), 'found_address');
+});
+
+test('word boundaries are Unicode, not ASCII', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // `/[a-z0-9]/` classified every non-Latin character as punctuation, so a different street passed
+  // a boundary check that could not see the boundary.
+  const cn = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '中山路1号', addressLocality: '上海市', postalCode: '200000', addressCountry: 'CN' },
+  });
+  assert.equal(runExtraction(withText(cn, '新中山路1号, 上海市 200000')).result.status, 'ambiguous');
+  assert.equal(runExtraction(withText(cn, '中山路1号, 上海市 200000')).result.status, 'found_address');
 });
