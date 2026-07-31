@@ -745,11 +745,20 @@ test('a nested Country object still yields a country code', async () => {
   assert.equal(components.country, 'CA');
 });
 
-test('a country field that is not a country code is discarded', async () => {
+test('a country name is resolved through a fixed table, and nothing else passes', async () => {
   const { addressComponentsOf } = await import('../src/extract/address-components.js');
-  // Page-controlled text. "Portugal" is not a code, and we must not carry arbitrary strings.
-  const components = addressComponentsOf({ address: { postalCode: '1100', addressCountry: 'Portugal' } });
-  assert.equal(components.country, null);
+  const code = (country) => addressComponentsOf({ address: { postalCode: 'X', addressCountry: country } }).country;
+
+  // Booking publishes names on most pages. Reading only codes discarded a component that was there.
+  assert.equal(code('Portugal'), 'PT');
+  assert.equal(code('United States'), 'US');
+  assert.equal(code('united kingdom'), 'GB');
+  assert.equal(code('España'), 'ES');
+
+  // The input is page-controlled text, so the table is the whole allowance: an unknown name yields
+  // null and is reported as unparsed, never carried through as an arbitrary string.
+  assert.equal(code('Freedonia'), null);
+  assert.equal(code('<script>alert(1)</script>'), null);
 });
 
 test('"UK" is normalised to GB rather than passed to a geocoder as-is', async () => {
@@ -763,7 +772,7 @@ test('a country published in a form we cannot parse is distinguished from one th
   const { addressComponentsOf } = await import('../src/extract/address-components.js');
   // Opposite findings: one is about the site, the other is about us. The first Booking measurements
   // came back null on 24 of 27 pages with no way to tell which had happened.
-  const unparsed = addressComponentsOf({ address: { postalCode: 'M5V', addressCountry: 'Canada' } });
+  const unparsed = addressComponentsOf({ address: { postalCode: 'M5V', addressCountry: 'Ruritania' } });
   assert.equal(unparsed.countryPublished, true, 'they published something');
   assert.equal(unparsed.country, null, 'we could not turn it into a code');
 

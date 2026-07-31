@@ -28,14 +28,45 @@ const ADDRESS_KEYS = ['streetAddress', 'addressLocality', 'addressRegion', 'post
  * code is GB; "UK" is a reserved exception that everyone uses anyway. Passing it to a geocoder
  * unchanged is a lookup that quietly fails, so normalise it here rather than discovering it later.
  */
-const ALIASES = { UK: 'GB', EL: 'GR', AN: 'NL' };
+const ALIASES = { UK: 'GB', EL: 'GR', AN: 'NL', USA: 'US', UAE: 'AE' };
+
+/**
+ * Country NAMES to codes.
+ *
+ * Measured need: Booking publishes `addressCountry` on 100% of pages, and a code on roughly a
+ * quarter of them — the rest are names. Reading only codes meant discarding a component that was
+ * there all along and reporting it as absent, which is the difference between "coarse geocoding is
+ * viable" and "coarse geocoding is impossible" on the site that needs it.
+ *
+ * A FIXED TABLE, deliberately. The input is page-controlled text, so nothing arbitrary may pass
+ * through: a name is looked up and only ever emitted as a code we already knew about. An unknown
+ * name yields null and is reported as unparsed, which keeps the "our bug or their absence"
+ * distinction honest as the table grows.
+ */
+const NAMES = {
+  'united states': 'US', 'united states of america': 'US', 'u.s.a.': 'US', 'u.s.': 'US',
+  canada: 'CA', mexico: 'MX', brazil: 'BR', 'brasil': 'BR', argentina: 'AR', chile: 'CL',
+  'united kingdom': 'GB', 'great britain': 'GB', england: 'GB', scotland: 'GB', wales: 'GB',
+  'northern ireland': 'GB', ireland: 'IE',
+  portugal: 'PT', spain: 'ES', 'españa': 'ES', france: 'FR', germany: 'DE', deutschland: 'DE',
+  italy: 'IT', italia: 'IT', netherlands: 'NL', 'the netherlands': 'NL', belgium: 'BE',
+  switzerland: 'CH', austria: 'AT', denmark: 'DK', sweden: 'SE', norway: 'NO', finland: 'FI',
+  poland: 'PL', greece: 'GR', 'czech republic': 'CZ', czechia: 'CZ', croatia: 'HR',
+  australia: 'AU', 'new zealand': 'NZ', japan: 'JP', 'south korea': 'KR', china: 'CN',
+  india: 'IN', thailand: 'TH', singapore: 'SG', 'united arab emirates': 'AE',
+  'south africa': 'ZA', morocco: 'MA', turkey: 'TR', 'türkiye': 'TR',
+};
 
 /** ISO 3166-1 alpha-2, or null. Codes only — never a country NAME, which is page-controlled text. */
 function countryCode(value) {
   if (typeof value === 'string') {
-    const trimmed = value.trim().toUpperCase();
-    if (ALIASES[trimmed]) return ALIASES[trimmed];
-    return /^[A-Z]{2}$/.test(trimmed) ? trimmed : null;
+    const trimmed = value.trim();
+    const upper = trimmed.toUpperCase();
+    if (ALIASES[upper]) return ALIASES[upper];
+    if (/^[A-Z]{2}$/.test(upper)) return upper;
+    // A name, looked up in a fixed table. Nothing arbitrary passes through: an unknown name yields
+    // null and is reported as unparsed rather than carried.
+    return NAMES[trimmed.toLowerCase()] ?? null;
   }
   // schema.org allows a nested Country object.
   if (value != null && typeof value === 'object' && !Array.isArray(value)) {

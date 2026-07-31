@@ -241,6 +241,33 @@ The report prints all three. If the answer is that most pages carry a postcode a
 geocoding is viable and the street never has to leave the browser. If most carry only a street, the
 decision is harder and belongs back with Jordan.
 
+### Measured, 2026-07-31 — 34 Booking pages
+
+| | |
+|---|---|
+| Structured `PostalAddress` published | **100%** |
+| Street, locality, postcode | **100%** |
+| Country published | **100%** |
+
+**Coarse geocoding is viable.** Postcode and country are present on every page measured, so the
+street never has to leave the browser. That resolves the tension above in the good direction.
+
+Two caveats that survive the measurement:
+
+**Postcode precision is not comparable across markets, and this is the part that decides how much
+the privacy win is worth.** A UK, Dutch or Canadian postcode resolves to a building or a handful of
+them — *finer than the 250m we round to*, so geocoding one leaks no less than the street would. A US
+ZIP covers several square kilometres — coarser than the panel's own search radius, so results would
+be materially worse. The honest position is that coarse geocoding is a genuine privacy improvement
+in some countries, an empty gesture in others, and a quality regression in the US. Whether to vary
+behaviour by country is an open product question, not an engineering one.
+
+**Our reader was the bottleneck, not the sites.** The first measurement reported a country on 11% of
+pages; the truth was 100%. Booking publishes names (`"Canada"`), not codes, and the parser accepted
+only codes — so a component that was there all along was reported absent. Recording *published* and
+*parsed* separately is what surfaced it, and it is the same distinction that separated
+"no coordinates published" from "coordinates present but refused".
+
 **Before any of this, confirm the premise.** Coordinate probing was extended to meta tags
 (`geo.position`, `ICBM`, `og:latitude`, `place:location:*`) and `data-lat`/`data-lng` attributes,
 because a site that renders its map client-side must have the point in the document somewhere. If
