@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FTNSS phase 1 measurement harness (internal)",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Internal measurement tool. Records how often a listing page's location can be read. Not for publication.",
   "permissions": [
     "storage"
@@ -40,6 +40,14 @@
         "*://*.expedia.com/*",
         "*://*.expedia.co.uk/*",
         "*://*.expedia.ca/*",
+        "*://*.expedia.de/*",
+        "*://*.expedia.fr/*",
+        "*://*.expedia.it/*",
+        "*://*.expedia.es/*",
+        "*://*.expedia.nl/*",
+        "*://*.expedia.com.au/*",
+        "*://*.expedia.co.in/*",
+        "*://*.expedia.co.jp/*",
         "*://*.hotels.com/*",
         "*://*.vrbo.com/*"
       ],
@@ -87,6 +95,14 @@
         "*://*.expedia.com/*",
         "*://*.expedia.co.uk/*",
         "*://*.expedia.ca/*",
+        "*://*.expedia.de/*",
+        "*://*.expedia.fr/*",
+        "*://*.expedia.it/*",
+        "*://*.expedia.es/*",
+        "*://*.expedia.nl/*",
+        "*://*.expedia.com.au/*",
+        "*://*.expedia.co.in/*",
+        "*://*.expedia.co.jp/*",
         "*://*.hotels.com/*",
         "*://*.vrbo.com/*"
       ]

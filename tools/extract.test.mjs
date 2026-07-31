@@ -279,9 +279,9 @@ test('the harness records family and variant, and never a hostname', async () =>
 
 test('the ccTLD question is answerable without naming the country', async () => {
   const { cohortRecordFor } = await import('../src/lib/storage.js');
-  assert.deepEqual(cohortRecordFor('airbnb.com'), { family: 'airbnb', variant: 'primary' });
-  assert.deepEqual(cohortRecordFor('airbnb.co.uk'), { family: 'airbnb', variant: 'cctld' });
-  assert.deepEqual(cohortRecordFor('booking.de'), { family: 'booking', variant: 'cctld' });
+  assert.deepEqual(cohortRecordFor('airbnb.com'), { family: 'airbnb', variant: 'primary', brand: 'airbnb' });
+  assert.deepEqual(cohortRecordFor('airbnb.co.uk'), { family: 'airbnb', variant: 'cctld', brand: 'airbnb' });
+  assert.deepEqual(cohortRecordFor('booking.de'), { family: 'booking', variant: 'cctld', brand: 'booking' });
 });
 
 test('the site label comes from our allowlist, never from the page', async () => {
@@ -855,17 +855,23 @@ test('Expedia Group brands are one family but keep their own labels', async () =
   // Expedia, Hotels.com and Vrbo share an owner and probably a template. Grouping them answers
   // "is Booking or Airbnb the typical shape?"; keeping separate labels means we can still see if
   // one brand behaves differently from its siblings.
-  assert.deepEqual(cohort('www.expedia.com'), { family: 'expedia', variant: 'primary' });
-  assert.deepEqual(cohort('uk.hotels.com'), { family: 'expedia', variant: 'primary' });
-  assert.deepEqual(cohort('www.vrbo.com'), { family: 'expedia', variant: 'primary' });
+  // The BRAND is recorded, not just the family — otherwise every Expedia Group page persists
+  // identically and a divergent sibling is invisible, which is the whole reason they were added.
+  assert.deepEqual(cohort('www.expedia.com'), { family: 'expedia', variant: 'primary', brand: 'expedia' });
+  assert.deepEqual(cohort('uk.hotels.com'), { family: 'expedia', variant: 'primary', brand: 'hotels' });
+  assert.deepEqual(cohort('www.vrbo.com'), { family: 'expedia', variant: 'primary', brand: 'vrbo' });
+
+  // Brand and variant answer different questions: does a sibling BRAND behave differently, and does
+  // a COUNTRY variant.
+  assert.deepEqual(cohort('www.expedia.de'), { family: 'expedia', variant: 'cctld', brand: 'expedia' });
 
   // A country variant, which is a different question from a sibling brand — calling Hotels.com a
   // ccTLD would answer the ccTLD question with the wrong data.
-  assert.deepEqual(cohort('www.expedia.co.uk'), { family: 'expedia', variant: 'cctld' });
+  assert.deepEqual(cohort('www.expedia.co.uk'), { family: 'expedia', variant: 'cctld', brand: 'expedia' });
 
   // And the others still work.
-  assert.deepEqual(cohort('www.booking.com'), { family: 'booking', variant: 'primary' });
-  assert.deepEqual(cohort('www.airbnb.com'), { family: 'airbnb', variant: 'primary' });
+  assert.deepEqual(cohort('www.booking.com'), { family: 'booking', variant: 'primary', brand: 'booking' });
+  assert.deepEqual(cohort('www.airbnb.com'), { family: 'airbnb', variant: 'primary', brand: 'airbnb' });
 });
 
 test('an unlisted host has no family and no variant', async () => {
@@ -875,5 +881,6 @@ test('an unlisted host has no family and no variant', async () => {
   assert.deepEqual(cohortRecordFor(siteLabelFor('expedia.com.evil.example')), {
     family: 'other',
     variant: null,
+    brand: null,
   });
 });

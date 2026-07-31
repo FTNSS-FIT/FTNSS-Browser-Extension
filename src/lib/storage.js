@@ -34,9 +34,13 @@ export const SITE_LABELS = [
   // Expedia Group. Added to answer one question: Booking publishes no coordinates and Airbnb
   // publishes them on every page, so a third family tells us which is TYPICAL — and that decides
   // whether geocoding is a minority path or the main one for most of the market.
-  'expedia.com',
-  'expedia.co.uk',
-  'expedia.ca',
+  //
+  // Country variants enumerated rather than sampled, each confirmed to resolve by DNS on
+  // 2026-07-31. A partial list is the bug the ccTLD rule exists to prevent: the script silently
+  // never runs on the omitted ones, and their absence looks like a market with no listings.
+  ...['com', 'co.uk', 'ca', 'de', 'fr', 'it', 'es', 'nl', 'com.au', 'co.in', 'co.jp'].map(
+    (tld) => `expedia.${tld}`,
+  ),
   'hotels.com',
   'vrbo.com',
   'booking.com',
@@ -100,6 +104,22 @@ export async function currentCohort() {
  */
 const PRIMARY_DOMAIN = { airbnb: 'airbnb.com', booking: 'booking.com', expedia: 'expedia.com' };
 
+/**
+ * The brand, stripped of its country variant: `expedia.co.uk` and `expedia.de` are both `expedia`,
+ * while `hotels.com` and `vrbo.com` are their own brands inside the same family.
+ *
+ * Separate from `variant` because they answer different questions — whether a SIBLING BRAND behaves
+ * differently, and whether a COUNTRY VARIANT does.
+ */
+function brandOf(label) {
+  if (label.startsWith('expedia.')) return 'expedia';
+  if (label.startsWith('airbnb.')) return 'airbnb';
+  if (label.startsWith('booking.')) return 'booking';
+  if (label === 'hotels.com') return 'hotels';
+  if (label === 'vrbo.com') return 'vrbo';
+  return null;
+}
+
 export function cohortRecordFor(label) {
   const family = siteFamilyFor(label);
   // Hotels.com and Vrbo are separate brands rather than country variants of Expedia, so they are
@@ -107,9 +127,16 @@ export function cohortRecordFor(label) {
   const siblings = new Set(['hotels.com', 'vrbo.com']);
   // An unlisted host has no family and therefore no variant. Recording one would put a meaningless
   // 'other/cctld' row in the data, and the popup refuses to record these anyway.
-  if (family === 'other') return { family: 'other', variant: null };
+  if (family === 'other') return { family: 'other', variant: null, brand: null };
   const isPrimary = label === PRIMARY_DOMAIN[family] || siblings.has(label);
-  return { family, variant: isPrimary ? 'primary' : 'cctld' };
+  // THE BRAND, RECORDED. Without it every Expedia Group page persisted as an identical
+  // {family:'expedia', variant:'primary'} row, so the report could not tell Hotels.com from Vrbo —
+  // which contradicts the stated reason for adding them, that a sibling behaving differently should
+  // stay visible. A label that exists only at detection time and never reaches the record is not a
+  // measurement. (Codex review, PR #9.)
+  //
+  // Closed vocabulary: it comes from SITE_LABELS, so no page can introduce one.
+  return { family, variant: isPrimary ? 'primary' : 'cctld', brand: brandOf(label) };
 }
 
 export async function setCurrentCohort(cohort) {
@@ -303,6 +330,9 @@ const EXPORT_FIELDS = [
   // product records nothing of the sort, and a test enforces that separately.
   'family',
   'variant',
+  // Which brand inside the family — 'expedia' | 'hotels' | 'vrbo' | 'airbnb' | 'booking'. From a
+  // closed vocabulary, so no page can introduce one.
+  'brand',
   // Historical note, kept because it explains why this looks like it was fought over: it was.
   // The label was removed from the row, then coarsened, then removed from the export filename,
   // on the argument that a label plus a date proves which domain was visited. Sound for a product

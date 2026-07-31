@@ -330,6 +330,18 @@ if (byFamily.size > 1) {
   for (const [family, rows] of byFamily) summarise(rows, family.toUpperCase());
 }
 
+// A sibling brand behaving differently from its family is the reason the brands were added
+// separately — Hotels.com diverging from Expedia would change what the family finding means.
+const byBrand = new Map();
+for (const r of records) {
+  const key = String(r.brand ?? 'unknown');
+  if (!byBrand.has(key)) byBrand.set(key, []);
+  byBrand.get(key).push(r);
+}
+if (byBrand.size > 1) {
+  for (const [brand, rows] of byBrand) summarise(rows, `BRAND: ${brand}`);
+}
+
 const byVariant = new Map();
 for (const r of records) {
   const key = String(r.variant ?? 'unknown');
