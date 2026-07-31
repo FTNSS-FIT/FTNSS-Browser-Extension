@@ -46,7 +46,22 @@ function loadGyms() {
 
 const GYMS = loadGyms();
 
-/** Haversine. The real endpoint uses PostGIS; this only has to agree to the metre. */
+/**
+ * Haversine — NOT DISTANCE-AUTHORITATIVE, and measured against the real thing rather than assumed.
+ *
+ * Compared to prod PostGIS over six Toronto gyms: identical set, identical order, distances up to
+ * 9m larger there — every delta positive and under 0.3%. That one-directional, proportional
+ * signature is the WGS84 ellipsoid versus this sphere (R = 6,371,008.8 m). A sphere is a slightly
+ * small model of the Earth; neither is wrong.
+ *
+ * Immaterial at our precision: we round to a 250m grid and display "about 3.7 km", so a 9m
+ * disagreement is two orders of magnitude below what anyone sees. Written down because a future
+ * reader comparing the two would otherwise have a discrepancy to chase.
+ *
+ * This file stays after the real endpoint exists. It is a TEST DOUBLE, not a placeholder: it runs
+ * in CI with no network, and it is the only way to exercise timeout, HTTP 500, malformed payload
+ * and empty-result paths without breaking production to do it.
+ */
 function metresBetween(a, b) {
   const R = 6371008.8;
   const toRad = (d) => (d * Math.PI) / 180;
