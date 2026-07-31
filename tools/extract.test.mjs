@@ -217,7 +217,7 @@ test('tier 2 survives a malformed url', () => {
 // ─── tier 3 ───────────────────────────────────────────────────────────────────
 
 test('tier 3 returns an address string, not a coordinate', () => {
-  const doc = fakeDocument({ '[itemprop="address"]': [textNode('Travessa das Merceeiras 27, Lisboa')] });
+  const doc = fakeDocument({ '[itemprop="address"]': [textNode('12 Example Street, Exampleton')] });
   const r = extractFromAddressText(doc);
   assert.equal(r.status, 'found_address');
   assert.equal(r.lat, undefined);
@@ -550,7 +550,7 @@ test('an ambiguous tier is never rescued by a lower tier', async () => {
       scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } })),
       scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 51.5074, longitude: -0.1278 } })),
     ],
-    '[itemprop="address"]': [textNode('Travessa das Merceeiras 27, Lisboa')],
+    '[itemprop="address"]': [textNode('12 Example Street, Exampleton')],
   });
   assert.equal(runExtraction(doc).result.status, 'ambiguous');
 });
@@ -583,7 +583,7 @@ test('nested objects are rebuilt, not carried over', async () => {
 test('tier 3 bounds how much work a page can commission', () => {
   // textContent materialises the whole subtree before any cap applies, and readiness probes re-run
   // extraction every 250ms — so an unbounded read is work a page can ask for repeatedly.
-  const huge = 'x '.repeat(500_000) + '27 Travessa das Merceeiras';
+  const huge = 'x '.repeat(500_000) + '12 Example Street';
   const many = Array.from({ length: 5000 }, () => textNode(huge));
   const doc = fakeDocument({ '[class*="address" i]': many });
   const started = Date.now();
@@ -694,10 +694,10 @@ test('address components are captured from a lodging node with no coordinates', 
       name: 'Riu Plaza',
       address: {
         '@type': 'PostalAddress',
-        streetAddress: '27 Travessa das Merceeiras',
-        addressLocality: 'Lisboa',
-        postalCode: '1100-348',
-        addressCountry: 'PT',
+        streetAddress: '12 Example Street',
+        addressLocality: 'Exampleton',
+        postalCode: 'EX1 2AB',
+        addressCountry: 'GB',
       },
     }),
   );
@@ -709,7 +709,8 @@ test('address components are captured from a lodging node with no coordinates', 
     region: false,
     postalCode: true,
     countryPublished: true,
-    country: 'PT',
+    countryParsed: true,
+    country: 'GB',
   });
   // The exported record keeps only presence — see storage.js.
 });
@@ -718,23 +719,23 @@ test('components report PRESENCE, never the address itself', () => {
   const doc = ldJsonDocument(
     JSON.stringify({
       '@type': 'Hotel',
-      address: { streetAddress: '27 Travessa das Merceeiras', addressLocality: 'Lisboa', addressCountry: 'PT' },
+      address: { streetAddress: '12 Example Street', addressLocality: 'Exampleton', addressCountry: 'GB' },
     }),
   );
   const serialised = JSON.stringify(extractFromStructuredData(doc).addressComponents);
   // A measurement that requires the thing whose safety it is measuring is not worth taking.
-  for (const leak of ['Travessa', 'Merceeiras', 'Lisboa', '27']) {
+  for (const leak of ['Example Street', 'Exampleton', '12']) {
     assert.ok(!serialised.includes(leak), `components leaked "${leak}"`);
   }
-  assert.ok(serialised.includes('PT'), 'the country is carried deliberately — see the module comment');
+  assert.ok(serialised.includes('GB'), 'the country is carried deliberately — see the module comment');
 });
 
 test('coarse geocodability needs a postcode AND a country', async () => {
   const { coarselyGeocodable } = await import('../src/extract/address-components.js');
-  assert.equal(coarselyGeocodable({ postalCode: true, country: 'PT' }), true);
+  assert.equal(coarselyGeocodable({ postalCode: true, country: 'GB' }), true);
   // A postcode with no country is ambiguous worldwide; a country with no postcode is a nation.
   assert.equal(coarselyGeocodable({ postalCode: true, country: null }), false);
-  assert.equal(coarselyGeocodable({ postalCode: false, country: 'PT' }), false);
+  assert.equal(coarselyGeocodable({ postalCode: false, country: 'GB' }), false);
   assert.equal(coarselyGeocodable(null), false);
 });
 
@@ -751,7 +752,7 @@ test('a country name is resolved through a fixed table, and nothing else passes'
   const code = (country) => addressComponentsOf({ address: { postalCode: 'X', addressCountry: country } }).country;
 
   // Booking publishes names on most pages. Reading only codes discarded a component that was there.
-  assert.equal(code('Portugal'), 'PT');
+  assert.equal(code('Portugal'), 'GB');
   assert.equal(code('United States'), 'US');
   assert.equal(code('united kingdom'), 'GB');
   assert.equal(code('España'), 'ES');
@@ -787,9 +788,26 @@ test('the exported record carries no country code, only whether one was publishe
   // The code answered its question — coarse geocoding is viable, and its worth varies by market
   // (DECISIONS 13). Keeping it now would introduce location onto records that carry none.
   const [out] = exportableRecords([
-    { addressComponents: { street: true, locality: true, region: false, postalCode: true, countryPublished: true, country: 'PT' } },
+    { addressComponents: { street: true, locality: true, region: false, postalCode: true, countryPublished: true, country: 'GB' } },
   ]);
   assert.equal(out.addressComponents.countryPublished, true);
   assert.equal(out.addressComponents.country, undefined);
-  assert.ok(!JSON.stringify(out).includes('PT'));
+  assert.ok(!JSON.stringify(out).includes('GB'));
+});
+
+test('a country we cannot read does not count as usable', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Three states, not two. Collapsing "published but unreadable" into "published" overstated
+  // geocoding viability — a country we cannot turn into a code is no more use to a geocoder than
+  // one that was never there, but it looked identical in the report.
+  const unreadable = addressComponentsOf({ address: { postalCode: 'X', addressCountry: 'Ruritania' } });
+  assert.equal(unreadable.countryPublished, true);
+  assert.equal(unreadable.countryParsed, false);
+
+  const usable = addressComponentsOf({ address: { postalCode: 'X', addressCountry: 'Canada' } });
+  assert.equal(usable.countryParsed, true);
+
+  const absent = addressComponentsOf({ address: { postalCode: 'X' } });
+  assert.equal(absent.countryPublished, false);
+  assert.equal(absent.countryParsed, false);
 });

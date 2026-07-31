@@ -437,6 +437,9 @@ function exportableAddressComponents(components) {
     // that otherwise carry none at all. If a future session needs it, re-add it deliberately for
     // that session. (Codex review, PR #8.)
     countryPublished: components.countryPublished === true,
+    // Whether we could turn it into a code — the thing that decides whether it is usable — without
+    // carrying which country it was.
+    countryParsed: components.countryParsed === true,
   };
 }
 

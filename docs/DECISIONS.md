@@ -204,7 +204,7 @@ has to be able to state.
 Booking.com published no coordinates on 8 of 8 pages: a `Hotel` block with an address, no usable map
 URL. If that holds, the Booking path needs a geocoder, and that collides with the architecture.
 
-**A hotel's street address is the listing identity.** "27 Travessa das Merceeiras, Lisboa" identifies
+**A hotel's street address is the listing identity.** "12 Example Street, Exampleton" identifies
 which property someone is looking at as precisely as the URL does. So sending it anywhere to be
 geocoded gives away the thing §4.2 of the spec promises we cannot know:
 

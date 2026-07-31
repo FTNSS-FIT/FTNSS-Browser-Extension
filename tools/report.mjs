@@ -115,12 +115,12 @@ function summarise(allRows, label) {
   if (needsGeocoding.length > 0) {
     const withComponents = needsGeocoding.filter((r) => r.addressComponents != null);
     const coarse = withComponents.filter(
-      (r) => r.addressComponents.postalCode && r.addressComponents.countryPublished,
+      (r) => r.addressComponents.postalCode && r.addressComponents.countryParsed,
     );
     const streetOnly = withComponents.filter(
       (r) =>
         r.addressComponents.street &&
-        !(r.addressComponents.postalCode && r.addressComponents.countryPublished),
+        !(r.addressComponents.postalCode && r.addressComponents.countryParsed),
     );
 
     console.log(`  GEOCODING VIABILITY (${needsGeocoding.length} pages with no coordinate)`);
@@ -143,6 +143,16 @@ function summarise(allRows, label) {
     // PUBLISHED BUT UNPARSED is a finding about US; absent is a finding about the site. Collapsing
     // them would have hidden that Booking publishes a country on every page and we were failing to
     // read it.
+    // Our bug and their absence are different findings, and neither is usable — but only one of
+    // them is fixable by us.
+    const unreadable = withComponents.filter(
+      (r) => r.addressComponents.countryPublished && !r.addressComponents.countryParsed,
+    );
+    if (unreadable.length > 0) {
+      console.log(
+        `    ⚠ country published but unreadable   ${pct(unreadable.length, withComponents.length)}  — our parser, not their markup`,
+      );
+    }
     const absent = withComponents.filter((r) => !r.addressComponents.countryPublished);
     if (absent.length > 0) {
       console.log(`    country genuinely absent       ${pct(absent.length, withComponents.length)}`);

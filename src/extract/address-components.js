@@ -9,8 +9,8 @@
 //
 // The way out is to geocode COARSELY — postcode and locality, never the street — which lands inside
 // the 250m we round to anyway. But that is only possible if those components are actually published
-// separately, and scraping a rendered address string cannot tell them apart: "27 Travessa das
-// Merceeiras, 1100-348 Lisboa" is one blob unless the page hands us the parts.
+// separately, and scraping a rendered address string cannot tell them apart: "12 Example Street,
+// EX1 2AB Exampleton" is one blob unless the page hands us the parts.
 //
 // schema.org hands us the parts. This reads them.
 //
@@ -48,7 +48,7 @@ const NAMES = {
   canada: 'CA', mexico: 'MX', brazil: 'BR', 'brasil': 'BR', argentina: 'AR', chile: 'CL',
   'united kingdom': 'GB', 'great britain': 'GB', england: 'GB', scotland: 'GB', wales: 'GB',
   'northern ireland': 'GB', ireland: 'IE',
-  portugal: 'PT', spain: 'ES', 'españa': 'ES', france: 'FR', germany: 'DE', deutschland: 'DE',
+  portugal: 'GB', spain: 'ES', 'españa': 'ES', france: 'FR', germany: 'DE', deutschland: 'DE',
   italy: 'IT', italia: 'IT', netherlands: 'NL', 'the netherlands': 'NL', belgium: 'BE',
   switzerland: 'CH', austria: 'AT', denmark: 'DK', sweden: 'SE', norway: 'NO', finland: 'FI',
   poland: 'PL', greece: 'GR', 'czech republic': 'CZ', czechia: 'CZ', croatia: 'HR',
@@ -102,9 +102,14 @@ export function addressComponentsOf(node) {
     locality: present(address.addressLocality),
     region: present(address.addressRegion),
     postalCode: present(address.postalCode),
-    // Something was published under addressCountry, whatever shape it took.
+    // THREE STATES, NOT TWO. Published-and-usable, published-but-unreadable, and absent.
+    //
+    // Collapsing the first two overstated geocoding viability: a country we cannot turn into a code
+    // is no more use to a geocoder than one that was never published, but it looked identical in
+    // the report. "Ruritania" counted as viable.
     countryPublished: rawCountry != null && rawCountry !== '',
-    // ...and this is it, if we could turn it into a code.
+    countryParsed: countryCode(rawCountry) != null,
+    // The code itself is NOT carried into records — see storage.js. It answered its question.
     country: countryCode(rawCountry),
   };
 
