@@ -220,3 +220,41 @@ test('legacy records on disk are sanitised by the startup migration', async () =
   }
   assert.ok(after.includes('found_address'), 'the measurement itself must survive the migration');
 });
+
+test('records from an older build survive the upgrade instead of being erased', async () => {
+  const areas = installMockChrome();
+  const storage = await import('../src/lib/storage.js');
+
+  // Exactly what Jordan's first sessions wrote: a single `verdict` field, before it was split into
+  // the extractor's `outcome` and the person's `verified`. The projection is an allowlist, so an
+  // unknown field is dropped — correct for page data, catastrophic for a schema change.
+  areas.local.set('phase1_records', [
+    { verdict: 'correct', result: { status: 'found', tier: 1 }, timing: { totalMs: 3 } },
+    { verdict: 'no_read', result: { status: 'not_found' }, timing: { totalMs: 2 } },
+    { verdict: 'address_correct', result: { status: 'found_address', tier: 3 }, timing: { totalMs: 2 } },
+    { verdict: 'unverifiable', result: { status: 'found', tier: 1 }, timing: { totalMs: 4 } },
+  ]);
+
+  await storage.migrateStoredRecords();
+  const after = await storage.loadRecords();
+
+  assert.equal(after.length, 4, 'no record may be lost by an upgrade');
+  assert.deepEqual(
+    after.map((r) => `${r.outcome}/${r.verified ?? 'unverified'}`),
+    ['found/correct', 'not_found/unverified', 'found_address/correct', 'found/unverified'],
+  );
+  // And the old field is gone rather than lingering alongside the new ones.
+  assert.ok(after.every((r) => r.verdict === undefined));
+});
+
+test('the upgrade is idempotent — running it twice changes nothing', async () => {
+  const areas = installMockChrome();
+  const storage = await import('../src/lib/storage.js');
+  areas.local.set('phase1_records', [
+    { verdict: 'correct', result: { status: 'found', tier: 1 }, timing: { totalMs: 3 } },
+  ]);
+  await storage.migrateStoredRecords();
+  const once = JSON.stringify(await storage.loadRecords());
+  await storage.migrateStoredRecords();
+  assert.equal(JSON.stringify(await storage.loadRecords()), once);
+});

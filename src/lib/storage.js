@@ -204,10 +204,53 @@ export async function saveRecord(record) {
  * was stored, and nothing would ever clean it. Runs at startup, before anything renders.
  * (Codex review round 25, PR #1.)
  */
+/**
+ * Map a record written by an older build onto the current shape, BEFORE projecting it.
+ *
+ * The projection is an allowlist, so a field it does not know about is dropped — which is the
+ * property we want for page data and a disaster for a schema change. Records written when the
+ * verdict was a single field (`correct`, `no_read`, `address_correct`…) would have had that field
+ * silently removed on the next startup, leaving rows with no outcome and no verification at all.
+ * Real measurements, destroyed irreversibly by an upgrade, with the report's denominators quietly
+ * wrong afterwards. (Codex review, PR #6.)
+ */
+function upgradeLegacyRecord(record) {
+  if (record == null || typeof record !== 'object') return record;
+  if (record.outcome !== undefined || record.verdict === undefined) return record;
+
+  const upgraded = { ...record };
+  const verdict = record.verdict;
+  const status = record.result?.status;
+
+  // `outcome` is what the extractor found; the old verdict conflated that with the person's
+  // judgement, so recover each from whichever part of the old value carried it.
+  upgraded.outcome =
+    status ??
+    (verdict === 'no_read'
+      ? 'not_found'
+      : verdict === 'address_correct' || verdict === 'address_wrong'
+        ? 'found_address'
+        : verdict === 'ambiguous_confirmed'
+          ? 'ambiguous'
+          : verdict === 'correct' || verdict === 'wrong'
+            ? 'found'
+            : 'not_found');
+
+  upgraded.verified =
+    verdict === 'correct' || verdict === 'address_correct'
+      ? 'correct'
+      : verdict === 'wrong' || verdict === 'address_wrong'
+        ? 'wrong'
+        : null;
+
+  delete upgraded.verdict;
+  return upgraded;
+}
+
 export async function migrateStoredRecords() {
   const records = await loadRecords();
   if (records.length === 0) return;
-  const projected = exportableRecords(records);
+  const projected = exportableRecords(records.map(upgradeLegacyRecord));
   await chrome.storage.local.set({ [KEY]: projected });
 }
 

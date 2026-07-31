@@ -146,12 +146,22 @@ function collectMetadata(doc) {
   ];
   for (const [latSelector, lonSelector] of pairs) {
     try {
-      const latNode = doc.querySelectorAll(latSelector)[0];
-      const lonNode = doc.querySelectorAll(lonSelector)[0];
-      if (latNode == null || lonNode == null) continue;
-      const lat = parseCoordinate(latNode.getAttribute('content'));
-      const lon = parseCoordinate(lonNode.getAttribute('content'));
-      add(lat, lon, 'meta geo');
+      // EVERY tag, pairwise by position — not just the first of each.
+      //
+      // Taking `[0]` from each list fabricates a coordinate when the tags are contradictory or
+      // interleaved: the first latitude gets married to the first longitude regardless of whether
+      // they describe the same place, and every later tag is ignored so nothing can contradict the
+      // result. A page publishing two locations produced one confident wrong one.
+      // (Codex review, PR #6.)
+      const latNodes = [...doc.querySelectorAll(latSelector)].slice(0, 10);
+      const lonNodes = [...doc.querySelectorAll(lonSelector)].slice(0, 10);
+      for (let i = 0; i < Math.min(latNodes.length, lonNodes.length); i += 1) {
+        add(
+          parseCoordinate(latNodes[i].getAttribute('content')),
+          parseCoordinate(lonNodes[i].getAttribute('content')),
+          'meta geo',
+        );
+      }
     } catch {
       continue;
     }
