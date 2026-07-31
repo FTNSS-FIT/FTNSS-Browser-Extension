@@ -708,6 +708,7 @@ test('address components are captured from a lodging node with no coordinates', 
     locality: true,
     region: false,
     postalCode: true,
+    countryPublished: true,
     country: 'PT',
   });
 });
@@ -749,4 +750,24 @@ test('a country field that is not a country code is discarded', async () => {
   // Page-controlled text. "Portugal" is not a code, and we must not carry arbitrary strings.
   const components = addressComponentsOf({ address: { postalCode: '1100', addressCountry: 'Portugal' } });
   assert.equal(components.country, null);
+});
+
+test('"UK" is normalised to GB rather than passed to a geocoder as-is', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Measured on real Booking pages. The UK's actual code is GB; "UK" is a reserved exception that
+  // everyone uses anyway, and it would be a lookup that quietly fails.
+  assert.equal(addressComponentsOf({ address: { postalCode: 'W1', addressCountry: 'UK' } }).country, 'GB');
+});
+
+test('a country published in a form we cannot parse is distinguished from one that is absent', async () => {
+  const { addressComponentsOf } = await import('../src/extract/address-components.js');
+  // Opposite findings: one is about the site, the other is about us. The first Booking measurements
+  // came back null on 24 of 27 pages with no way to tell which had happened.
+  const unparsed = addressComponentsOf({ address: { postalCode: 'M5V', addressCountry: 'Canada' } });
+  assert.equal(unparsed.countryPublished, true, 'they published something');
+  assert.equal(unparsed.country, null, 'we could not turn it into a code');
+
+  const absent = addressComponentsOf({ address: { postalCode: 'M5V', addressLocality: 'Toronto' } });
+  assert.equal(absent.countryPublished, false);
+  assert.equal(absent.country, null);
 });

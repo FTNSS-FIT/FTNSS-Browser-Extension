@@ -142,14 +142,29 @@ export async function migrateAwayLocalCohort() {
  * and messaging our own content script is not a new capability. Returns null when there is no
  * content script to answer — which is the correct answer for a page we do not measure.
  */
-export async function readActivePage() {
-  try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id == null) return null;
-    return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_READ' });
-  } catch {
-    return null;
+export async function readActivePage({ attempts = 1 } = {}) {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab?.id == null) return null;
+
+  // RETRY WHILE THE CONTENT SCRIPT IS STILL ATTACHING.
+  //
+  // A content script cannot run until the page reaches document_idle, and Booking listings were
+  // measured taking a median of 1.3 SECONDS to get there, with 7 of 27 over two seconds and one at
+  // 5.8. Open the popup before then and `sendMessage` throws because there is nobody listening —
+  // which was reported as "No reading for this page", indistinguishable from a page we cannot read.
+  //
+  // So it looked frozen and broken while being neither, and clicking again a moment later worked.
+  // A tool that is right on the second try and says nothing useful on the first teaches its operator
+  // to distrust it. (Jordan, on 27 Booking pages.)
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await chrome.tabs.sendMessage(tab.id, { type: 'FTNSS_READ' });
+    } catch {
+      if (attempt === attempts - 1) return null;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
   }
+  return null;
 }
 
 export async function loadRecords() {
@@ -416,6 +431,7 @@ function exportableAddressComponents(components) {
     locality: components.locality === true,
     region: components.region === true,
     postalCode: components.postalCode === true,
+    countryPublished: components.countryPublished === true,
     country,
   };
 }

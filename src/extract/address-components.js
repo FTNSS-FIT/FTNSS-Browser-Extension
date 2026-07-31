@@ -21,10 +21,20 @@
 
 const ADDRESS_KEYS = ['streetAddress', 'addressLocality', 'addressRegion', 'postalCode', 'addressCountry'];
 
-/** A country code, if it is one. Two letters, uppercased — anything else is discarded. */
+/**
+ * Well-known codes that are not ISO 3166-1 alpha-2 but appear constantly in the wild.
+ *
+ * "UK" is the obvious one, and it was measured on real Booking pages. The United Kingdom's actual
+ * code is GB; "UK" is a reserved exception that everyone uses anyway. Passing it to a geocoder
+ * unchanged is a lookup that quietly fails, so normalise it here rather than discovering it later.
+ */
+const ALIASES = { UK: 'GB', EL: 'GR', AN: 'NL' };
+
+/** ISO 3166-1 alpha-2, or null. Codes only — never a country NAME, which is page-controlled text. */
 function countryCode(value) {
   if (typeof value === 'string') {
     const trimmed = value.trim().toUpperCase();
+    if (ALIASES[trimmed]) return ALIASES[trimmed];
     return /^[A-Z]{2}$/.test(trimmed) ? trimmed : null;
   }
   // schema.org allows a nested Country object.
@@ -49,12 +59,22 @@ export function addressComponentsOf(node) {
   const address = node?.address;
   if (address == null || typeof address !== 'object' || Array.isArray(address)) return null;
 
+  // PRESENT-BUT-UNPARSED IS NOT ABSENT.
+  //
+  // The first Booking measurements came back with `country: null` on 24 of 27 pages, and there was
+  // no way to tell whether Booking omits the country or publishes it in a form this function
+  // refuses — which are opposite findings, one about the site and one about us. Exactly the
+  // distinction that was made a virtue of for coordinates, and then not made here.
+  const rawCountry = address.addressCountry;
   const components = {
     street: present(address.streetAddress),
     locality: present(address.addressLocality),
     region: present(address.addressRegion),
     postalCode: present(address.postalCode),
-    country: countryCode(address.addressCountry),
+    // Something was published under addressCountry, whatever shape it took.
+    countryPublished: rawCountry != null && rawCountry !== '',
+    // ...and this is it, if we could turn it into a code.
+    country: countryCode(rawCountry),
   };
 
   // Nothing usable is not the same as no address object at all, but for our purposes it is: a

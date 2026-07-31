@@ -128,13 +128,18 @@ async function render() {
     statusEl.appendChild(el('span', pendingNotice, 'warn'));
     pendingNotice = null;
   }
-  // Read the page as it is right now.
-  let reading = await readActivePage();
+  // Read the page as it is right now, retrying while the content script may still be attaching.
+  readingEl.className = 'muted';
+  readingEl.textContent = 'reading the page…';
+  let reading = await readActivePage({ attempts: 12 });
 
   if (reading == null) {
     readingEl.className = 'muted';
+    // Says which of the two it is. "No reading for this page" covered both a page we do not measure
+    // and a page that simply had not finished loading, and they need different responses from the
+    // person holding the instrument.
     readingEl.textContent =
-      'No reading for this page. Open a listing on one of the sites in the manifest, or reload the tab.';
+      'Nothing here to read. Either this is not a listing on a site we measure, or the page is still loading — reload and try again.';
     await refreshCount();
     return;
   }

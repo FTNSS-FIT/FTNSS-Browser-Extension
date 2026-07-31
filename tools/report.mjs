@@ -147,6 +147,20 @@ function summarise(allRows, label) {
       console.log(`    by country                     ${parts.join('  ')}`);
       console.log('      (postcode precision differs by country — a UK postcode is a building, a US ZIP is a district)');
     }
+
+    // PUBLISHED BUT UNPARSED is a finding about US; absent is a finding about the site. Collapsing
+    // them would have hidden that Booking publishes a country on every page and we were failing to
+    // read it.
+    const unparsed = withComponents.filter((r) => r.addressComponents.countryPublished && !r.addressComponents.country);
+    const absent = withComponents.filter((r) => !r.addressComponents.countryPublished);
+    if (unparsed.length > 0) {
+      console.log(
+        `    ⚠ country PUBLISHED but not parsed as a code   ${pct(unparsed.length, withComponents.length)}  — our bug, not theirs`,
+      );
+    }
+    if (absent.length > 0) {
+      console.log(`    country genuinely absent       ${pct(absent.length, withComponents.length)}`);
+    }
   }
 
   // ── WHETHER IT WAS RIGHT ───────────────────────────────────────────────────
