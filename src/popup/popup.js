@@ -78,6 +78,19 @@ async function refreshCount() {
   countEl.textContent = `${records.length} recorded`;
 }
 
+/**
+ * Bounded re-checks while a reading is still settling, with the progress shown as it goes.
+ *
+ * These four were referenced throughout and never declared — the popup threw
+ * `MAX_POLLS is not defined` on every page. Four wiring bugs of this shape have now shipped from
+ * this file, every one of them a scripted edit that silently matched nothing. The executable smoke
+ * test added alongside this is the actual fix; the declarations are just the symptom.
+ */
+const MAX_POLLS = 20;
+const POLL_INTERVAL_MS = 400;
+let pollsRemaining = MAX_POLLS;
+let pollTimer = null;
+
 /** A message that must survive the re-render which follows it. */
 let pendingNotice = null;
 
