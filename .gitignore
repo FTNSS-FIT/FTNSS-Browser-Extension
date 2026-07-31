@@ -17,3 +17,6 @@ measurements/
 .DS_Store
 .idea/
 .vscode/
+
+# Working state, never published — see the first rule in ~/.claude/CLAUDE.md
+HANDOFF.md
