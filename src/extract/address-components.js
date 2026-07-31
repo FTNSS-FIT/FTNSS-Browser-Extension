@@ -78,6 +78,54 @@ function countryCode(value) {
 const present = (value) => typeof value === 'string' && value.trim().length > 0;
 
 /**
+ * Did the page publish a country AT ALL?
+ *
+ * Separate from `countryCode` because the two answer different questions — this one is about the
+ * SITE, that one is about our parser — and separate from a bare `!= null` because that is what it
+ * used to be and it let `addressCountry: {}` through. A postcode plus an empty object was reported
+ * as a published country, which after the tier-1 change was enough to promote a page to
+ * `found_address`. Every byte here is page-controlled; "not null" is not a validation.
+ *
+ * schema.org allows a nested `Country`, so an object counts — but only if it actually carries a
+ * name or identifier worth the word "published".
+ */
+function countryIsPublished(value) {
+  if (present(value)) return true;
+  if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+    return present(value.name) || present(value.identifier);
+  }
+  return false;
+}
+
+/**
+ * A local, never-exported fingerprint of what an address SAYS.
+ *
+ * The presence map cannot tell two hotels apart: a Lisbon listing and a Tokyo listing both have a
+ * street, a locality, a postcode and a country, so intersecting them yields a complete-looking
+ * address describing neither. The coordinate path already fails closed when a page describes two
+ * places; this is the same check for the path that has no coordinates.
+ *
+ * The values never leave this module — they are compared and discarded. Fields are truncated
+ * because the input is page-controlled and unbounded, and a comparison does not need the tail.
+ */
+export function addressFingerprintOf(node) {
+  const address = node?.address;
+  if (address == null || typeof address !== 'object' || Array.isArray(address)) return null;
+  const part = (value) => {
+    const text = typeof value === 'string' ? value : '';
+    return text.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
+  };
+  const country = countryCode(address.addressCountry) ?? part(address.addressCountry);
+  const fields = [
+    part(address.streetAddress),
+    part(address.addressLocality),
+    part(address.postalCode),
+    country,
+  ];
+  return fields.some((f) => f.length > 0) ? fields.join('|') : null;
+}
+
+/**
  * Reduce a PostalAddress to a presence map plus a country code.
  *
  * The country is the one value carried rather than a flag, and it is worth being explicit about
@@ -107,7 +155,7 @@ export function addressComponentsOf(node) {
     // Collapsing the first two overstated geocoding viability: a country we cannot turn into a code
     // is no more use to a geocoder than one that was never published, but it looked identical in
     // the report. "Ruritania" counted as viable.
-    countryPublished: rawCountry != null && rawCountry !== '',
+    countryPublished: countryIsPublished(rawCountry),
     countryParsed: countryCode(rawCountry) != null,
     // The code itself is NOT carried into records — see storage.js. It answered its question.
     country: countryCode(rawCountry),

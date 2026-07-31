@@ -825,10 +825,11 @@ test('a country we cannot read does not count as usable', async () => {
   assert.equal(absent.countryParsed, false);
 });
 
-test('address components are intersected across lodging nodes, not taken from the first', () => {
-  // A page carrying a complete "related hotel" ahead of an incomplete target would otherwise be
-  // reported as coarse-geocodable when the listing itself is not — the same first-wins mistake as
-  // the coordinate tiers, in the one place it had not been fixed.
+test('a complete "related hotel" alongside a different listing is refused, not merged', () => {
+  // This test used to assert the INTERSECTION of the two — street true, postcode false — which was
+  // the right answer while components were only ever a viability statistic. Once an address became
+  // an answer the page could be read from, understating was no longer enough: a merge of two
+  // different places describes neither, so the page is now refused outright. (Codex, PR #10.)
   const doc = ldJsonDocument(
     JSON.stringify({
       '@type': 'Hotel',
@@ -836,20 +837,38 @@ test('address components are intersected across lodging nodes, not taken from th
     }),
     JSON.stringify({ '@type': 'Hotel', address: { streetAddress: 'D', addressLocality: 'E' } }),
   );
-  const components = extractFromStructuredData(doc).addressComponents;
-  assert.equal(components.street, true, 'both have a street');
-  assert.equal(components.postalCode, false, 'only one has a postcode — the answer must not overstate');
-  assert.equal(components.countryParsed, false);
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.equal(r.addressComponents, null);
 });
 
-test('two lodging nodes in different countries yield no country at all', async () => {
+test('components are still intersected when the nodes agree on the place', () => {
+  // The conflict check keys on street, locality, postcode and country; two blocks describing the
+  // SAME listing at different levels of detail are not a conflict, and the answer must reflect the
+  // less complete one rather than the more flattering.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'A', addressLocality: 'B', addressRegion: 'R', postalCode: 'C', addressCountry: 'GB' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'A', addressLocality: 'B', postalCode: 'C', addressCountry: 'GB' },
+    }),
+  );
+  const components = extractFromStructuredData(doc).addressComponents;
+  assert.equal(components.street, true);
+  assert.equal(components.region, false, 'only one carried a region — the answer must not overstate');
+});
+
+test('two lodging nodes in different countries are refused', async () => {
   const doc = ldJsonDocument(
     JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'A', addressCountry: 'GB' } }),
     JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'B', addressCountry: 'FR' } }),
   );
   // We do not know which listing the page is about, and a geocoder aimed at the wrong country
   // returns nothing or somewhere wrong.
-  assert.equal(extractFromStructuredData(doc).addressComponents.country, null);
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
 });
 
 test('Expedia Group brands are one family but keep their own labels', async () => {
@@ -969,4 +988,70 @@ test('a coordinate still beats an address, from any tier', async () => {
   const { result } = runExtraction(doc);
   assert.equal(result.status, 'found');
   assert.equal(result.tier, 2);
+});
+
+// --- Codex review, PR #10 -----------------------------------------------------------------------
+
+test('two lodging nodes with DIFFERENT addresses are ambiguous, not one merged address', () => {
+  // Intersecting presence flags cannot tell a Lisbon hotel from a Tokyo one: both have a street, a
+  // locality, a postcode and a country, so the merge reads as one complete address and describes
+  // neither. The coordinate path already failed closed here; the address path did not.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { '@type': 'PostalAddress', streetAddress: '1 A St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { '@type': 'PostalAddress', streetAddress: '9 B St', addressLocality: 'Tokyo', postalCode: '100-0001', addressCountry: 'JP' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  // Components are dropped too — a presence map merged across two places is not evidence about
+  // either, and exporting it would put a phantom address into the geocoding measurement.
+  assert.equal(r.addressComponents, null);
+});
+
+test('the same address published twice is not a conflict', () => {
+  // Pages repeat their listing across blocks constantly. Treating that as ambiguity would fail
+  // closed on the ordinary case and measure nothing.
+  const block = JSON.stringify({
+    '@type': 'Hotel',
+    address: { '@type': 'PostalAddress', streetAddress: '1 A St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(block, block)).status, 'found_address');
+});
+
+test('a country must be published, not merely non-null', () => {
+  // `addressCountry: {}` passed a `!= null` check, so a postcode plus an empty object was reported
+  // as a complete address and promoted to found_address. Every byte here is page-controlled.
+  for (const hostile of [{}, [], 42, '   ', { name: '' }]) {
+    const doc = ldJsonDocument(
+      JSON.stringify({
+        '@type': 'Hotel',
+        address: { '@type': 'PostalAddress', postalCode: 'EX1 2AB', addressCountry: hostile },
+      }),
+    );
+    const r = extractFromStructuredData(doc);
+    assert.equal(r.status, 'not_found', `${JSON.stringify(hostile)} should not count as a country`);
+    assert.equal(r.addressComponents.countryPublished, false);
+  }
+});
+
+test('a nested Country object still counts as published', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: {
+        '@type': 'PostalAddress',
+        postalCode: 'EX1 2AB',
+        addressLocality: 'Exampleton',
+        addressCountry: { '@type': 'Country', name: 'United Kingdom' },
+      },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.addressComponents.countryPublished, true);
+  assert.equal(r.status, 'found_address');
 });

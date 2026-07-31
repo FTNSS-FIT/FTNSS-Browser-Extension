@@ -10,7 +10,7 @@
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
 import { found, foundAddress, notFound, ambiguous } from './result.js';
-import { addressComponentsOf, describesAPlace } from './address-components.js';
+import { addressComponentsOf, describesAPlace, addressFingerprintOf } from './address-components.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 /**
@@ -185,6 +185,11 @@ export function extractFromStructuredData(doc) {
   // matters most is precisely the one where it does NOT, because that is the page that would need
   // geocoding. Presence only; see address-components.js for why.
   let addressComponents = null;
+  /**
+   * What the first lodging address SAID, so a second one can be checked against it. Local only —
+   * compared and dropped, never returned. See addressFingerprintOf.
+   */
+  let addressSeen = null;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -218,6 +223,20 @@ export function extractFromStructuredData(doc) {
       // (Codex review, PR #8.)
       const nodeComponents = addressComponentsOf(node);
       if (nodeComponents != null) {
+        // FAIL CLOSED WHEN TWO NODES DESCRIBE DIFFERENT PLACES — the address path's version of the
+        // coordinate check below, and it was missing. Intersecting presence flags across a Lisbon
+        // hotel and a Tokyo hotel yields street+locality+postcode+country all true, which reads as
+        // one complete address and describes neither. A page publishing a "similar properties"
+        // block is enough to trigger it, and after the tier-1 change that merged phantom was
+        // promoted to `found_address`. A confident address for the wrong hotel geocodes to a
+        // confident coordinate for the wrong hotel.
+        const fingerprint = addressFingerprintOf(node);
+        if (fingerprint != null) {
+          if (addressSeen != null && addressSeen !== fingerprint) {
+            return { ...ambiguous('structured data described two different places'), addressComponents: null };
+          }
+          addressSeen = fingerprint;
+        }
         addressComponents =
           addressComponents == null ? nodeComponents : intersectComponents(addressComponents, nodeComponents);
       }
