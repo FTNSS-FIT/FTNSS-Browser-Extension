@@ -1178,3 +1178,53 @@ test('a coordinate conflict still stops the read outright', () => {
   assert.equal(r.status, 'ambiguous');
   assert.notEqual(r.scope, 'address');
 });
+
+// --- Codex review round 4, PR #10 ---------------------------------------------------------------
+
+test('two unrecognised countries are two countries, not two blanks', () => {
+  // schema.org allows a nested Country. Reading an object as '' made every unrecognised country
+  // compare equal — both unknown, therefore compatible, therefore one valid address. Hungary and
+  // Romania are not the same hotel, and a geocoder aimed at the wrong country returns nothing or
+  // somewhere confidently wrong.
+  const node = (country) => JSON.stringify({
+    '@type': 'Hotel',
+    address: {
+      streetAddress: '1 Oak St',
+      addressLocality: 'Springfield',
+      addressCountry: { '@type': 'Country', name: country },
+    },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(node('Hungary'), node('Romania'))).status, 'ambiguous');
+  // The same country twice is still one place, even though we cannot name it.
+  assert.equal(extractFromStructuredData(ldJsonDocument(node('Hungary'), node('Hungary'))).status, 'found_address');
+});
+
+test('a long address is compared in full, not by its first 120 characters', () => {
+  // Capping each field before comparing merged two addresses that agreed on their opening and
+  // diverged after. The cap existed to bound page-controlled input; tier 1 already refuses an
+  // oversized block before parsing it, so the bound was buying nothing and costing a difference.
+  const long = (tail) => JSON.stringify({
+    '@type': 'Hotel',
+    address: {
+      streetAddress: `${'a'.repeat(150)} ${tail}`,
+      addressLocality: 'Springfield',
+      addressCountry: 'US',
+    },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(long('north'), long('south'))).status, 'ambiguous');
+});
+
+test('one component plus a country is an area, not a listing', () => {
+  const only = (address) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({ '@type': 'Hotel', address }))).status;
+
+  // A US ZIP covers several square kilometres — wider than the panel's whole search radius. This
+  // would have read as a success in the UK and been useless across the entire US market.
+  assert.equal(only({ postalCode: '90210', addressCountry: 'US' }), 'not_found');
+  assert.equal(only({ addressLocality: 'Lisbon', addressCountry: 'PT' }), 'not_found');
+  assert.equal(only({ streetAddress: '1 Oak St', addressCountry: 'US' }), 'not_found');
+
+  // Any two of the three pins a building well enough to be worth geocoding.
+  assert.equal(only({ streetAddress: '1 Oak St', postalCode: '90210', addressCountry: 'US' }), 'found_address');
+  assert.equal(only({ addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' }), 'found_address');
+});

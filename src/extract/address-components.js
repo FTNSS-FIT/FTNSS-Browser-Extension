@@ -116,15 +116,29 @@ function countryIsPublished(value) {
 export function addressValuesOf(node) {
   const address = node?.address;
   if (address == null || typeof address !== 'object' || Array.isArray(address)) return null;
+  // NOT TRUNCATED. An earlier version capped each field at 120 characters before comparing, so two
+  // addresses agreeing on their first 120 characters and diverging after were merged into one. The
+  // cap was there to bound page-controlled input, and it is not needed for that: tier 1 refuses any
+  // ld+json block over MAX_JSON_CHARS before parsing it, so every value here is already bounded.
+  // A bound that turns a difference into a match is not a safety measure. (Codex, PR #10.)
   const part = (value) => {
-    const text = typeof value === 'string' ? value : '';
-    return text.trim().toLowerCase().replace(/\s+/g, ' ').slice(0, 120);
+    if (typeof value === 'string') return value.trim().toLowerCase().replace(/\s+/g, ' ');
+    // A NESTED OBJECT IS NOT AN EMPTY FIELD. schema.org allows `addressCountry: {name: "Hungary"}`,
+    // and returning '' for it made Hungary and Romania compare EQUAL — both unknown, therefore
+    // compatible, therefore one valid address. The country is where this costs most: a geocoder
+    // aimed at the wrong country returns nothing, or somewhere confidently wrong.
+    if (value != null && typeof value === 'object' && !Array.isArray(value)) {
+      return part(value.name ?? value.identifier);
+    }
+    return '';
   };
   const values = {
     street: part(address.streetAddress),
     locality: part(address.addressLocality),
     region: part(address.addressRegion),
     postalCode: part(address.postalCode),
+    // The code when we recognise it, so "GB" and "United Kingdom" are one country rather than two.
+    // The raw name when we do not, so two countries we cannot name are still two countries.
     country: countryCode(address.addressCountry) ?? part(address.addressCountry),
   };
   return Object.values(values).some((v) => v.length > 0) ? values : null;
@@ -220,16 +234,23 @@ export function addressComponentsOf(node) {
 export function describesAPlace(components) {
   if (components == null) return false;
   if (!components.countryPublished) return false;
-  // A POSTCODE PINS A PLACE; A LOCALITY DOES NOT.
+  // TWO COMPONENTS PLUS A COUNTRY. Any single one of them describes an area, not a listing:
   //
-  // `country + locality` was accepted at first, which promoted "Lisbon, Portugal" — a city, with no
-  // street and no postcode — to a successful read. Geocoding that returns the city centre, which is
-  // not where the hotel is, and the report would have counted it as an address we could locate.
-  // A wrong answer that looks like a success is the failure mode this project cares about most.
+  //   locality alone   "Lisbon, Portugal"  — a city; geocodes to the city centre
+  //   postcode alone   "90210, US"         — several square kilometres, wider than the whole
+  //                                          search radius the panel talks about
+  //   street alone     "1 Oak St"          — there are thousands
   //
-  // So: a postcode, or a street WITH a locality to disambiguate it. Either pins a building; a
-  // locality alone pins a city.
-  return Boolean(components.postalCode || (components.street && components.locality));
+  // Both of the first two were accepted in turn during this PR, and both would have been counted in
+  // the report as an address we could locate. A wrong answer that looks like a success is the
+  // failure mode this project cares about most, and postcode-only is the one that would have looked
+  // fine in the UK and been useless across the entire US market.
+  //
+  // Any two of the three pins a building well enough to be worth geocoding. Note this is the bar for
+  // calling the read a SUCCESS; whether the street may leave the browser to geocode it is a
+  // different question, and a stricter one. (docs/DECISIONS.md 13.)
+  const stated = [components.street, components.locality, components.postalCode].filter(Boolean);
+  return stated.length >= 2;
 }
 
 /**
