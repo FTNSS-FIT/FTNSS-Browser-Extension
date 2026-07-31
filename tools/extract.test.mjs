@@ -232,7 +232,8 @@ test('the export is an allowlist — a field added later is withheld, not shippe
   const { exportableRecords } = await import('../src/lib/storage.js');
   const [out] = exportableRecords([
     {
-      verdict: 'correct',
+      outcome: 'found',
+      verified: 'correct',
       timing: { totalMs: 12 },
       // None of these may survive. The first three are the fields the harness must never emit;
       // the last is the case an allowlist exists for — something nobody thought about yet.
@@ -245,7 +246,7 @@ test('the export is an allowlist — a field added later is withheld, not shippe
     },
   ]);
 
-  assert.deepEqual(Object.keys(out).sort(), ['result', 'timing', 'verdict']);
+  assert.deepEqual(Object.keys(out).sort(), ['outcome', 'result', 'timing', 'verified']);
   // A coordinate is a location. The report is computed from verdicts, so it never needs one.
   assert.equal(out.result.lat, undefined);
   assert.equal(out.result.lon, undefined);
@@ -264,7 +265,7 @@ test('the harness records family and variant, and never a hostname', async () =>
   // DECISIONS 11: the harness labels its own operator's browsing, which the product never will. What
   // it must still never carry is a hostname — `airbnb` is a cohort, `airbnb.jp` is a location.
   const [out] = exportableRecords([
-    { verdict: 'correct', ...cohortRecordFor('airbnb.jp'), site: 'airbnb.jp', detectedSite: 'airbnb.jp' },
+    { outcome: 'found', ...cohortRecordFor('airbnb.jp'), site: 'airbnb.jp', detectedSite: 'airbnb.jp' },
   ]);
   assert.equal(out.family, 'airbnb');
   assert.equal(out.variant, 'cctld');
@@ -294,7 +295,7 @@ test('nothing derived from the URL is persisted, not even a hash', async () => {
   // A 32-bit hash of a URL from a known site is walkable, so it was removed rather than kept as a
   // token gesture. If a future change reintroduces one, this fails.
   assert.equal(storage.urlKey, undefined);
-  const [out] = storage.exportableRecords([{ urlKey: 'deadbeef', url: 'https://x/y', verdict: 'correct' }]);
+  const [out] = storage.exportableRecords([{ urlKey: 'deadbeef', url: 'https://x/y', outcome: 'found' }]);
   assert.equal(out.urlKey, undefined);
   assert.equal(out.url, undefined);
 });
@@ -415,11 +416,11 @@ test('saving migrates existing records through the projection', async () => {
   const { exportableRecords } = await import('../src/lib/storage.js');
   // Legacy rows were rewritten to disk untouched on every save, so a URL stored by an earlier build
   // outlived the change that stopped storing them.
-  const legacy = { url: 'https://www.airbnb.com/rooms/1', note: 'the Smiths', verdict: 'correct' };
+  const legacy = { url: 'https://www.airbnb.com/rooms/1', note: 'the Smiths', outcome: 'found' };
   const [migrated] = exportableRecords([legacy]);
   assert.equal(migrated.url, undefined);
   assert.equal(migrated.note, undefined);
-  assert.equal(migrated.verdict, 'correct');
+  assert.equal(migrated.outcome, 'found');
 });
 
 test('tier 1 fails closed when structured data describes two different places', () => {

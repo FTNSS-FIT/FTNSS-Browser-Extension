@@ -244,7 +244,12 @@ const EXPORT_FIELDS = [
   'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and
                  // already within the privacy envelope the product itself operates in
   'latencyUncertaintyMs',
-  'verdict',
+  // WHAT THE EXTRACTOR FOUND — mechanical, on every record, the high-volume measure.
+  'outcome',
+  // WHETHER A PERSON CHECKED IT — null on most records by design. Kept strictly apart from
+  // `outcome` in the report, because an extraction rate over 100 pages and a correctness rate over
+  // 12 are different numbers and must never be quoted as one.
+  'verified',
   'precisionVerdict',
   'softNavigation',
   'domSettled',

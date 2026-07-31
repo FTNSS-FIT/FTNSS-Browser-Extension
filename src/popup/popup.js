@@ -167,11 +167,23 @@ async function render() {
 
   const hasCoordinate = reading.result?.status === 'found';
   let precisionVerdict = 'not_assessed';
+  let verified = null;
 
+  // LOG IS THE PRIMARY ACTION, AND IT ASKS NOTHING.
+  //
+  // The extractor already knows what it found — a coordinate, an address, a contradiction, nothing.
+  // Making the person restate that was friction carrying no information, and friction in a
+  // measurement instrument costs sample size, which is the one thing this phase cannot buy back.
+  //
+  // What a person uniquely knows is whether a coordinate is the RIGHT PLACE, and that question only
+  // exists when there is a coordinate. So it is optional and separate: log everything cheaply, and
+  // verify a subsample. The report keeps the two apart and states each N, because an extraction rate
+  // measured over 100 pages and a correctness rate measured over 12 are different numbers and must
+  // never be quoted as one. (Jordan, after the first session.)
   if (hasCoordinate) {
-    const row = el('div', null, 'row');
-    row.appendChild(el('span', 'Point is:', 'muted'));
-    const buttons = [];
+    const precisionRow = el('div', null, 'row');
+    precisionRow.appendChild(el('span', 'Optional — point is:', 'muted'));
+    const precisionButtons = [];
     for (const [label, value] of [
       ['Building', 'building'],
       ['Area', 'area'],
@@ -180,51 +192,59 @@ async function render() {
       const button = el('button', label);
       button.addEventListener('click', () => {
         precisionVerdict = value;
-        for (const other of buttons) other.className = '';
+        for (const other of precisionButtons) other.className = '';
         button.className = 'primary';
       });
-      buttons.push(button);
-      row.appendChild(button);
+      precisionButtons.push(button);
+      precisionRow.appendChild(button);
     }
-    controlsEl.appendChild(row);
+    controlsEl.appendChild(precisionRow);
+
+    const verifyRow = el('div', null, 'row');
+    verifyRow.appendChild(el('span', 'Optional — is it right?', 'muted'));
+    const verifyButtons = [];
+    for (const [label, value] of [
+      ['Correct', 'correct'],
+      ['Wrong', 'wrong'],
+    ]) {
+      const button = el('button', label);
+      button.addEventListener('click', () => {
+        verified = value;
+        for (const other of verifyButtons) other.className = '';
+        button.className = 'primary';
+      });
+      verifyButtons.push(button);
+      verifyRow.appendChild(button);
+    }
+    controlsEl.appendChild(verifyRow);
   }
 
   const truth = el('input');
-  truth.placeholder = 'Ground truth "lat, lon" (optional)';
+  truth.placeholder = 'Optional — ground truth "lat, lon"';
   if (hasCoordinate) controlsEl.appendChild(truth);
 
   let recorded = false;
-  async function record(verdict) {
+  async function log({ notAListing = false } = {}) {
     if (recorded) return; // one record per popup opening
-
-    // RE-READ IMMEDIATELY BEFORE SAVING.
-    //
-    // The popup stays open while the person decides, and the page underneath it can navigate in that
-    // time — `pushState` needs no reload and announces nothing. Reading on demand removed the stale
-    // STORED reading, but the reading held in this closure is a snapshot too, and a verdict formed
-    // for listing A must not be written against whatever is on screen now.
-    //
-    // The comparison is on an opaque per-page token, so neither side handles a URL.
-    // (Codex review round 22, PR #1.)
-    const fresh = await readActivePage();
-    // Compare the READING, not only the token. The token changes with the URL, so a page that
-    // replaces listing A's DOM with listing B at the SAME url kept a valid token while everything
-    // it described had changed — and A's coordinate could be recorded as correct for B. Comparing
-    // what was actually extracted covers both, and needs no URL on either side.
-    // (Codex review round 23, PR #1.)
-    if (fresh == null || fresh.pageToken !== reading.pageToken || !sameReading(fresh, reading)) {
-      statusEl.replaceChildren(
-        el('span', 'This page changed while the popup was open — nothing recorded.', 'warn'),
-      );
-      await render();
-      return;
-    }
     if (detected === 'other') {
       statusEl.replaceChildren(el('span', 'This is not one of the listed sites.', 'warn'));
       return;
     }
-    if (verdict === 'not_a_listing') {
+    if (notAListing) {
       // A dismissal, not a datum — a non-listing must not enter the denominator.
+      recorded = true;
+      controlsEl.replaceChildren(el('div', 'Skipped — not a listing.', 'muted'));
+      return;
+    }
+
+    // Re-read immediately before saving: the popup stays open while the person decides, and the page
+    // underneath can navigate in that time. Compared on an opaque per-page token and the extraction
+    // itself, so neither side handles a URL.
+    const fresh = await readActivePage();
+    if (fresh == null || fresh.pageToken !== reading.pageToken || !sameReading(fresh, reading)) {
+      statusEl.replaceChildren(
+        el('span', 'This page changed while the popup was open — nothing recorded.', 'warn'),
+      );
       await render();
       return;
     }
@@ -237,7 +257,7 @@ async function render() {
         // Refuse VISIBLY. Silently ignoring unparseable input means the person believes they
         // supplied ground truth while the statistics quietly disagree.
         statusEl.replaceChildren(
-          el('span', 'Ground truth must be "lat, lon" and in range — nothing recorded.', 'warn'),
+          el('span', 'Ground truth must be "lat, lon" and in range — nothing logged.', 'warn'),
         );
         return;
       }
@@ -248,13 +268,15 @@ async function render() {
 
     try {
       await saveRecord({
-        // Family and variant, DETECTED from the page. Harness only — the shipped product records
-        // nothing of the sort, and that boundary is what makes this safe. See DECISIONS 11.
+        // Family and variant, DETECTED from the page. Harness only — see DECISIONS 11.
         ...cohortRecordFor(detected),
         // Date only. A precise time beside a site label is the makings of a browsing log, and
         // nothing in the report groups more finely than a day.
         recordedAt: new Date().toISOString().slice(0, 10),
-        verdict,
+        // WHAT THE EXTRACTOR FOUND — mechanical, always present, the high-volume measure.
+        outcome: reading.result?.status ?? 'not_found',
+        // WHETHER A PERSON CHECKED IT — null when nobody did, which is the common case by design.
+        verified,
         precisionVerdict,
         timing: reading.timing,
         tiers: reading.tiers,
@@ -269,55 +291,20 @@ async function render() {
       return;
     }
 
-    // Records carry no identifier by design, so a duplicate cannot be detected or removed later.
-    // The controls therefore have to stop being clickable rather than the data being cleaned up
-    // afterwards — there is no afterwards. (Codex review round 21, PR #1.)
     recorded = true;
-    controlsEl.replaceChildren(el('div', `Recorded: ${verdict}`, 'ok'));
-    statusEl.replaceChildren(
-      el('span', 'Open the popup again to record the next listing.', 'muted'),
-    );
+    const what = reading.result?.status === 'found' ? 'coordinate' : reading.result?.status ?? 'nothing';
+    controlsEl.replaceChildren(el('div', `Logged: ${what}${verified ? ` (${verified})` : ''}`, 'ok'));
+    statusEl.replaceChildren(el('span', 'Open the popup again on the next listing.', 'muted'));
     await refreshCount();
   }
 
-  // THE VERDICTS HAVE TO MATCH WHAT WAS FOUND.
-  //
-  // A tier-3 address-only read could previously only be marked "no read" or "can't tell" — there was
-  // no way to say "yes, it got the address, and it is right". So every tier-3 success was recorded
-  // as a failure or discarded, which makes tier 3 look useless in exactly the data meant to tell us
-  // whether it is. That is the same bias every other defect here has had: it flatters nothing, it
-  // just quietly removes a category of success. (Jordan, on the first real session.)
-  const status = reading.result?.status;
-  const options =
-    status === 'found'
-      ? [
-          ['Correct', 'correct', true],
-          ['Wrong', 'wrong', false],
-          ["Can't tell", 'unverifiable', false],
-        ]
-      : status === 'found_address'
-        ? [
-            ['Address correct', 'address_correct', true],
-            ['Address wrong', 'address_wrong', false],
-            ["Can't tell", 'unverifiable', false],
-          ]
-        : status === 'ambiguous'
-          ? [
-              ['Confirm ambiguous', 'ambiguous_confirmed', true],
-              ["Can't tell", 'unverifiable', false],
-            ]
-          : [
-              ['Confirm no read', 'no_read', true],
-              ["Can't tell", 'unverifiable', false],
-            ];
-  options.push(['Not a listing', 'not_a_listing', false]);
-
   const row = el('div', null, 'row');
-  for (const [label, verdict, primary] of options) {
-    const button = el('button', label, primary ? 'primary' : null);
-    button.addEventListener('click', () => void record(verdict));
-    row.appendChild(button);
-  }
+  const logButton = el('button', 'Log', 'primary');
+  logButton.addEventListener('click', () => void log());
+  row.appendChild(logButton);
+  const skipButton = el('button', 'Not a listing');
+  skipButton.addEventListener('click', () => void log({ notAListing: true }));
+  row.appendChild(skipButton);
   controlsEl.appendChild(row);
 
   await refreshCount();
