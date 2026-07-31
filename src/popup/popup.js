@@ -73,6 +73,27 @@ function describe(result) {
   return 'No read — could not read this page';
 }
 
+/**
+ * Show which build is running.
+ *
+ * Reloading an unpacked extension gives no confirmation that anything changed, and half a dozen
+ * times during the first sessions a fix was pushed, reloaded, and the old behaviour persisted —
+ * with no way to tell a failed reload from a failed fix. Read from the manifest at runtime rather
+ * than written here, so it cannot drift from what the browser actually loaded.
+ */
+function showVersion() {
+  // Defensive on purpose. This runs FIRST in start(), so anything that throws here takes the whole
+  // popup down before it renders — which is precisely how the popup died four times already. A
+  // cosmetic label must never be able to do that.
+  try {
+    const element = document.getElementById('version');
+    if (element == null) return;
+    element.textContent = `v${chrome.runtime.getManifest().version}`;
+  } catch {
+    // A missing version display is a nuisance; a blank popup is a broken instrument.
+  }
+}
+
 async function refreshCount() {
   const records = await loadRecords();
   countEl.textContent = `${records.length} recorded`;
@@ -440,6 +461,7 @@ document.getElementById('clear').addEventListener('click', async () => {
  * succeeding. (Codex review round 25, PR #1.)
  */
 async function start() {
+  showVersion();
   await migrateAwayLocalCohort();
   await migrateStoredRecords();
   await render();

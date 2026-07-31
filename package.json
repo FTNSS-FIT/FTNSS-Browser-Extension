@@ -1,14 +1,17 @@
 {
   "name": "ftnss-browser-extension",
-  "version": "0.1.0",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "license": "MIT",
   "description": "FTNSS browser extension — phase 1 measurement harness",
   "scripts": {
     "test": "node --test \"tools/*.test.mjs\"",
-    "report": "node tools/report.mjs"
+    "report": "node tools/report.mjs",
+    "bump": "node tools/bump.mjs"
   },
   "comment": "No dependencies, and none is the intended steady state. A browser extension's dependency tree is its attack surface, and every package here is source a reviewer of this repo would have to read to believe the privacy claim. There is deliberately no build step in phase 1 either: the harness loads unpacked, exactly as written.",
-  "engines": { "node": ">=20" }
+  "engines": {
+    "node": ">=20"
+  }
 }
