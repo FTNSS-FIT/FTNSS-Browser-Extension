@@ -22,7 +22,13 @@ import {
   migrateAwayLocalCohort,
   migrateStoredRecords,
 } from '../lib/storage.js';
-import { toTransmittablePoint, distanceMetres, parseCoordinate, isUsableCoordinate } from '../lib/geo.js';
+import {
+  TRANSMIT_KM,
+  toTransmittablePoint,
+  distanceMetres,
+  parseCoordinate,
+  isUsableCoordinate,
+} from '../lib/geo.js';
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -290,7 +296,54 @@ async function render() {
 
   const truth = el('input');
   truth.placeholder = 'Optional — ground truth "lat, lon"';
-  if (hasCoordinate) controlsEl.appendChild(truth);
+  const truthFeedback = el('div', null, 'muted');
+
+  if (hasCoordinate) {
+    controlsEl.appendChild(truth);
+    controlsEl.appendChild(truthFeedback);
+
+    // SHOW THE DISTANCE THE MOMENT IT CAN BE COMPUTED.
+    //
+    // Without this the person judges by eye, and by eye a pin that sits slightly off looks wrong.
+    // It happened on the first verified reading: a coordinate was marked WRONG whose measured error
+    // was 42 metres — inside the 500m grid cell, so literally invisible after rounding, and
+    // irrelevant against a 5km search radius. One record, and it drove the reported wrong-rate to
+    // 100%.
+    //
+    // The instrument was asking for a judgement it had all the information to inform, and didn't.
+    // (Jordan's first verification session.)
+    truth.addEventListener('input', () => {
+      const raw = truth.value.trim();
+      if (raw === '') {
+        truthFeedback.className = 'muted';
+        truthFeedback.textContent = '';
+        return;
+      }
+      const groundTruth = parseGroundTruth(raw);
+      if (groundTruth == null) {
+        truthFeedback.className = 'muted';
+        truthFeedback.textContent = 'waiting for "lat, lon"…';
+        return;
+      }
+      const metres = Math.round(
+        distanceMetres({ lat: reading.result.lat, lon: reading.result.lon }, groundTruth),
+      );
+      const cell = TRANSMIT_KM * 1000;
+      if (metres <= cell) {
+        truthFeedback.className = 'ok';
+        truthFeedback.textContent =
+          `${metres}m out — inside the ${cell}m grid cell, so rounding erases it. This is a match.`;
+      } else if (metres <= 1500) {
+        truthFeedback.className = 'muted';
+        truthFeedback.textContent =
+          `${metres}m out — outside the grid cell but small against a 5km search. Borderline.`;
+      } else {
+        truthFeedback.className = 'warn';
+        truthFeedback.textContent =
+          `${metres}m out — far enough to change which gyms are shown. This is wrong.`;
+      }
+    });
+  }
 
   async function log({ notAListing = false } = {}) {
     if (recorded) return; // one record per popup opening

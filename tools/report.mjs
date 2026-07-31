@@ -121,6 +121,24 @@ function summarise(allRows, label) {
   } else {
     console.log(`    correct                   ${pct(correct.length, verified.length)}   ${correct.length}/${verified.length}`);
     console.log(`    WRONG                     ${pct(wrong, verified.length)}   ${wrong}/${verified.length}   <- must be ~0`);
+    // A verdict that disagrees with its own measurement is worth surfacing, because it is the one
+    // thing in this dataset a person can get wrong in a way no other check catches. On the first
+    // verification session a coordinate was marked WRONG whose measured error was 42m — inside the
+    // grid cell, so rounding erases it — and that single row drove the reported wrong-rate to 100%.
+    const cell = 500;
+    const disputed = rows.filter(
+      (r) =>
+        r.verified === 'wrong' && Number.isFinite(r.errorMetres) && r.errorMetres <= cell,
+    );
+    if (disputed.length > 0) {
+      console.log(
+        `    ⚠ ${disputed.length} marked WRONG with a measured error inside the ${cell}m grid cell:`,
+      );
+      for (const r of disputed) {
+        console.log(`        ${r.errorMetres}m — rounding erases this; it cannot change the result`);
+      }
+      console.log('      Re-check these. A wrong-rate built from them is not measuring the extractor.');
+    }
     if (verified.length < 10) {
       console.log(`    ⚠ ${verified.length} verified is too few to trust this rate.`);
     }
