@@ -21,5 +21,5 @@ measurements/
 # Real gym data for the local stub. Supply numbers are internal; this repo is public.
 tools/proximity-fixture.json
 
-# Working state, never published — see the first rule in ~/.claude/CLAUDE.md
+# Working state: in-flight notes, open questions, internal numbers. Never published.
 HANDOFF.md

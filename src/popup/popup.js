@@ -599,7 +599,8 @@ async function renderGyms() {
     // NOT AN ERROR, and worded so nobody reads it as one. This is the true answer nearly
     // everywhere until supply grows, and a panel that cries failure over its most common correct
     // response teaches people to ignore it.
-    say('No FTNSS gyms within 5km of here.');
+    // "of the area searched", not "of here". The query point is a 250m cell, not the hotel.
+    say('No FTNSS gyms within 5km of the area searched.');
     return;
   }
 
@@ -613,8 +614,19 @@ async function renderGyms() {
     row.appendChild(el('span', describeDistance(gym.distanceMetres), 'dist'));
     container.appendChild(row);
   }
+  // SAY WHAT THE DISTANCES ARE MEASURED FROM, and say it differently when the reading itself was
+  // approximate. Tier 2 reads a map pin rather than a published point and is labelled `approximate`
+  // for that reason — stacking an approximate reading under a 250m grid and then printing a
+  // confident distance is precisely the compounding this repo refuses to do elsewhere.
+  const approximate = result.precision === 'approximate';
   container.appendChild(
-    el('div', `${answer.gyms.length} nearest, within 5km of a 250m cell`, 'muted'),
+    el(
+      'div',
+      approximate
+        ? `${answer.gyms.length} nearest — distances are rough: this page gave an approximate location, rounded to a 250m cell`
+        : `${answer.gyms.length} nearest, measured from a 250m cell — distances are approximate`,
+      approximate ? 'warn' : 'muted',
+    ),
   );
 }
 

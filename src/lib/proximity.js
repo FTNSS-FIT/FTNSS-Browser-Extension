@@ -44,7 +44,11 @@ function gymFrom(raw) {
   if (raw == null || typeof raw !== 'object') return null;
   const name = text(raw.name);
   if (name == null) return null;
-  const metres = Number(raw.distanceMetres);
+  // typeof, NOT Number(). `Number(null)` is 0 and `Number('')` is 0, both finite and both
+  // non-negative — so a gym whose distance the server failed to compute rendered as "0 m", the most
+  // confident possible statement built from the absence of an answer.
+  if (typeof raw.distanceMetres !== 'number') return null;
+  const metres = raw.distanceMetres;
   if (!Number.isFinite(metres) || metres < 0 || metres > SEARCH_RADIUS_METRES) return null;
   return {
     id: text(raw.id),
@@ -116,26 +120,52 @@ export async function gymsNear({ lat, lon }, { endpoint, fetchImpl = fetch } = {
   }
 
   if (!Array.isArray(payload?.gyms)) return { status: 'error', reason: 'no gyms array' };
+
+  // THE SERVER MUST BE ANSWERING THE QUESTION WE ASKED. A response computed over a different radius
+  // is not a smaller answer to our question, it is an answer to someone else's — and rendering it
+  // as "within 5km" would be us asserting a bound the server never applied.
+  if (payload.searchRadiusMetres !== undefined && payload.searchRadiusMetres !== SEARCH_RADIUS_METRES) {
+    return { status: 'error', reason: 'radius mismatch' };
+  }
+
   // FILTER, THEN CAP — in that order. Capping first let unusable entries consume the six slots, so
   // a response carrying three malformed gyms and six good ones rendered three. The cap is meant to
   // bound what we show, not to be spent on things we were never going to show.
-  const gyms = payload.gyms.map(gymFrom).filter(Boolean).slice(0, MAX_GYMS);
+  const usable = payload.gyms.map(gymFrom).filter(Boolean);
+  const gyms = usable.slice(0, MAX_GYMS);
 
-  // EMPTY IS A SUCCESS, and saying so here is what stops the panel rendering "something went wrong"
+  // "WE COULD NOT READ THE ANSWER" IS NOT "THERE IS NOTHING THERE".
+  //
+  // A non-empty array whose every entry failed validation used to return `empty`, so a broken or
+  // mismatched server produced the panel's most reassuring sentence — "no FTNSS gyms within 5km" —
+  // from evidence that said nothing of the kind. That is the same failure the extraction tiers are
+  // built to avoid: an empty panel reads as "FTNSS has no gyms here", which is a claim, and it must
+  // never be made from a failure to parse.
+  if (payload.gyms.length > 0 && usable.length === 0) {
+    return { status: 'error', reason: 'no usable gym in a non-empty response' };
+  }
+
+  // A genuinely empty list IS a success, and saying so here is what stops the panel crying failure
   // over the most common correct answer we have. Early in a marketplace's life, "no gyms near here"
   // is the true response almost everywhere on Earth, and it stays true until supply catches up.
   return gyms.length === 0 ? { status: 'empty' } : { status: 'ok', gyms };
 }
 
 /**
- * "380 m" / "about 2.4 km".
+ * "about 400 m" / "about 2.4 km". Never "385 m".
  *
- * Two significant figures above a kilometre, and never three: the point transmitted was rounded to
- * a 250m grid, so "2.43 km" would be claiming a precision the coordinate cannot support. The word
- * "about" is doing honest work.
+ * EVERY DISTANCE HERE IS APPROXIMATE, because the point we asked about was rounded to a 250m grid
+ * before it left the browser. The true distance is up to ~175m either side of what comes back, so
+ * "385 m" — which the first version of this rendered as "390 m" — was three digits of confidence
+ * built on a number that does not have one. This repo's own rule is never to render precision it
+ * does not have, and the panel was breaking it in the one place a user would act on the figure.
+ *
+ * Rounded to 100m below a kilometre, one decimal above, and "about" on all of it. Still finer than
+ * the grid strictly justifies, and defensible: 100m is well inside "a short walk", and coarsening
+ * to 250m would round a genuinely close gym up to "about 500 m" and lose the thing that matters.
  */
 export function describeDistance(metres) {
   if (!Number.isFinite(metres) || metres < 0) return '';
-  if (metres < 1000) return `${Math.round(metres / 10) * 10} m`;
+  if (metres < 1000) return `about ${Math.max(100, Math.round(metres / 100) * 100)} m`;
   return `about ${(metres / 1000).toFixed(1)} km`;
 }

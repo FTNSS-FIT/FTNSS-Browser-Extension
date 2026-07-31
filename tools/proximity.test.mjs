@@ -128,10 +128,53 @@ test('a network failure and a timeout are distinguishable to us', async () => {
 });
 
 test('distances never claim more precision than the grid supports', () => {
-  // The point sent was rounded to a 250m cell, so "2.43 km" would be a precision claim the
-  // coordinate cannot support. "about" is doing honest work.
-  assert.equal(describeDistance(384), '380 m');
+  // The point sent was rounded to a 250m cell, so the true distance is up to ~175m either side of
+  // whatever comes back. This asserted "380 m" until review pointed out that three digits of
+  // confidence were being built on a number that does not have one — in the one place a user acts
+  // on the figure.
+  assert.equal(describeDistance(384), 'about 400 m');
   assert.equal(describeDistance(2430), 'about 2.4 km');
+  // Never rounds down to "about 0 m", which would read as "you are standing in it".
+  assert.equal(describeDistance(20), 'about 100 m');
   assert.equal(describeDistance(-1), '');
   assert.equal(describeDistance(NaN), '');
+});
+
+test('a missing distance is not zero distance', async () => {
+  // `Number(null)` is 0, finite and non-negative, so a gym whose distance the server failed to
+  // compute rendered as "0 m" — the most confident possible statement built from the absence of an
+  // answer.
+  for (const bad of [null, undefined, '', '380', {}]) {
+    const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+      endpoint: ENDPOINT,
+      fetchImpl: stub({ gyms: [{ ...GYM, distanceMetres: bad }] }),
+    });
+    assert.equal(answer.status, 'error', `${JSON.stringify(bad)} must not become a distance`);
+  }
+});
+
+test('an unreadable answer is not an answer of "nothing here"', async () => {
+  // A non-empty array whose every entry failed validation used to return `empty`, so a broken
+  // server produced the panel's most reassuring sentence from evidence that said nothing of the
+  // kind. An empty panel reads as "FTNSS has no gyms here", which is a claim.
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [{ nope: true }, { also: 'nope' }] }),
+  });
+  assert.equal(answer.status, 'error');
+
+  // A genuinely empty list is still a success.
+  const none = await gymsNear({ lat: 43.6425, lon: -79.3875 }, { endpoint: ENDPOINT, fetchImpl: stub({ gyms: [] }) });
+  assert.equal(none.status, 'empty');
+});
+
+test('an answer computed over a different radius is refused', async () => {
+  // Not a smaller answer to our question — an answer to someone else's. Rendering it as "within
+  // 5km" would assert a bound the server never applied.
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [GYM], searchRadiusMetres: 25000 }),
+  });
+  assert.equal(answer.status, 'error');
+  assert.equal(answer.reason, 'radius mismatch');
 });
