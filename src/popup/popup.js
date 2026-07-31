@@ -733,6 +733,11 @@ async function renderGyms() {
   }
 
   if (stale()) return;
+  // NO READING HERE IS VERIFIED. This split used to be "approximate versus everything else", which
+  // quietly treated `unknown` as precise — and `unknown` is what tier 1 deliberately reports,
+  // because whether a published point is the building or a fuzzed area is a per-site fact this
+  // project measures rather than assumes. There is no 'exact' in the vocabulary at all, on purpose.
+  const approximate = result.precision === 'approximate';
   container.replaceChildren();
   for (const gym of answer.gyms) {
     const row = el('div', null, 'gym');
@@ -740,20 +745,20 @@ async function renderGyms() {
     left.appendChild(el('b', gym.name));
     if (gym.city) left.appendChild(el('div', gym.city, 'muted'));
     row.appendChild(left);
-    row.appendChild(el('span', describeDistance(gym.distanceMetres), 'dist'));
+    // NO NUMBER AT ALL when the page's own location is approximate by design. A tier-2 read is a
+    // map pin the site placed where it chose, and stacking a distance band on top of that is two
+    // uncertainties presented as one measurement. The order still carries the useful part: nearest
+    // first. (Codex, PR #13.)
+    row.appendChild(
+      el('span', approximate ? '' : describeDistance(gym.distanceMetres), 'dist'),
+    );
     container.appendChild(row);
   }
   // SAY WHAT THE DISTANCES ARE MEASURED FROM, and say it differently when the reading itself was
   // approximate. Tier 2 reads a map pin rather than a published point and is labelled `approximate`
   // for that reason — stacking an approximate reading under a 250m grid and then printing a
   // confident distance is precisely the compounding this repo refuses to do elsewhere.
-  // NO READING HERE IS VERIFIED. This split used to be "approximate versus everything else", which
-  // quietly treated `unknown` as precise — and `unknown` is what tier 1 deliberately reports,
-  // because whether a published point is the building or a fuzzed area is a per-site fact this
-  // project measures rather than assumes. There is no 'exact' in the vocabulary at all, on purpose.
-  // So the honest split is "approximate by the site's design" versus "we have not established it",
-  // and neither justifies a confident number.
-  const approximate = result.precision === 'approximate';
+
   const change = el('button', 'Change endpoint');
   change.addEventListener('click', () => {
     lookupGeneration += 1;

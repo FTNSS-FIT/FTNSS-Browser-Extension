@@ -151,15 +151,20 @@ test('a network failure and a timeout are distinguishable to us', async () => {
   assert.equal((await gymsNear({ lat: 43.6425, lon: -79.3875 }, { endpoint: ENDPOINT, fetchImpl: abort })).reason, 'timeout');
 });
 
-test('distances never claim more precision than the grid supports', () => {
-  // The point sent was rounded to a 250m cell, so the true distance is up to ~175m either side of
-  // whatever comes back. This asserted "380 m" until review pointed out that three digits of
-  // confidence were being built on a number that does not have one — in the one place a user acts
-  // on the figure.
-  assert.equal(describeDistance(384), 'about 400 m');
-  assert.equal(describeDistance(2430), 'about 2.4 km');
-  // Never rounds down to "about 0 m", which would read as "you are standing in it".
-  assert.equal(describeDistance(20), 'about 100 m');
+test('a distance band is wider than the error the grid can introduce', () => {
+  // Third version of this assertion, and the first that asks the right question. It wanted "380 m",
+  // then "about 400 m" — each less wrong than the last, both claiming a resolution the query never
+  // had. The transmitted point is a 250m cell, so the listing can sit ~175m from the coordinate we
+  // asked about: a gym reported 100m away may be 275m from the hotel, and "about 100 m" is then a
+  // factor-of-three error stated as a fact.
+  //
+  // The test a distance display has to pass here is not "is it close to right" but "can the grid
+  // make it wrong". 500m bands are wider than the ~350m spread the grid can introduce.
+  assert.equal(describeDistance(120), 'under 500 m');
+  assert.equal(describeDistance(384), 'under 500 m');
+  assert.equal(describeDistance(1094), 'about 1 km');
+  assert.equal(describeDistance(1400), 'about 1.5 km');
+  assert.equal(describeDistance(3707), 'about 3.5 km');
   assert.equal(describeDistance(-1), '');
   assert.equal(describeDistance(NaN), '');
 });

@@ -237,20 +237,21 @@ async function readBounded(response, controller) {
 }
 
 /**
- * "about 400 m" / "about 2.4 km". Never "385 m".
+ * A BAND, not a number. "under 500 m", "about 1.5 km".
  *
- * EVERY DISTANCE HERE IS APPROXIMATE, because the point we asked about was rounded to a 250m grid
- * before it left the browser. The true distance is up to ~175m either side of what comes back, so
- * "385 m" — which the first version of this rendered as "390 m" — was three digits of confidence
- * built on a number that does not have one. This repo's own rule is never to render precision it
- * does not have, and the panel was breaking it in the one place a user would act on the figure.
+ * The transmitted point is a 250m grid cell, so the listing can sit up to ~175m from the coordinate
+ * we asked about — meaning a gym reported 100m from that point may be 275m from the hotel. Printing
+ * "about 100 m" for it is a factor-of-three error stated as a fact, and it survived two earlier
+ * attempts at this function: first "390 m", then "about 100 m", each less wrong than the last and
+ * both claiming a resolution the query never had.
  *
- * Rounded to 100m below a kilometre, one decimal above, and "about" on all of it. Still finer than
- * the grid strictly justifies, and defensible: 100m is well inside "a short walk", and coarsening
- * to 250m would round a genuinely close gym up to "about 500 m" and lose the thing that matters.
+ * Bands of 500m are wider than the total spread the grid can introduce (~350m), so the label stays
+ * true whichever corner of the cell the listing is in. That is the test a distance display has to
+ * pass here: not "is it close to right", but "can the grid make it wrong".
  */
 export function describeDistance(metres) {
   if (!Number.isFinite(metres) || metres < 0) return '';
-  if (metres < 1000) return `about ${Math.max(100, Math.round(metres / 100) * 100)} m`;
-  return `about ${(metres / 1000).toFixed(1)} km`;
+  if (metres < 500) return 'under 500 m';
+  const km = Math.round(metres / 500) * 500 / 1000;
+  return `about ${km % 1 === 0 ? km : km.toFixed(1)} km`;
 }
