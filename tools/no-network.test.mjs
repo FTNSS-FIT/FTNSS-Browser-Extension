@@ -1,11 +1,17 @@
-// The whole project rests on "nothing about the page leaves the browser". In phase 1 that is
-// absolute: the harness makes NO network requests at all.
+// The whole project rests on "nothing about the page leaves the browser".
 //
-// "We didn't add one" is not evidence, and the leak everyone actually ships arrives later, in a
-// hurry, inside an error handler. So this is asserted mechanically over the source, and it fails
-// the build the first time someone adds a call — including in a catch block, including "just for
-// debugging". If a future phase genuinely needs a request, this test has to be edited deliberately,
-// which is exactly the conversation that should happen before the first one lands.
+// Phase 1 held that absolutely: NO network requests at all. The proximity panel ends that, because
+// asking what is near a point requires asking someone. So the rule changes shape rather than
+// relaxing: exactly ONE file may talk to a network, it is listed here by name, and every other file
+// in src/ is held to the original absolute rule.
+//
+// ⚠️ THIS TEST FAILED TO FIRE WHEN THE FIRST REQUEST LANDED. `gymsNear` takes `fetchImpl = fetch`
+// and calls `fetchImpl(...)`, and the pattern `\bfetch\s*\(` matches neither — the default has no
+// parenthesis after it and the call site is a different identifier. A guard that can be walked past
+// by renaming a variable is not a guard, and the walk-past was accidental, which is worse: the
+// conversation this test exists to force did not happen because nothing prompted it.
+//
+// So the patterns now catch bare references too, not just calls.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -29,8 +35,16 @@ function stripComments(code) {
   return code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+/**
+ * The ONE file permitted to reach the network. Adding to this list is the deliberate conversation
+ * the header describes — it is not a formality, and a second entry should be argued for out loud.
+ */
+const NETWORK_ALLOWED = new Set(['src/lib/proximity.js']);
+
 const FORBIDDEN = [
-  [/\bfetch\s*\(/, 'fetch()'],
+  // A BARE REFERENCE, not just a call. `const f = fetch` followed by `f()` was invisible to the
+  // call-shaped pattern this replaced, and that is exactly how the first request got in.
+  [/\bfetch\b/, 'fetch'],
   [/\bXMLHttpRequest\b/, 'XMLHttpRequest'],
   [/\bsendBeacon\b/, 'navigator.sendBeacon'],
   [/\bnew\s+WebSocket\b/, 'WebSocket'],
@@ -39,15 +53,39 @@ const FORBIDDEN = [
   [/\bchrome\.runtime\.sendNativeMessage\b/, 'sendNativeMessage'],
 ];
 
-test('no source file performs a network request', () => {
+test('only the one allowed file performs a network request', () => {
   const offences = [];
   for (const file of sourceFiles(SRC)) {
+    const relative = file.replace(SRC, 'src/');
+    if (NETWORK_ALLOWED.has(relative)) continue;
     const code = stripComments(readFileSync(file, 'utf8'));
     for (const [pattern, label] of FORBIDDEN) {
-      if (pattern.test(code)) offences.push(`${file.replace(SRC, 'src/')}: ${label}`);
+      if (pattern.test(code)) offences.push(`${relative}: ${label}`);
     }
   }
   assert.deepEqual(offences, [], `network calls found:\n${offences.join('\n')}`);
+});
+
+test('the allowlist names a file that exists', () => {
+  // An allowlist entry for a renamed or deleted file silently exempts nothing and hides that the
+  // exemption is stale — or, worse, matches a new file that later takes the old name.
+  const present = new Set(sourceFiles(SRC).map((f) => f.replace(SRC, 'src/')));
+  for (const allowed of NETWORK_ALLOWED) {
+    assert.ok(present.has(allowed), `${allowed} is allowlisted for network access but does not exist`);
+  }
+});
+
+test('the network file sends a rounded point and nothing else', () => {
+  // A structural check to sit alongside the behavioural ones in proximity.test.mjs. Those prove
+  // what today's code does; this proves the SHAPE that makes it auditable — a reader checking our
+  // privacy claim should find one body literal built from one rounded point.
+  const code = stripComments(readFileSync(join(SRC, 'lib/proximity.js'), 'utf8'));
+  const bodies = code.match(/body:\s*JSON\.stringify\(([^)]*)\)/g) ?? [];
+  assert.equal(bodies.length, 1, 'exactly one request body');
+  assert.match(bodies[0], /\{\s*lat:\s*point\.lat,\s*lon:\s*point\.lon\s*\}/,
+    'the body must be the rounded point, field by field — never a spread');
+  assert.match(code, /credentials:\s*'omit'/, 'a coarse point must not travel with a session cookie');
+  assert.ok(!/\.\.\./.test(bodies[0]), 'no spread into the request body');
 });
 
 test('no source file renders untrusted content as markup', () => {
@@ -68,7 +106,15 @@ test('the manifest asks for narrow permissions and never <all_urls>', () => {
   // host_permissions is deliberately ABSENT: for a static content script, `matches` already
   // authorises injection, while host_permissions would additionally grant cross-origin request
   // capability that a harness making no requests must not hold. Assert it stays absent.
+  // Still absent, and now load-bearing in a second way: the proximity endpoint's origin is granted
+  // at RUNTIME, for the one origin the person types in, via optional_host_permissions. A compiled-in
+  // host would put an origin in the install prompt before anyone has decided which environment we
+  // call — and a broad one, to cover the fact that the decision is still open. (DECISIONS.md 15.)
   assert.equal(manifest.host_permissions, undefined, 'host_permissions must stay absent');
+  assert.ok(
+    Array.isArray(manifest.optional_host_permissions),
+    'the endpoint origin is granted at runtime, so optional_host_permissions must exist',
+  );
 
   const patterns = [
     ...manifest.content_scripts.flatMap((c) => c.matches),

@@ -48,7 +48,7 @@ function makeElement(tag = 'div') {
 function installDom() {
   created.length = 0;
   const byId = {};
-  for (const id of ['reading', 'controls', 'status', 'count', 'cohort', 'export', 'clear', 'version']) {
+  for (const id of ['reading', 'controls', 'status', 'count', 'cohort', 'export', 'clear', 'version', 'gyms']) {
     byId[id] = makeElement('div');
   }
   globalThis.document = {
@@ -80,7 +80,13 @@ function installChrome(reading) {
     },
   });
   globalThis.chrome = {
-    runtime: { id: 'test-extension', getManifest: () => ({ version: '9.9.9' }) },
+    runtime: {
+      id: 'test-extension',
+      getManifest: () => ({ version: '9.9.9', optional_host_permissions: ['http://localhost/*'] }),
+    },
+    // The panel asks for and hands back host permissions; without these the popup throws at
+    // startup and the recorder tests stop testing the recorder.
+    permissions: { request: async () => true, remove: async () => true },
     storage: { local: area(local), session: area(session) },
     tabs: {
       async query() {
