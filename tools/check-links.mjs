@@ -19,6 +19,12 @@
 // A redirect counts as a FAILURE, not a pass. `/xx/book/gyms/…` answers 307 and lands on
 // `/en/xx/book/gyms/…`, which 404s — so following redirects would turn the exact bug this guards
 // against into a green tick.
+//
+// AND IT RUNS A CONTROL FIRST. Twelve 200s are also what a route that 200s for ANYTHING looks like:
+// a catch-all rewrite, a soft-404 rendering a shell with status 200, middleware swallowing unknown
+// slugs. Without a known-bad url proving the site can still say no, this file reports success in
+// precisely the situation where it should be screaming. (Admin's addition — the first version of
+// this checker was right and was not yet a test that could fail.)
 
 import { readFileSync } from 'node:fs';
 import { gymUrl, SUPPORTED_LOCALES, activeLocale } from '../src/lib/locale.js';
@@ -81,8 +87,28 @@ async function run(urls) {
   return results;
 }
 
+/**
+ * A url that MUST NOT resolve.
+ *
+ * If this returns 200 the site is answering for everything and no result below means anything, so
+ * the run aborts rather than reporting a meaningless pass.
+ */
+async function controlHolds() {
+  const bogus = `${new URL(ENDPOINT).origin}/${activeLocale()}/book/gyms/ca/ontario/toronto/this-gym-does-not-exist`;
+  const { status } = await check(bogus);
+  if (status === 404) return true;
+  console.error(
+    `CONTROL FAILED: a url that should not exist answered ${status}.\n` +
+    `  ${bogus}\n` +
+    '  Every other result in this run is meaningless — the site is answering for anything.',
+  );
+  return false;
+}
+
 const gyms = fixture();
 const everyLocale = process.argv.includes('--locales');
+
+if (!(await controlHolds())) process.exit(1);
 
 const urls = everyLocale
   ? SUPPORTED_LOCALES.map((locale) => gymUrl(pathFor(gyms[0]), ENDPOINT, locale))
@@ -98,6 +124,7 @@ const failures = results.filter((r) => !r.ok);
 
 for (const failure of failures) console.error(`  ${failure.status}  ${failure.url}`);
 console.log(
+  'control: a nonexistent gym url 404s, so a 200 below means something\n' +
   `${results.length - failures.length}/${results.length} resolved 200` +
   (everyLocale ? ` (one gym across ${SUPPORTED_LOCALES.length} locales)` : ` (locale: ${activeLocale()})`),
 );
