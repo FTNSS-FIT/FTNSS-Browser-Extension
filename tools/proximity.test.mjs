@@ -347,3 +347,24 @@ test("a caller's abort stops a request already in flight", async () => {
   controller.abort();
   assert.equal((await pending).reason, 'cancelled');
 });
+
+test('an over-long path is rejected, never truncated into a different link', async () => {
+  // text() truncates, which is right for a name and wrong for a path: a truncated path is still a
+  // syntactically valid path, so cutting it at the cap yields something that passes every check and
+  // points at a DIFFERENT gym page. "Too long to trust" must not become "a confident wrong link".
+  const long = `/book/gyms/ca/ontario/${'x'.repeat(200)}/${'y'.repeat(200)}-gym`;
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [{ ...GYM, path: long }] }),
+  });
+  assert.equal(answer.status, 'ok', 'the gym itself is still fine — only its link is refused');
+  assert.equal(answer.gyms[0].path, null, 'no path rather than a shortened one');
+
+  // A real-world-length path survives untouched.
+  const real = '/book/gyms/ca/ontario/toronto/hone-fitness-st-clair-bathurst-toronto';
+  const ok = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [{ ...GYM, path: real }] }),
+  });
+  assert.equal(ok.gyms[0].path, real);
+});

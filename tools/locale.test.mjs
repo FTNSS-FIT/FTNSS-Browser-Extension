@@ -34,6 +34,13 @@ test('nothing that is not a site-relative gym path becomes a link', () => {
     'javascript:alert(1)',                        // scheme
     '/account/settings',                          // real site, wrong place
     '/book/gyms/<script>',                        // markup
+    '/book/gyms/',                                // the browse index — real, but not this gym
+    '/book/gyms/ca?next=https://evil.example',    // query
+    '/book/gyms/ca#@evil.example',                // fragment
+    '/book/gyms/%2e%2e/%2e%2e/admin',             // encoded traversal
+    '/book/gyms/ca@evil.example',                 // userinfo-shaped
+    ' /book/gyms/ca/on/to/x',                     // leading space
+    '/BOOK/GYMS/ca/on/to/x',                      // wrong route, right shape
     '',
     null,
     undefined,

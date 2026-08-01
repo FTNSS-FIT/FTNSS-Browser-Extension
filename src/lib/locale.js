@@ -67,8 +67,16 @@ export function gymUrl(path, endpoint, locale = activeLocale()) {
   // A single leading slash, then the gym directory. `//evil.example` is a protocol-relative URL and
   // resolves to a different HOST — it looks like a path and is not one, which is exactly the sort
   // of thing a denylist misses and a strict pattern does not.
-  if (!/^\/book\/gyms\/[A-Za-z0-9\-/]*$/.test(path)) return null;
-  if (path.includes('//') || path.includes('..')) return null;
+  // At least one segment BEYOND the directory. `/book/gyms/` is a real page — the browse index — so
+  // it is not dangerous, but a row that names a gym and links to the index is a small lie, and the
+  // check costs one character. Deliberately not asserting the FULL four-segment depth: how deep a
+  // gym page sits is the site's business, and pinning it here would break every link the day they
+  // reorganise, which is the coupling this design exists to avoid.
+  if (!/^\/book\/gyms\/[A-Za-z0-9\-/]+$/.test(path)) return null;
+  // `//` would be an empty segment, and at the start of a path it is a different HOST entirely.
+  // Unreachable given the pattern above rejects a leading `//` before this line — kept because the
+  // pattern is the kind of thing that gets loosened one character at a time.
+  if (path.includes('//')) return null;
 
   let origin;
   try {
