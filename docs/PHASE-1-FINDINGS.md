@@ -94,8 +94,9 @@ Of the listings we read correctly, how many have an FTNSS gym near enough to sho
 exist. The harness records the rounded point the product would send, so coverage can be computed over
 this same sample the moment the endpoint is built.
 
-This was always the second half of the gate, and it remains open. **A good read rate over a market
-with no supply is not a product.**
+This was always the second half of the gate, and it remains open: a read rate says how often we can
+locate a listing, not how often we have anything to show for it. Those are independent numbers and
+only one of them is measured here.
 
 ---
 
@@ -179,8 +180,8 @@ Before Phase 2 is approved, three things are outstanding:
 
 1. **Build the proximity endpoint** (spec Phase 0). It is owed regardless, it is the only way to
    answer the supply-coverage gate, and it is the shared surface a future MCP server would use.
-2. **Measure supply coverage** over this sample. A good read rate over a market with no gyms is not a
-   product, and at current supply this is the number most likely to stop the project.
+2. **Measure supply coverage** over this sample, which the endpoint makes computable retroactively
+   because every record carries the point the product would have sent.
 3. **Decide the geocoding posture** — the two caveats above are Jordan's calls, not engineering ones.
 
 The Airbnb-homes question stays open and is not resolvable before launch. Design for it: the panel
