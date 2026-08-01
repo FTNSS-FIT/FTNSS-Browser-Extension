@@ -177,13 +177,14 @@ point, and nothing beyond a maximum radius. Ranking is by distance.
 
 **Why a cap on both.** Six is about what a small panel can show without becoming a directory, and a
 traveller deciding "can I train here?" needs the nearest few rather than all of them. The radius
-matters more: without one, the sixth result in a thin market could be in another city, and a gym
-nobody could realistically reach is worse than an honest "nothing near here" — it makes the panel
-look like it is padding.
+matters more: without one, the sixth result could be in another city, and a gym nobody could
+realistically reach is worse than an honest "nothing near here" — it makes the panel look like it is
+padding.
 
-**Proposed radius: 5km**, pending confirmation. The reasoning: under about 2km the result set would
-be mostly empty at current supply, and beyond about 5km a gym stops being somewhere you would go from
-a hotel. 5km is a short taxi or metro ride in a city, which is still a usable answer.
+**Proposed radius: 5km**, pending confirmation. The reasoning: much under 2km and the radius starts
+excluding gyms a traveller would happily walk to, while beyond about 5km a gym stops being somewhere
+you would go from a hotel at all. 5km is a short taxi or metro ride in a city, which is still a
+usable answer.
 
 **How this interacts with the rounding — they are different things.** The rounding is about
 *precision of the query point*: we are told roughly where, to within about 160m. The radius is about *how
