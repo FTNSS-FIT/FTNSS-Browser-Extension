@@ -60,6 +60,14 @@ function gymFrom(raw) {
     slug: text(raw.slug),
     city: text(raw.city),
     distanceMetres: Math.round(metres),
+    // A SITE-RELATIVE PATH, and only ever that. The gym page url is
+    // /{locale}/book/gyms/{country}/{state}/{city}/{slug} — four segments this response does not
+    // carry, so the client cannot build it and should not try: url structure belongs to the site
+    // that serves it, and a client-side builder silently 404s the day routes are reorganised.
+    //
+    // Carried as an opaque string here and validated in locale.js before it becomes a link. It is
+    // absent until the endpoint sends it, and a gym without one simply renders without a link.
+    path: text(raw.path),
     // NOT raw.latitude / raw.longitude, which the agreed shape does not include. Returning the
     // query point and precise targets together would make the endpoint a triangulation oracle, and
     // a panel does not need them to render. If the server starts sending them anyway, this is where

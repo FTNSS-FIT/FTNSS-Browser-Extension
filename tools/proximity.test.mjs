@@ -85,7 +85,10 @@ test('coordinates in the response are dropped, not rendered', async () => {
     fetchImpl: stub({ gyms: [{ ...GYM, latitude: 43.6, longitude: -79.4, contact_email: 'a@b.c' }] }),
   });
   assert.equal(answer.status, 'ok');
-  assert.deepEqual(Object.keys(answer.gyms[0]).sort(), ['city', 'distanceMetres', 'id', 'name', 'slug']);
+  assert.deepEqual(
+    Object.keys(answer.gyms[0]).sort(),
+    ['city', 'distanceMetres', 'id', 'name', 'path', 'slug'],
+  );
   assert.equal(JSON.stringify(answer.gyms).includes('a@b.c'), false);
 });
 
