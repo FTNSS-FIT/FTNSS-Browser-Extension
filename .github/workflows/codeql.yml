@@ -1,0 +1,54 @@
+# CodeQL — free for public repositories, and the only automated reviewer this repo currently has.
+#
+# WHAT IT IS AND IS NOT. CodeQL is taint and dataflow analysis, not a code reviewer. It is good at
+# exactly one family of problem, and it happens to be the family this codebase most needs watched:
+# untrusted input reaching somewhere it should not. Every byte of a listing page is attacker
+# controlled, and the extension now also parses a network response and turns part of it into a link.
+#
+# It will NOT find the bugs that have actually cost time here — a path truncated into a valid-looking
+# wrong url, a locale list read short by 26 entries, a distance rendered more precisely than the
+# query supports. Those are judgement errors that type-check and pass their tests. Nothing automated
+# catches them; a reviewer does.
+#
+# So this is a floor, not a replacement for review. It is here because it is free, it runs on every
+# PR, and for an extension that reads hostile HTML the floor is worth having.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, because a query set improves over time — the same code gets re-examined by better
+    # rules without anyone pushing anything.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze JavaScript
+    runs-on: ubuntu-latest
+    permissions:
+      # The minimum that works: read the code, write the findings, read Actions metadata.
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          # security-and-quality over the default security-only: this repo has no build step, no
+          # dependencies and no type checker, so the quality queries are the only static analysis
+          # it gets at all.
+          queries: security-and-quality
+
+      - uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:javascript-typescript'
