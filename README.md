@@ -35,14 +35,22 @@ seconds:
 |---|---|
 | Which sites it can read — a short, named list, never `<all_urls>` | [`src/manifest.json`](src/manifest.json) |
 | That coordinates really are truncated before transmission | `toTransmittablePoint` in [`src/lib/geo.js`](src/lib/geo.js) |
-| That there is no network code at all | [`tools/no-network.test.mjs`](tools/no-network.test.mjs) — it fails the build if any source file contains `fetch(` |
+| That exactly **one** file can reach the network | [`tools/no-network.test.mjs`](tools/no-network.test.mjs) — every other source file fails the build if it so much as names `fetch` |
+| What that one request contains | [`src/lib/proximity.js`](src/lib/proximity.js) — one body, built from one rounded coordinate |
 
 Four properties carry the claim:
 
 1. **Narrow permissions.** A short list of named sites. It is technically incapable of reading any
    other page — a limit enforced by the browser, not by us.
-2. **The URL never leaves your browser.** Not the address bar, not the page title, not the content.
-   Our servers cannot reconstruct what you were looking at, because it was never sent.
+2. **The URL never leaves your browser.** Not the address bar, not the page title, not the content,
+   not the hotel's name or address. Our servers cannot reconstruct what you were looking at,
+   because it was never sent.
+
+   **One request is made, and only when you press "Find gyms".** Opening the panel sends nothing;
+   the request carries a single coordinate rounded to the grid below and nothing else — no cookies,
+   no identifier, no session. You can watch it in devtools; that is the point of it being one small
+   thing. Nothing is sent while you browse, and the measurements this build records stay on your
+   machine.
 3. **Coordinates are rounded before they are sent.** Cells 250m across — plenty to answer "is
    there a gym near this hotel", uselessly coarse as a location trail. The grid is **latitude-aware**:
    a fixed number of decimal places is ~1.1km near the equator and about 190m at 80°, so the
@@ -53,7 +61,12 @@ Four properties carry the claim:
 
 No payments and no card details — buying a pass hands off to the website. No third-party analytics,
 advertising, or error-reporting SDKs, ever. No crawling: it reads the page you are already looking
-at, on your machine, and the reading does not leave it.
+at, on your machine, and **the reading itself never leaves it** — only a rounded coordinate derived
+from it does, and only when you ask what is nearby.
+
+The extension also cannot call anywhere it likes: the origins it may contact are named in the
+manifest, and permission for one of them is requested at the moment you configure it rather than
+granted up front.
 
 ## Reproducible builds
 

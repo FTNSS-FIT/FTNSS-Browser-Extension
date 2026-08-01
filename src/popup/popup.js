@@ -21,6 +21,9 @@ import {
   siteLabelFor,
   migrateAwayLocalCohort,
   migrateStoredRecords,
+  loadEndpoint,
+  saveEndpoint,
+  endpointProblem,
 } from '../lib/storage.js';
 import {
   TRANSMIT_KM,
@@ -29,6 +32,7 @@ import {
   parseCoordinate,
   isUsableCoordinate,
 } from '../lib/geo.js';
+import { gymsNear, describeDistance } from '../lib/proximity.js';
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -553,11 +557,387 @@ document.getElementById('clear').addEventListener('click', async () => {
  * none was stored, with no path that would ever clean it. Migration cannot depend on a later write
  * succeeding. (Codex review round 25, PR #1.)
  */
+/**
+ * The panel, such as it is.
+ *
+ * IN THE POPUP, NOT INJECTED INTO THE PAGE, and that is the significant decision here rather than
+ * anything about the layout. The content script's stated invariant is that it renders nothing and
+ * publishes nothing — it reads the DOM on demand and answers. Injecting a panel would end that:
+ * our markup would live inside a document we treat as adversarial, inheriting its CSS, visible to
+ * its scripts, and mutating a page the person did not ask us to change.
+ *
+ * The cost is that this is a click away instead of in front of them, which is a product question
+ * for a later phase and reversible. The invariant is not reversible once given up.
+ */
+/**
+ * Which lookup is current.
+ *
+ * A lookup can take four seconds, and changing or clearing the endpoint starts another immediately
+ * — so the older request would finish last and render gyms from an endpoint that had already been
+ * replaced, or from one that had been cleared entirely. The panel would be showing an answer to a
+ * question nobody was asking any more, which is the same class of error as rendering listing A's
+ * gyms under listing B, arriving from the same direction: time.
+ */
+let lookupGeneration = 0;
+/** The lookup currently in flight, so a new one can cancel it rather than race it. */
+let inFlight = null;
+
+/**
+ * The resting state: an endpoint is configured and NOTHING has been sent.
+ *
+ * Opening the popup used to fire a lookup immediately, which contradicted the README's own promise
+ * — "one request is made, and only if you ask for gyms" — for the most ordinary reason anyone opens
+ * this build, which is to log or export a measurement. A privacy claim the code breaks on the
+ * common path is not a bug in the wording.
+ *
+ * It also made a network request a side effect of a toolbar click, and the panel is the one place
+ * this extension does anything a user did not directly ask for.
+ */
+async function renderGymsIdle() {
+  // INVALIDATE ANYTHING IN FLIGHT. Returning to this view is a statement that the previous question
+  // no longer applies — the endpoint changed, or was cleared — and without bumping the generation a
+  // four-second-old lookup finished afterwards and painted stale gyms, or a false "none found",
+  // over the resting state. The guard existed; the path back to idle simply never armed it.
+  lookupGeneration += 1;
+  inFlight?.abort();
+  inFlight = null;
+  const container = document.getElementById('gyms');
+  if (container == null) return;
+  const endpoint = await loadEndpoint();
+  container.replaceChildren();
+
+  if (endpoint == null) {
+    container.appendChild(el('div', 'No endpoint set yet.', 'muted'));
+  } else {
+    container.appendChild(
+      el('div', 'Nothing has been sent. Looking up gyms sends one rounded coordinate.', 'muted'),
+    );
+  }
+
+  const row = el('div', null, 'row');
+  if (endpoint != null) {
+    const find = el('button', 'Find gyms', 'primary');
+    find.addEventListener('click', () => { void renderGyms(); });
+    row.appendChild(find);
+  }
+  const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
+  change.addEventListener('click', () => {
+    lookupGeneration += 1;
+    container.replaceChildren(endpointForm(endpoint ?? ''));
+  });
+  row.appendChild(change);
+  container.appendChild(row);
+}
+
+async function renderGyms() {
+  // ONE AT A TIME. Bumping the generation invalidates the previous lookup's renders, but the
+  // request it already sent keeps running — so this aborts it too, rather than leaving a
+  // coordinate in flight that nobody will ever look at.
+  inFlight?.abort();
+  const controller = new AbortController();
+  inFlight = controller;
+  const generation = (lookupGeneration += 1);
+  const container = document.getElementById('gyms');
+  // Defensive for the same reason showVersion() is: this runs unawaited at startup, so anything it
+  // throws surfaces as an unhandled rejection with no obvious link to the recorder — and the
+  // recorder is the part that must not break. A missing node means a markup change, not a crash.
+  if (container == null) return;
+  const endpoint = await loadEndpoint();
+
+  // THE FORM IS ALWAYS REACHABLE, and it used to appear only when no endpoint was set — so a typo,
+  // a revoked permission or a change of environment left the feature permanently broken with no way
+  // back through the UI. A setting you can write once and never correct is a trap, and the state it
+  // traps you in is the one where something is already wrong.
+  // Every write to the panel checks it is still the current lookup. A guard placed only around the
+  // network call would still let a stale error or empty state paint over a fresh one.
+  const stale = () => generation !== lookupGeneration;
+  const say = (message, className = 'muted') => {
+    if (stale()) return;
+    container.replaceChildren(el('div', message, className));
+    const row = el('div', null, 'row');
+    const again = el('button', 'Look again');
+    again.addEventListener('click', () => { void renderGyms(); });
+    row.appendChild(again);
+    const change = el('button', endpoint == null ? 'Set endpoint' : 'Change endpoint');
+    change.addEventListener('click', () => {
+      lookupGeneration += 1;
+      row.replaceChildren(endpointForm(endpoint ?? ''));
+    });
+    row.appendChild(change);
+    container.appendChild(row);
+  };
+
+  if (endpoint == null) {
+    say('No endpoint set yet.');
+    return;
+  }
+
+  const reading = await readActivePage();
+  const result = reading?.result;
+  if (result?.status !== 'found') {
+    // Honest about WHICH of the two reasons applies. "No gyms" and "we could not read this page"
+    // look identical in a panel and mean opposite things — one is about our supply, the other
+    // about our extractor — and conflating them is how a coverage problem gets misdiagnosed as a
+    // reading problem for a month.
+    say(result?.status === 'found_address'
+      ? 'This page gave an address but no coordinates, and there is no geocoder yet.'
+      : 'Nothing to search from — no coordinate read on this page.');
+    return;
+  }
+
+  // CHECK AGAIN IMMEDIATELY BEFORE SENDING. The generation guard stopped stale answers being
+  // RENDERED, which is not the same as stopping them being ASKED — a double-click, or Look again
+  // during a search, or changing the endpoint while the page read was still pending, each fired
+  // another request. In a panel whose privacy claim is "one request, only when you ask", quietly
+  // sending two coordinates because a button was pressed twice is the wrong kind of extra.
+  if (stale()) return;
+
+  say('Searching…');
+  const answer = await gymsNear(
+    { lat: result.lat, lon: result.lon },
+    { endpoint, signal: controller.signal },
+  );
+
+  // THE PAGE MAY HAVE MOVED WHILE WE WERE ASKING.
+  //
+  // The read happens once and the request can run for four seconds — an eternity on a site that
+  // navigates without reloading, which is every site in the manifest. Listing A's gyms rendered
+  // under listing B is a confidently wrong answer of exactly the kind the extraction tiers refuse
+  // to produce, arriving through the one door they do not watch: time.
+  //
+  // `pageToken` is the same identity the recorder uses to refuse a stale Log, so the panel and the
+  // measurement agree on what "this page" means.
+  const after = await readActivePage();
+  if (
+    after?.pageToken !== reading.pageToken ||
+    after?.result?.status !== 'found' ||
+    after.result.lat !== result.lat ||
+    after.result.lon !== result.lon
+  ) {
+    say('The page changed while we were looking. Open the panel again.');
+    return;
+  }
+
+  if (answer.status === 'unconfigured') return say('No endpoint set yet.');
+  if (answer.status === 'error') {
+    // One sentence for every failure. Which of them it was is our business, not the page's.
+    say('Could not reach FTNSS.', 'warn');
+    container.appendChild(el('div', answer.reason, 'muted'));
+    return;
+  }
+  if (answer.status === 'empty') {
+    // NOT AN ERROR, and worded so nobody reads it as one. This is the true answer nearly
+    // everywhere until supply grows, and a panel that cries failure over its most common correct
+    // response teaches people to ignore it.
+    //
+    // BUT AN ABSENCE IS A STRONGER CLAIM THAN A PRESENCE, so it needs the same caveat the results
+    // list carries — and it was returning before the precision check that adds it. A tier-2 read is
+    // a map pin, not a published point, and "no gyms within 5km" measured from a pin that may be
+    // somewhere else is a false negative delivered with total confidence. The one thing worse than
+    // failing to find a gym is telling someone there isn't one.
+    //
+    // "of the area searched", not "of here": the query point is a 250m cell, not the hotel.
+    // NEVER CONCLUSIVE, whatever the precision. We searched around a point whose accuracy we have
+    // not established, rounded to a 250m cell — so "there are none" is a claim the evidence cannot
+    // carry in either case. It only gets weaker when the site publishes an area by design.
+    say(result.precision === 'approximate'
+      ? 'No FTNSS gyms found within 5km of the area searched — and this page publishes only an approximate location, so treat that as inconclusive.'
+      : 'No FTNSS gyms found within 5km of the area searched — measured from a rounded point, so not conclusive.');
+    return;
+  }
+
+  if (stale()) return;
+  // NO READING HERE IS VERIFIED. This split used to be "approximate versus everything else", which
+  // quietly treated `unknown` as precise — and `unknown` is what tier 1 deliberately reports,
+  // because whether a published point is the building or a fuzzed area is a per-site fact this
+  // project measures rather than assumes. There is no 'exact' in the vocabulary at all, on purpose.
+  const approximate = result.precision === 'approximate';
+  container.replaceChildren();
+  for (const gym of answer.gyms) {
+    const row = el('div', null, 'gym');
+    const left = el('div');
+    left.appendChild(el('b', gym.name));
+    if (gym.city) left.appendChild(el('div', gym.city, 'muted'));
+    row.appendChild(left);
+    // NO DISTANCE AT ALL. Not for approximate reads, not for `unknown` ones — which is every other
+    // read, because `unknown` is what tier 1 reports and there is no `exact` in this codebase.
+    //
+    // Bands were the third attempt and still could not be made true: the query point is a 250m
+    // cell, so a server distance of 499m can be ~674m from the listing, and "under 500 m" is then
+    // simply false. Each version was less wrong than the last while the real problem stayed put —
+    // we do not know how far away these gyms are, and no phrasing fixes that.
+    //
+    // The ordering carries the useful part, and it survives the uncertainty: nearest first is still
+    // nearest first when every distance is shifted by the same cell offset. (Codex, PR #13.)
+    container.appendChild(row);
+  }
+  // SAY WHAT THE DISTANCES ARE MEASURED FROM, and say it differently when the reading itself was
+  // approximate. Tier 2 reads a map pin rather than a published point and is labelled `approximate`
+  // for that reason — stacking an approximate reading under a 250m grid and then printing a
+  // confident distance is precisely the compounding this repo refuses to do elsewhere.
+
+  const change = el('button', 'Change endpoint');
+  change.addEventListener('click', () => {
+    lookupGeneration += 1;
+    container.replaceChildren(endpointForm(endpoint));
+  });
+  const changeRow = el('div', null, 'row');
+  changeRow.appendChild(change);
+
+  container.appendChild(
+    el(
+      'div',
+      approximate
+        ? `${answer.gyms.length} nearest first — this page publishes only an approximate location, so treat the order loosely`
+        : `${answer.gyms.length} nearest first — distances not shown: we search from a 250m cell, so we cannot state one honestly`,
+      approximate ? 'warn' : 'muted',
+    ),
+  );
+  container.appendChild(changeRow);
+}
+
+/**
+ * Hand back the old origin's permission, unless the new endpoint still needs it.
+ *
+ * Best effort and deliberately non-fatal: failing to return a permission is untidy, while refusing
+ * to save a working endpoint over it would be worse.
+ */
+async function releaseOrigin(previous, next) {
+  const old = matchPatternFor(previous);
+  if (old == null || old === matchPatternFor(next)) return;
+  try {
+    // `remove` RESOLVES FALSE when it declines rather than throwing, so catching alone left a
+    // silent failure looking identical to success. There is nothing to do about it in the UI —
+    // the endpoint is saved and works — but a console line is the difference between a stale
+    // permission being discoverable and being invisible.
+    const removed = await chrome.permissions.remove({ origins: [old] });
+    if (!removed) console.warn(`FTNSS: could not release ${old}; it remains authorised`);
+  } catch (err) {
+    console.warn(`FTNSS: could not release ${old}`, err?.message ?? err);
+  }
+}
+
+/**
+ * A Chrome host match pattern: `scheme://host/*`, with NO PORT.
+ *
+ * `URL.origin` includes the port, so the documented `http://localhost:8787/api/proximity` produced
+ * `http://localhost:8787/*` — which is not a valid match pattern. Chrome would have rejected the
+ * request outright, meaning the local stub, the one path anyone can exercise today, could never
+ * have been authorised at all.
+ *
+ * Ports are also why comparison has to happen here rather than on origins: patterns cover every
+ * port on a host, so moving the stub from 8787 to 8788 is the SAME permission — and comparing
+ * origins would have revoked the permission the new endpoint had just been granted.
+ */
+function matchPatternFor(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname}/*`;
+  } catch {
+    return null;
+  }
+}
+
+/** Set or change the endpoint, and ask for that origin's permission at the same time. */
+function endpointForm(current) {
+  const wrap = el('div');
+  const input = document.createElement('input');
+  input.type = 'url';
+  input.placeholder = 'https://…/api/proximity';
+  input.value = current;
+  wrap.appendChild(input);
+
+  const row = el('div', null, 'row');
+  const save = el('button', 'Save endpoint', 'primary');
+  const clear = el('button', 'Clear');
+  const note = el('span', null, 'muted');
+  clear.addEventListener('click', async () => {
+    // Saving an empty value removes it. Worth an explicit button rather than relying on someone
+    // discovering that emptying the field and saving is the way out.
+    const previous = await loadEndpoint();
+    await saveEndpoint('');
+    await releaseOrigin(previous, '');
+    await renderGymsIdle();
+  });
+  save.addEventListener('click', async () => {
+    const value = input.value.trim();
+    /** Set once a new origin has actually been granted, so a later failure can hand it back. */
+    let grantedPattern = null;
+    const problem = value.length === 0 ? null : endpointProblem(value);
+    if (problem != null) {
+      note.textContent = problem;
+      note.className = 'warn';
+      return;
+    }
+    // ASK FOR THIS ORIGIN ONLY, at the moment a person names it.
+    //
+    // The alternative was a compiled-in host permission, which means the install prompt lists a
+    // host before anyone has decided which environment we call — and a broad one to cover the
+    // choice. Requesting the origin the person just typed is both narrower and more truthful.
+    if (value.length > 0) {
+      // WRAPPED. Chrome REJECTS this call for an origin the manifest does not declare, rather than
+      // resolving false — and the rejection was outside any catch, so the click died silently and
+      // the person was left looking at a form that had apparently done nothing. A validation
+      // that leaves no visible error is the same as no validation.
+      let granted = false;
+      try {
+        granted = await chrome.permissions.request({ origins: [matchPatternFor(value)] });
+      } catch (err) {
+        note.textContent = `Chrome refused that origin: ${err?.message ?? 'unknown error'}`;
+        note.className = 'warn';
+        return;
+      }
+      if (!granted) {
+        note.textContent = 'Permission declined, so it was not saved.';
+        note.className = 'warn';
+        return;
+      }
+      grantedPattern = matchPatternFor(value);
+    }
+    // GIVE BACK WHAT WE NO LONGER NEED. Switching from localhost to production left both origins
+    // authorised forever, which contradicts the single-origin design the manifest exists to state.
+    // Best effort and deliberately non-fatal: failing to hand a permission back is untidy, while
+    // refusing to save a working endpoint over it would be worse.
+    const previous = await loadEndpoint();
+    try {
+      await saveEndpoint(value);
+    } catch (err) {
+      // ROLL THE GRANT BACK. Storage failing after the permission was granted left the extension
+      // holding access to an origin it had no endpoint for and no UI to reach — a permission the
+      // person agreed to for a setting that does not exist.
+      if (grantedPattern != null && grantedPattern !== matchPatternFor(previous)) {
+        try {
+          await chrome.permissions.remove({ origins: [grantedPattern] });
+        } catch {
+          // Nothing further to try; the message below is still the important part.
+        }
+      }
+      note.textContent = err?.message ?? 'Could not save that.';
+      note.className = 'warn';
+      return;
+    }
+    // COMPARE ORIGINS, NOT URLS. Comparing the full URL meant changing only the PATH — the most
+    // likely edit anyone makes — saved the new endpoint and then revoked the permission it needs,
+    // breaking the feature through the act of correcting it.
+    await releaseOrigin(previous, value);
+    await renderGymsIdle();
+  });
+  row.appendChild(save);
+  row.appendChild(clear);
+  row.appendChild(note);
+  wrap.appendChild(row);
+  return wrap;
+}
+
 async function start() {
   showVersion();
   await migrateAwayLocalCohort();
   await migrateStoredRecords();
   await render();
+  // AFTER the recorder renders, and not awaited alongside it. This one touches storage, and the
+  // measurement UI must never wait on it to appear. It makes NO network request — that happens only
+  // when someone presses Find gyms.
+  void renderGymsIdle();
 }
 
 void start();

@@ -575,3 +575,87 @@ export function exportableRecords(records) {
     return out;
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// The proximity endpoint address.
+//
+// STORED, NOT COMPILED IN, and that is a decision rather than a convenience. Consumer Web's dev
+// origin is Vercel-auth-gated and an extension cannot pass that gate, so which environment this
+// build can reach is still unresolved (Phase 0 brief, question 1). Shipping a default would mean
+// picking prod by omission — the environment nobody chose is the one that gets called.
+//
+// It also means the panel is testable against a local stub before the real endpoint exists, which
+// is the difference between building now and waiting.
+// ---------------------------------------------------------------------------------------------
+
+const ENDPOINT_KEY = 'ftnss.proximityEndpoint';
+
+/** @returns {Promise<string|null>} */
+export async function loadEndpoint() {
+  const bag = await chrome.storage.local.get(ENDPOINT_KEY);
+  const value = bag?.[ENDPOINT_KEY];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+/**
+ * HTTPS ONLY, except on localhost.
+ *
+ * A coarse point is not a secret worth a wiretap, but the response drives what a person is told
+ * about where to work out, and plaintext means any network between here and there can rewrite it.
+ * Localhost is exempt because a stub server is the whole point of this being configurable, and
+ * there is no network to sit in the middle of.
+ */
+export function endpointProblem(value, allowedPatterns = manifestOrigins()) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return 'That is not a URL.';
+  }
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+    return 'Must be https, or http on localhost.';
+  }
+  // AND IT MUST BE AN ORIGIN THE MANIFEST DECLARES.
+  //
+  // Chrome refuses to grant a permission for an origin that is not in optional_host_permissions,
+  // and it refuses at the point of asking — so any other https URL was accepted here, then silently
+  // failed to be granted, and the person saw a saved endpoint that could never work. Two lists that
+  // must agree will eventually not, so this reads the manifest rather than restating it.
+  if (allowedPatterns.length > 0 && !allowedPatterns.some((pattern) => originMatches(pattern, url))) {
+    return 'That origin is not one this extension is allowed to call.';
+  }
+  return null;
+}
+
+/** The manifest is the single source of truth; restating its list here would be a second one. */
+function manifestOrigins() {
+  try {
+    return chrome.runtime.getManifest().optional_host_permissions ?? [];
+  } catch {
+    // Outside an extension (tests, tooling) there is no manifest and nothing to check against.
+    return [];
+  }
+}
+
+/** Match a `scheme://host/*` pattern against a URL. Host wildcards are not used and not supported. */
+function originMatches(pattern, url) {
+  let candidate;
+  try {
+    candidate = new URL(pattern.replace(/\*$/, ''));
+  } catch {
+    return false;
+  }
+  return candidate.protocol === url.protocol && candidate.hostname === url.hostname;
+}
+
+export async function saveEndpoint(value) {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (trimmed.length === 0) {
+    await chrome.storage.local.remove(ENDPOINT_KEY);
+    return;
+  }
+  const problem = endpointProblem(trimmed);
+  if (problem != null) throw new Error(problem);
+  await chrome.storage.local.set({ [ENDPOINT_KEY]: trimmed });
+}
