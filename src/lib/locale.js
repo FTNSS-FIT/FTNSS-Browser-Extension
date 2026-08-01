@@ -6,9 +6,15 @@
 // code that "just uses /en" has made the choice without admitting it. Naming the choice now costs
 // one small module; retrofitting it means finding every place a url was assembled.
 //
-// The rule this encodes: a locale we cannot verify is supported is not used. A wrong prefix does
-// not degrade gracefully — it 404s, and it does so on the one click where someone was actually
-// trying to reach us.
+// The rule this encodes: a locale we cannot verify is supported is not used. And the failure is
+// worse than a plain 404 — an unrecognised prefix gets ANOTHER prefix bolted on by the site's
+// middleware:
+//
+//     /xx/book/gyms/…  →  307  →  /en/xx/book/gyms/…  →  404
+//
+// Consumer Web hit exactly this shape recently: `zh-Hant` was not recognised as a locale, so
+// `/zh-Hant/r/CODE` became `/en/zh-Hant/r/CODE` and 404'd, silently losing referral attribution.
+// The dangerous part is not the 404 — it is that the wreckage looks plausible in a log.
 
 /**
  * The locales FTNSS serves, from the site's own `src/i18n/config.ts`.
@@ -17,15 +23,18 @@
  * rather than fetched because a link has to be built synchronously while rendering, and because the
  * failure mode of a stale copy is bounded — we would omit a language we now support, not send
  * someone to a page that does not exist. That asymmetry is the whole reason for an allowlist.
+ *
+ * THIS LIST WAS WRONG ON ITS FIRST WRITING — 31 entries instead of 57, because it was read from a
+ * truncated view of the source file that happened to end on a complete-looking line. Caught by
+ * Consumer Web, who noticed the arithmetic: the live sitemap has 1824 urls, and 1824 / 57 = 32
+ * paths exactly. It is now extracted from `origin/main` mechanically rather than transcribed, and
+ * the count is asserted in the tests so a future truncation fails loudly.
  */
 export const SUPPORTED_LOCALES = Object.freeze([
-  'en', 'es', 'fr', 'fr-CA', 'de', 'pt', 'it', 'nl', 'pl', 'sv', 'da',
-  'ar', 'he', 'ur', 'fa',
-  'zh', 'ja', 'ko',
-  'hi', 'bn', 'ta', 'tl',
-  'tr', 'ru', 'uk', 'el',
-  'th', 'vi', 'id', 'ms',
-  'sw',
+  'en', 'es', 'fr', 'fr-CA', 'de', 'pt', 'it', 'nl', 'pl', 'sv', 'da', 'ar', 'he', 'ur', 'fa',
+  'zh', 'ja', 'ko', 'hi', 'bn', 'ta', 'tl', 'tr', 'ru', 'uk', 'el', 'th', 'vi', 'id', 'ms', 'sw',
+  'nb', 'fi', 'cs', 'sk', 'sl', 'hu', 'ro', 'bg', 'hr', 'et', 'lv', 'lt', 'ca', 'sr', 'ga', 'mt',
+  'en-GB', 'en-CA', 'en-AU', 'es-MX', 'pt-PT', 'pa', 'te', 'mr', 'gu', 'zh-Hant'
 ]);
 
 export const DEFAULT_LOCALE = 'en';

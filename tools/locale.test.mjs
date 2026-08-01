@@ -68,6 +68,12 @@ test('this build is English, and the plumbing for more is real', () => {
   assert.equal(activeLocale(), 'en');
   assert.equal(DEFAULT_LOCALE, 'en');
   assert.ok(SUPPORTED_LOCALES.includes('fr-CA') && SUPPORTED_LOCALES.includes('ja'));
-  assert.equal(SUPPORTED_LOCALES.length, 31, 'kept in step with the site config');
+  // 57, and it was written as 31 first — read from a truncated view of the source that ended on a
+  // complete-looking line. Asserted precisely so the next truncation fails loudly rather than
+  // quietly withholding links from 26 languages.
+  assert.equal(SUPPORTED_LOCALES.length, 57, 'kept in step with the site config');
+  for (const late of ['nb', 'zh-Hant', 'en-GB', 'es-MX', 'pt-PT', 'mt', 'gu']) {
+    assert.ok(SUPPORTED_LOCALES.includes(late), `${late} is served and must be linkable`);
+  }
   assert.throws(() => SUPPORTED_LOCALES.push('zz'), 'the list must not be mutable at runtime');
 });
