@@ -31,37 +31,47 @@ let generation = 0;
 let inFlight = null;
 
 /**
- * The pass durations offered as filters.
+ * The pass kinds offered as filters, in the platform's canonical order.
  *
- * All six Jordan asked for, INCLUDING the two nobody currently sells. Measured against production:
- * live gyms sell 1, 7, 30 and 365-day passes — there is no 3-day and no 90-day inventory anywhere.
- * Showing them anyway, disabled, is the honest rendering: hiding them would make the set of
- * durations change between searches, while a greyed chip says "this exists and nobody near you
- * sells it", which is a true statement about coverage rather than a gap in the UI.
+ * KEYED ON KIND, NOT A DAY COUNT. `days` is not a field the consumer path reads; `kind` is what the
+ * site, mobile and partner all filter on, and keying on days had this extension filtering by a
+ * column the rest of the platform ignores.
+ *
+ * All six ship, including the two that may have no inventory near any given search. `weekend` is
+ * the 3-day pass. `quarter` is the 90-day one and exists for a legal reason rather than a product
+ * one — Pennsylvania caps prepaid membership contracts at three months, so it is how a PA gym sells
+ * anything longer than a month, and there is a live PA gym. Removing a filter because a query
+ * returned no rows would have deleted the mechanism keeping a whole state sellable.
+ *
+ * Availability is derived from the RESPONSE, never from this list, so a kind with nothing behind it
+ * greys out and lights up again on its own. That is what let a wrong inventory reading pass through
+ * without reaching a user. (docs/DECISIONS.md 18.)
  */
-const DURATIONS = Object.freeze([
-  { days: 1, label: 'Day' },
-  { days: 3, label: '3 day' },
-  { days: 7, label: '7 day' },
-  { days: 30, label: '30 day' },
-  { days: 90, label: '90 day' },
-  { days: 365, label: '365 day' },
+const PASS_KINDS = Object.freeze([
+  { kind: 'day', label: 'Day' },
+  { kind: 'weekend', label: '3 day' },
+  { kind: 'week', label: 'Week' },
+  { kind: 'month', label: 'Month' },
+  { kind: 'quarter', label: '90 day' },
+  { kind: 'year', label: 'Year' },
 ]);
 
+const PASS_LABEL = new Map(PASS_KINDS.map((p) => [p.kind, p.label]));
+
 /** Not persisted: a filter is about this search, not a standing preference. */
-let selectedDays = null;
+let selectedKind = null;
 let openNowOnly = false;
 
-/** The cheapest pass of a given duration, for the price line. */
-function cheapest(gym, days) {
-  const candidates = (gym.passes ?? []).filter((p) => days == null || p.days === days);
+/** The cheapest pass of a given kind, for the price line. */
+function cheapest(gym, kind) {
+  const candidates = (gym.passes ?? []).filter((p) => kind == null || p.kind === kind);
   if (candidates.length === 0) return null;
   return candidates.reduce((a, b) => (b.price < a.price ? b : a));
 }
 
 function matchesFilters(gym) {
   if (openNowOnly && gym.hours?.open !== true) return false;
-  if (selectedDays != null && !(gym.passes ?? []).some((p) => p.days === selectedDays)) return false;
+  if (selectedKind != null && !(gym.passes ?? []).some((p) => p.kind === selectedKind)) return false;
   return true;
 }
 
@@ -75,9 +85,9 @@ function formatPrice(pass) {
       currency: pass.currency,
       maximumFractionDigits: 2,
     }).format(pass.price);
-    return `${money} · ${pass.days === 1 ? 'day pass' : `${pass.days}-day pass`}`;
+    return `${money} · ${(PASS_LABEL.get(pass.kind) ?? pass.kind).toLowerCase()} pass`;
   } catch {
-    return `${pass.price} ${pass.currency} · ${pass.days}-day pass`;
+    return `${pass.price} ${pass.currency} · ${(PASS_LABEL.get(pass.kind) ?? pass.kind).toLowerCase()} pass`;
   }
 }
 
@@ -228,16 +238,16 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
   });
   filters.appendChild(openNow);
 
-  for (const duration of DURATIONS) {
-    const available = gyms.some((g) => (g.passes ?? []).some((p) => p.days === duration.days));
-    const chip = el('button', duration.label, 'chip');
-    chip.setAttribute('aria-pressed', String(selectedDays === duration.days));
+  for (const pass of PASS_KINDS) {
+    const available = gyms.some((g) => (g.passes ?? []).some((p) => p.kind === pass.kind));
+    const chip = el('button', pass.label, 'chip');
+    chip.setAttribute('aria-pressed', String(selectedKind === pass.kind));
     if (!available) {
       chip.disabled = true;
       chip.title = 'No gym near here sells this pass';
     }
     chip.addEventListener('click', () => {
-      selectedDays = selectedDays === duration.days ? null : duration.days;
+      selectedKind = selectedKind === pass.kind ? null : pass.kind;
       renderResults(root, body, prefs, gyms, result, endpoint);
     });
     filters.appendChild(chip);
@@ -251,7 +261,7 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
     body.appendChild(
       el(
         'div',
-        openNowOnly && selectedDays != null
+        openNowOnly && selectedKind != null
           ? 'No gym near here is open now with that pass.'
           : openNowOnly
             ? 'No gym near here is open right now.'
@@ -283,7 +293,7 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
     row.appendChild(top);
 
     const meta = el('div', null, 'gym-meta');
-    const price = formatPrice(cheapest(gym, selectedDays));
+    const price = formatPrice(cheapest(gym, selectedKind));
     if (price) meta.appendChild(el('div', price, 'price'));
     const hours = hoursLine(gym);
     if (hours) meta.appendChild(hours);

@@ -374,32 +374,52 @@ test('a malformed price is dropped, not rendered', async () => {
   // A wrong number beside a gym is a claim about what someone will be charged. Every one of these
   // is a plausible thing a half-migrated endpoint sends.
   const bad = [
-    { days: 1, price: 'free', currency: 'CAD' },
-    { days: 1, price: -5, currency: 'CAD' },
-    { days: 1, price: 20 },                       // no currency
-    { days: 1, price: 20, currency: 'dollars' },  // not ISO-shaped
-    { days: 0, price: 20, currency: 'CAD' },      // not a duration
-    { days: 1.5, price: 20, currency: 'CAD' },    // not an integer
+    { kind: 'day', price: 'free', currency: 'CAD' },
+    { kind: 'day', price: -5, currency: 'CAD' },
+    { kind: 'day', price: 20 },                        // no currency
+    { kind: 'day', price: 20, currency: 'dollars' },   // not ISO-shaped
+    { kind: 'fortnight', price: 20, currency: 'CAD' }, // not a canonical kind
+    { price: 20, currency: 'CAD' },                    // no kind at all
   ];
   const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
     endpoint: ENDPOINT,
-    fetchImpl: stub({ gyms: [{ ...GYM, passes: [...bad, { days: 7, price: 45.5, currency: 'cad' }] }] }),
+    fetchImpl: stub({ gyms: [{ ...GYM, passes: [...bad, { kind: 'WEEK', price: 45.5, currency: 'cad' }] }] }),
   });
-  assert.deepEqual(answer.gyms[0].passes, [{ days: 7, price: 45.5, currency: 'CAD' }]);
+  assert.deepEqual(answer.gyms[0].passes, [{ kind: 'week', price: 45.5, currency: 'CAD' }]);
 });
 
-test('passes are sorted by duration, never by server order', async () => {
-  // The panel presents durations as an ordered set of filters, so it must not depend on an
-  // ordering it did not compute.
+test('the legacy 90day label is refused; quarter is canonical', async () => {
+  // Both exist in the DB enum and only `quarter` has rows or meaning — it is the 90-day membership
+  // that Pennsylvania's three-month cap on prepaid contracts makes necessary. Accepting `90day`
+  // would let a stale producer populate a duration the rest of the platform cannot see.
   const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
     endpoint: ENDPOINT,
     fetchImpl: stub({ gyms: [{ ...GYM, passes: [
-      { days: 30, price: 90, currency: 'CAD' },
-      { days: 1, price: 20, currency: 'CAD' },
-      { days: 7, price: 45, currency: 'CAD' },
+      { kind: '90day', price: 200, currency: 'USD' },
+      { kind: 'quarter', price: 210, currency: 'USD' },
     ] }] }),
   });
-  assert.deepEqual(answer.gyms[0].passes.map((p) => p.days), [1, 7, 30]);
+  assert.deepEqual(answer.gyms[0].passes, [{ kind: 'quarter', price: 210, currency: 'USD' }]);
+});
+
+test('passes sort canonically, with quarter between month and year', async () => {
+  // The panel presents durations as an ordered set, so it must not depend on an ordering it did
+  // not compute — and the canonical order is not alphabetical or numeric.
+  const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [{ ...GYM, passes: [
+      { kind: 'year', price: 700, currency: 'USD' },
+      { kind: 'quarter', price: 210, currency: 'USD' },
+      { kind: 'day', price: 20, currency: 'USD' },
+      { kind: 'month', price: 90, currency: 'USD' },
+      { kind: 'weekend', price: 40, currency: 'USD' },
+      { kind: 'week', price: 45, currency: 'USD' },
+    ] }] }),
+  });
+  assert.deepEqual(
+    answer.gyms[0].passes.map((p) => p.kind),
+    ['day', 'weekend', 'week', 'month', 'quarter', 'year'],
+  );
 });
 
 test('open-now comes from the server and is never computed here', async () => {

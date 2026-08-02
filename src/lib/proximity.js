@@ -87,10 +87,8 @@ function gymFrom(raw) {
     distanceMetres: Math.round(metres),
     // PASSES, PRICE AND TODAY'S HOURS — everything the panel shows about a gym beyond its name.
     //
-    // Rebuilt field by field like the rest, and bounded: `days` must be a positive integer, a price
-    // must be a finite non-negative number, and a currency must be a three-letter code. A malformed
-    // price is dropped rather than rendered, because a wrong number next to a gym is a claim about
-    // what someone will be charged.
+    // Rebuilt field by field like the rest. A malformed price is dropped rather than rendered,
+    // because a wrong number next to a gym is a claim about what someone will be charged.
     passes: passesFrom(raw.passes),
     // { open: boolean, opensAt: "06:00", closesAt: "22:00" } — already resolved to the GYM's local
     // day by the server, which is the only place that knows its timezone. The extension must never
@@ -117,26 +115,54 @@ const currency = (value) =>
   typeof value === 'string' && /^[A-Za-z]{3}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
 
 /**
- * The passes a gym sells, as {days, price, currency}.
+ * The canonical pass kinds, mirroring the DB `pass_kind` enum and Consumer Web's `PassKind`.
  *
- * Bounded at MAX_PASSES because this drives a filter: an endpoint returning thousands would make
- * the panel build thousands of chips. Sorted by duration so the panel never depends on server order
- * for something it presents as an ordered set.
+ * KEYED ON KIND, NOT ON A DAY COUNT — and the difference is not cosmetic. `days` is not a field the
+ * consumer path reads at all; `kind` is what the site, mobile and partner all filter on. Keying on
+ * days meant this extension was filtering by a column the rest of the platform ignores, and my
+ * measurement of "which durations exist" answered a question about the wrong column.
+ *
+ * `weekend` is the 3-day pass. `quarter` is the 90-day one, and it exists for a legal reason rather
+ * than a product one: **Pennsylvania caps prepaid membership contracts at three months**, so a
+ * quarter pass is how a PA gym sells anything longer than a month. There is a live PA gym. Dropping
+ * it because a query returned no rows would have removed the mechanism that keeps a whole US state
+ * sellable.
+ *
+ * A legacy `90day` label also exists in the enum with no rows. It is deliberately NOT accepted here:
+ * `quarter` is canonical everywhere, and honouring both would let a stale producer populate a
+ * duration the rest of the platform cannot see.
+ */
+const PASS_KINDS = Object.freeze(['day', 'weekend', 'week', 'month', 'quarter', 'year']);
+
+/** Canonical order, shortest to longest, with quarter between month and year. */
+const kindRank = (kind) => PASS_KINDS.indexOf(kind);
+
+/**
+ * The passes a gym sells.
+ *
+ * `price` MUST be the all-in customer price the site displays — Consumer Web's `customer_price`,
+ * falling back to `price` where it has not been computed. That resolution belongs to the server,
+ * which knows which of the two is authoritative in its environment; if this ever receives the raw
+ * `price` where an all-in figure exists, the panel understates what someone will be charged, and a
+ * number that is wrong in the customer's favour is still wrong.
+ *
+ * Bounded at MAX_PASSES because this drives a filter, and sorted canonically so the panel never
+ * depends on server order for something it presents as an ordered set.
  */
 function passesFrom(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
   for (const item of raw.slice(0, MAX_PASSES)) {
     if (item == null || typeof item !== 'object') continue;
-    const days = item.days;
-    if (!Number.isInteger(days) || days < 1 || days > 3660) continue;
+    const kind = typeof item.kind === 'string' ? item.kind.trim().toLowerCase() : null;
+    if (kind == null || !PASS_KINDS.includes(kind)) continue;
     const price = typeof item.price === 'number' ? item.price : NaN;
     if (!Number.isFinite(price) || price < 0) continue;
     const code = currency(item.currency);
     if (code == null) continue;
-    out.push({ days, price, currency: code });
+    out.push({ kind, price, currency: code });
   }
-  return out.sort((a, b) => a.days - b.days);
+  return out.sort((a, b) => kindRank(a.kind) - kindRank(b.kind));
 }
 
 /**

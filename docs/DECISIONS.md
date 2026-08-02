@@ -387,17 +387,36 @@ starts treating these as measurements — sorting by them across sources, compar
 gyms, showing them next to a walking time — this decision needs revisiting, because at that point
 they stop being a marked estimate and become a number people act on.
 
-## 18. Pass filters include durations nobody currently sells
+## 18. Pass filters are keyed on KIND, and include kinds with no local inventory
 
 **Decided 2026-08-01.**
 
-The filter offers day, 3-day, 7-day, 30-day, 90-day and 365-day passes. Measured against
-production, live gyms sell **1, 7, 30 and 365** — there is no 3-day or 90-day inventory anywhere.
+The filter offers the six canonical `pass_kind` values: `day`, `weekend` (3-day), `week`, `month`,
+`quarter` (90-day) and `year`.
 
-The two with nothing behind them are shown **disabled** rather than hidden. Hiding them would make
+**Keyed on `kind`, not on a day count**, and that correction matters more than it looks. `days` is
+not a field the consumer path reads at all — the site, mobile and partner all filter on `kind`. This
+extension originally keyed on `days`, which meant it filtered by a column the rest of the platform
+ignores, and a measurement of "which durations exist" answered a question about the wrong column.
+
+**`quarter` exists for a legal reason, not a product one.** Pennsylvania caps prepaid membership
+contracts at three months, so a 90-day pass is how a PA gym sells anything longer than a month — and
+there is a live PA gym. A query returning no rows was very nearly grounds for deleting that filter,
+which would have removed the mechanism keeping a whole US state sellable.
+
+There is also a legacy `90day` label in the DB enum with no rows. It is **refused**: `quarter` is
+canonical everywhere, and accepting both would let a stale producer populate a duration the rest of
+the platform cannot see.
+
+A kind with nothing behind it near a given search is shown **disabled** rather than hidden. Hiding them would make
 the set of durations change from one search to the next, which reads as an interface glitch; a
 greyed chip saying "no gym near here sells this pass" is a true statement about coverage.
 
-The same rule governs the whole filter row: availability is derived from **the response**, not from
-this list, so a duration that gains inventory lights up without a code change, and one that loses it
-greys out the same way.
+Availability is derived from **the response**, never from this list, so a kind that gains inventory
+lights up without a code change and one that loses it greys out the same way.
+
+That derivation is also what absorbed a wrong answer. A measurement of mine suggested two durations
+had no inventory anywhere; it had queried the wrong column, and one of them was legally load-bearing.
+Because the panel reads availability from the response rather than a hardcoded list, the wrong
+reading never reached a user and needed no correction in code. **A design that fails safe against
+its author's own bad data is worth more than one that is merely correct today.**
