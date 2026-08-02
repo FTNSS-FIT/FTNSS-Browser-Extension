@@ -361,3 +361,43 @@ is worse than a deliberate one. The patterns now match bare references, the allo
 name a file that exists, and a structural test checks the request body is one literal built from one
 rounded point with no spread — so the privacy claim is auditable by reading, not only by testing
 behaviour.
+
+## 17. Distances are shown, as marked estimates rather than claims
+
+**Decided 2026-08-01, reversing a removal made the same week.**
+
+Distances were deleted from the panel entirely. The reasoning was sound and is worth keeping: the
+transmitted point is a 250m grid cell, so a reported 499m can be ~674m from the listing, and
+**"under 500 m" is then simply false**. Four attempts at wording — `390 m`, `about 400 m`,
+`under 500 m`, then nothing — each less wrong than the last while the underlying problem stayed
+exactly where it was.
+
+They are back because **a list of gyms with no distances is a worse product**, and a traveller
+deciding whether to walk needs some sense of how far. That is a real cost, and deleting the feature
+paid it in full to avoid an error at a boundary.
+
+**What changed is the kind of statement being made.** `~1.1 km` asserts an approximation.
+`under 500 m` asserted a bound — and a bound is precisely what a 250m grid can falsify. The tilde is
+load-bearing, the panel repeats the caveat in words beneath the list, and a reading the extractor
+itself marked `approximate` says so more strongly.
+
+Rounded to 100m below a kilometre and 0.1km above. That is finer than the grid strictly justifies,
+and it is defensible **only** because nothing is presented as exact. If anything downstream ever
+starts treating these as measurements — sorting by them across sources, comparing them between
+gyms, showing them next to a walking time — this decision needs revisiting, because at that point
+they stop being a marked estimate and become a number people act on.
+
+## 18. Pass filters include durations nobody currently sells
+
+**Decided 2026-08-01.**
+
+The filter offers day, 3-day, 7-day, 30-day, 90-day and 365-day passes. Measured against
+production, live gyms sell **1, 7, 30 and 365** — there is no 3-day or 90-day inventory anywhere.
+
+The two with nothing behind them are shown **disabled** rather than hidden. Hiding them would make
+the set of durations change from one search to the next, which reads as an interface glitch; a
+greyed chip saying "no gym near here sells this pass" is a true statement about coverage.
+
+The same rule governs the whole filter row: availability is derived from **the response**, not from
+this list, so a duration that gains inventory lights up without a code change, and one that loses it
+greys out the same way.

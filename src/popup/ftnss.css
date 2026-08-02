@@ -1,3 +1,19 @@
+@font-face {
+  font-family: "DM Serif Display";
+  src: url("fonts/dm-serif-display.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "DM Serif Display";
+  src: url("fonts/dm-serif-display-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
 /*
  * FTNSS design tokens, from Consumer Web's `src/app/globals.css` and `tailwind.config.ts`.
  *
@@ -39,20 +55,26 @@
    * paper; I measure 2.74:1. Both fail, so the conclusion holds and only the number is off.)
    */
 
+  --font-serif: "DM Serif Display", Georgia, "Times New Roman", serif;
   --font-display: Archivo, "Archivo Expanded", Impact, sans-serif;
   --font-body: "Space Grotesk", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Space Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /*
-   * Fonts are NOT bundled. Archivo, Space Grotesk and Space Mono are Google-licensed and
-   * self-hostable, and shipping them would be ~300KB of binary in a repo whose pitch is that you
-   * can read all of it. A CDN is not an option either: the extension makes exactly one network
-   * request, to one endpoint, and adding a font fetch would break a claim the README makes.
+   * ONE FONT IS BUNDLED, AND ONLY ONE: DM Serif Display, the brand's serif voice on Consumer Web.
+   * Roman and italic, latin subset, 35KB the pair — small enough that a repo whose pitch is "you
+   * can read all of it" is not compromised by two binaries, and it carries more brand character
+   * than every other rule in this file combined.
    *
-   * So the stacks degrade to the system, and the FTNSS character is carried by what does not
-   * depend on the typeface: 1.5px full-contrast borders, zero radius, hard-offset shadows, and
-   * 10px bold uppercase mono labels.
+   * NOT from a CDN, which is the part that matters. The extension makes exactly one network
+   * request, to one endpoint, and the README says so; a font fetch would quietly make that false.
+   * Bundled means the claim stays true and the font works offline.
+   *
+   * Archivo, Space Grotesk and Space Mono are NOT bundled — that would be ~300KB more for faces
+   * whose job here is labels and body text, which system stacks do acceptably. SIL OFL licence is
+   * alongside the files.
    */
+  --serif-tight: -0.01em;
 
   --hair: 1.5px;            /* not 1, not 2 — the site uses 1.5px throughout */
   --radius: 0;              /* the only rounding on the site is 9999px on circular icon buttons */
@@ -97,10 +119,16 @@ body {
 }
 
 .title {
-  font-family: var(--font-display);
-  font-weight: 900;
-  line-height: 0.9;
-  letter-spacing: -0.03em;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  /*
+   * 1.15, not 0.9. The site sets 0.82–0.9 because its headings are huge poster type where lines
+   * are meant to interlock; at 16–18px in a 360px popup that same value stacks lines almost on top
+   * of each other, which is the "bunched up" Jordan saw. Display leading does not survive being
+   * scaled down — it has to be reset, not inherited.
+   */
+  line-height: 1.15;
+  letter-spacing: var(--serif-tight);
   margin: 0;
 }
 
@@ -162,11 +190,16 @@ hr {
   border-bottom: var(--hair) solid var(--line);
 }
 
+/* The header carries the real mark, not type. `.wordmark` is now the view title beside it. */
+.brand { display: flex; align-items: center; gap: 9px; }
+.brand img { display: block; width: 22px; height: 22px; }
+
 .wordmark {
-  font-family: var(--font-display);
-  font-weight: 900;
-  font-size: 18px;
-  letter-spacing: 0.02em;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 19px;
+  line-height: 1.2;
+  letter-spacing: var(--serif-tight);
 }
 
 .header-actions { display: flex; gap: 6px; }
@@ -209,11 +242,11 @@ button.block { width: 100%; margin-top: 8px; }
 .gym-row:hover { background: var(--sunken); }
 
 .gym-name {
-  font-family: var(--font-display);
-  font-weight: 900;
-  font-size: 16px;
-  line-height: 1.05;
-  letter-spacing: -0.02em;
+  font-family: var(--font-serif);
+  font-weight: 400;
+  font-size: 17px;
+  line-height: 1.25;
+  letter-spacing: var(--serif-tight);
 }
 
 a.gym-row:hover .gym-name { color: var(--orange-label); }
@@ -244,3 +277,98 @@ a.gym-row:hover .gym-name { color: var(--orange-label); }
   letter-spacing: normal;
   color: var(--ink);
 }
+
+/* ------------------------------------------------------------------ filters */
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 14px;
+  border-bottom: var(--hair) solid var(--line);
+}
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 5px 8px;
+  border: var(--hair) solid var(--line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chip[aria-pressed="true"] {
+  background: var(--orange);
+  border-color: var(--orange);
+  color: var(--ink);
+}
+
+/*
+ * A filter with nothing behind it stays visible and says so, rather than vanishing. Hiding it
+ * would make the set of durations look different from one search to the next; disabling it says
+ * "this exists and nobody near you sells it", which is the true statement.
+ */
+.chip[disabled] {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* ------------------------------------------------------------------ gym row detail */
+
+.gym-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.distance {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.gym-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  margin-top: 5px;
+}
+
+.price {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--orange-label);
+}
+
+.hours {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+}
+
+/* The site marks open state with a solid square glyph, not a dot. */
+.open-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 5px;
+  vertical-align: baseline;
+  background: var(--orange);
+}
+
+.hours.closed .open-dot { background: var(--ink-soft); }

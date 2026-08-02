@@ -1,6 +1,6 @@
 {
   "name": "ftnss-browser-extension",
-  "version": "0.5.22",
+  "version": "0.5.24",
   "private": true,
   "type": "module",
   "license": "MIT",

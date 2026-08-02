@@ -13,7 +13,7 @@
 // What is NOT ported is its geometry — that card is a 5:7 poster tile with a full-bleed photo, and
 // at 360px wide it does not survive the translation. Rows instead.
 
-import { gymsNear } from '../lib/proximity.js';
+import { gymsNear, describeDistance } from '../lib/proximity.js';
 import { gymUrl } from '../lib/locale.js';
 import { DISPLAY_LANGUAGES, languagesWithFirst, languageFor } from '../lib/languages.js';
 import { loadPrefs, savePrefs } from '../lib/prefs.js';
@@ -29,6 +29,73 @@ const el = (tag, text, className) => {
 /** One at a time, and cancel the old one — same reasoning as the harness. */
 let generation = 0;
 let inFlight = null;
+
+/**
+ * The pass durations offered as filters.
+ *
+ * All six Jordan asked for, INCLUDING the two nobody currently sells. Measured against production:
+ * live gyms sell 1, 7, 30 and 365-day passes — there is no 3-day and no 90-day inventory anywhere.
+ * Showing them anyway, disabled, is the honest rendering: hiding them would make the set of
+ * durations change between searches, while a greyed chip says "this exists and nobody near you
+ * sells it", which is a true statement about coverage rather than a gap in the UI.
+ */
+const DURATIONS = Object.freeze([
+  { days: 1, label: 'Day' },
+  { days: 3, label: '3 day' },
+  { days: 7, label: '7 day' },
+  { days: 30, label: '30 day' },
+  { days: 90, label: '90 day' },
+  { days: 365, label: '365 day' },
+]);
+
+/** Not persisted: a filter is about this search, not a standing preference. */
+let selectedDays = null;
+let openNowOnly = false;
+
+/** The cheapest pass of a given duration, for the price line. */
+function cheapest(gym, days) {
+  const candidates = (gym.passes ?? []).filter((p) => days == null || p.days === days);
+  if (candidates.length === 0) return null;
+  return candidates.reduce((a, b) => (b.price < a.price ? b : a));
+}
+
+function matchesFilters(gym) {
+  if (openNowOnly && gym.hours?.open !== true) return false;
+  if (selectedDays != null && !(gym.passes ?? []).some((p) => p.days === selectedDays)) return false;
+  return true;
+}
+
+function formatPrice(pass) {
+  if (pass == null) return null;
+  // Intl handles the currency symbol and placement; a hand-rolled "$" is wrong the moment a gym
+  // prices in anything but dollars, and we already have both CAD and USD live.
+  try {
+    const money = new Intl.NumberFormat(undefined, {
+      style: 'currency',
+      currency: pass.currency,
+      maximumFractionDigits: 2,
+    }).format(pass.price);
+    return `${money} · ${pass.days === 1 ? 'day pass' : `${pass.days}-day pass`}`;
+  } catch {
+    return `${pass.price} ${pass.currency} · ${pass.days}-day pass`;
+  }
+}
+
+function hoursLine(gym) {
+  const hours = gym.hours;
+  if (hours == null) return null;
+  const line = el('div', null, hours.open ? 'hours' : 'hours closed');
+  line.appendChild(el('span', '', 'open-dot'));
+  const window = hours.opensAt && hours.closesAt ? `${hours.opensAt}–${hours.closesAt}` : null;
+  line.appendChild(
+    document.createTextNode(
+      hours.open
+        ? (window ? `Open now · til ${hours.closesAt}` : 'Open now')
+        : (window ? `Closed · ${window} today` : 'Closed today'),
+    ),
+  );
+  return line;
+}
 
 export async function renderPanel(root) {
   const mine = (generation += 1);
@@ -60,7 +127,15 @@ export async function renderPanel(root) {
 
 function header(root, prefs) {
   const bar = el('div', null, 'panel-header');
-  bar.appendChild(el('div', 'FTNSS', 'wordmark'));
+  // THE ACTUAL MARK, not the letters typed out. The icon set already ships for the toolbar, so
+  // this costs nothing and is the difference between looking like FTNSS and spelling it.
+  const brand = el('div', null, 'brand');
+  const logo = document.createElement('img');
+  logo.src = '../icons/icon-48.png';
+  logo.alt = 'FTNSS';
+  brand.appendChild(logo);
+  brand.appendChild(el('div', 'Nearby gyms', 'wordmark'));
+  bar.appendChild(brand);
 
   const right = el('div', null, 'header-actions');
   const language = languageFor(prefs.locale);
@@ -129,28 +204,104 @@ async function search(root, body, prefs) {
     return;
   }
 
-  body.replaceChildren();
-  body.appendChild(el('div', `${answer.gyms.length} nearest`, 'label'));
+  // Kept so the filters can re-render without a second request. Filtering is a view over one
+  // answer, not a reason to ask again — each search is a network call and a coordinate leaving the
+  // browser, and neither should happen because someone tapped a chip.
+  renderResults(root, body, prefs, answer.gyms, result, endpoint);
+}
 
-  for (const gym of answer.gyms) {
+function renderResults(root, body, prefs, gyms, result, endpoint) {
+  body.replaceChildren();
+
+  // --- filters -------------------------------------------------------------------------------
+  const filters = el('div', null, 'filters');
+
+  const openNow = el('button', 'Open now', 'chip');
+  openNow.setAttribute('aria-pressed', String(openNowOnly));
+  // Disabled when the server sent no hours at all — a filter that cannot work should say so rather
+  // than silently returning everything and looking broken.
+  const anyHours = gyms.some((g) => g.hours != null);
+  if (!anyHours) openNow.disabled = true;
+  openNow.addEventListener('click', () => {
+    openNowOnly = !openNowOnly;
+    renderResults(root, body, prefs, gyms, result, endpoint);
+  });
+  filters.appendChild(openNow);
+
+  for (const duration of DURATIONS) {
+    const available = gyms.some((g) => (g.passes ?? []).some((p) => p.days === duration.days));
+    const chip = el('button', duration.label, 'chip');
+    chip.setAttribute('aria-pressed', String(selectedDays === duration.days));
+    if (!available) {
+      chip.disabled = true;
+      chip.title = 'No gym near here sells this pass';
+    }
+    chip.addEventListener('click', () => {
+      selectedDays = selectedDays === duration.days ? null : duration.days;
+      renderResults(root, body, prefs, gyms, result, endpoint);
+    });
+    filters.appendChild(chip);
+  }
+  body.appendChild(filters);
+
+  // --- rows ----------------------------------------------------------------------------------
+  const shown = gyms.filter(matchesFilters);
+
+  if (shown.length === 0) {
+    body.appendChild(
+      el(
+        'div',
+        openNowOnly && selectedDays != null
+          ? 'No gym near here is open now with that pass.'
+          : openNowOnly
+            ? 'No gym near here is open right now.'
+            : 'No gym near here sells that pass.',
+        'state',
+      ),
+    );
+    body.appendChild(el('div', `${gyms.length} nearby before filtering.`, 'fineprint'));
+    return;
+  }
+
+  body.appendChild(el('div', `${shown.length} of ${gyms.length} nearby`, 'label'));
+
+  for (const gym of shown) {
     const href = gymUrl(gym.path, endpoint, prefs.locale);
-    // A row, not a card. Anchor when we can build a safe url, plain div when we cannot — never a
-    // guessed link, for the reasons in locale.js.
     const row = el(href == null ? 'div' : 'a', null, 'gym-row');
     if (href != null) {
       row.href = href;
       row.target = '_blank';
       row.rel = 'noopener noreferrer';
     }
-    row.appendChild(el('div', gym.name, 'gym-name'));
-    if (gym.city) row.appendChild(el('div', gym.city, 'label'));
+
+    const top = el('div', null, 'gym-top');
+    top.appendChild(el('div', gym.name, 'gym-name'));
+    // DISTANCE IS BACK, and it is worded as an approximation everywhere it appears — see
+    // describeDistance and DECISIONS 17 for why it was removed and why it returned.
+    const distance = describeDistance(gym.distanceMetres);
+    if (distance) top.appendChild(el('div', distance, 'distance'));
+    row.appendChild(top);
+
+    const meta = el('div', null, 'gym-meta');
+    const price = formatPrice(cheapest(gym, selectedDays));
+    if (price) meta.appendChild(el('div', price, 'price'));
+    const hours = hoursLine(gym);
+    if (hours) meta.appendChild(hours);
+    if (gym.city) meta.appendChild(el('div', gym.city, 'label'));
+    if (meta.children.length > 0) row.appendChild(meta);
+
     body.appendChild(row);
   }
 
-  // NO DISTANCES. The query point is a 250m cell, so any figure would claim precision the search
-  // never had — four attempts at wording it failed before deleting it was the honest answer. The
-  // ordering carries what matters and survives the uncertainty. (docs/DECISIONS.md.)
-  body.appendChild(el('div', 'Ordered nearest first, from an approximate location.', 'fineprint'));
+  body.appendChild(
+    el(
+      'div',
+      result.precision === 'approximate'
+        ? 'Distances are rough — this page gives only an approximate location.'
+        : 'Distances are approximate: measured from a point rounded to a 250m grid.',
+      'fineprint',
+    ),
+  );
 }
 
 async function renderLanguages(root, prefs) {
