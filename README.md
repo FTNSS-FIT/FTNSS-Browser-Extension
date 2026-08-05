@@ -1,16 +1,83 @@
-# FTNSS Browser Extension
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ftnss-logo-dark.svg">
+    <img src="docs/assets/ftnss-logo-light.svg" alt="FTNSS" width="90">
+  </picture>
+</p>
 
-A small panel that appears while you are looking at a hotel or rental listing and tells you which
-FTNSS gyms are nearby — without us ever seeing what you are browsing.
+<h1 align="center">FTNSS Browser Extension</h1>
+
+<p align="center">
+  Shows which FTNSS gyms are near a hotel you are looking at —<br>
+  without us ever seeing what you are browsing.
+</p>
+
+---
 
 > **Status: pre-release.** This repository currently holds the **phase 1 measurement harness**, not
 > the product. It exists to answer one question before anyone builds further: how often can a listing
-> page's location actually be read? Nothing here has been published to a browser store.
+> page's location actually be read? **Nothing here has been published to the Chrome Web Store**, so
+> the only way to run it is to load it unpacked — which is what the next section covers.
+
+## Install it in Chrome
+
+Five minutes, no build step, no `npm install` needed to *run* it.
+
+**1. Get the code**
+
+```bash
+git clone https://github.com/FTNSS-FIT/FTNSS-Browser-Extension.git
+```
+
+**2. Open the extensions page**
+
+Go to `chrome://extensions` — paste that into the address bar; it is not in a menu.
+
+**3. Turn on Developer mode**
+
+The toggle is in the **top right**. Nothing in the next step appears until it is on.
+
+**4. Click "Load unpacked", and choose the `src` folder**
+
+Not the repository folder — the **`src`** folder inside it. That is where `manifest.json` lives, and
+Chrome will refuse the parent folder because it cannot find one there.
+
+```
+FTNSS-Browser-Extension/src      ← choose this
+```
+
+**5. Check it loaded**
+
+An FTNSS entry appears in the list with a version number. Pin it from the puzzle-piece icon in the
+toolbar if you want it visible.
+
+### Using it
+
+Open a listing on any supported site — Airbnb, Booking.com, Expedia, Hotels.com or Vrbo — and click
+the extension. It reads the page **only when you click**, never while you browse.
+
+To see nearby gyms you also need an endpoint, which is not public yet. Without one the panel says so
+and sends nothing.
+
+### After you change the code
+
+Chrome does **not** pick up edits automatically. Return to `chrome://extensions` and press the reload
+arrow on the FTNSS card. The version number in the popup is there so you can confirm the reload
+actually took — if it has not changed, Chrome is still running the old code.
+
+### If something looks wrong
+
+| What you see | What it means |
+|---|---|
+| No FTNSS entry after "Load unpacked" | You chose the repository folder instead of `src` |
+| The extension is there but the popup is empty | The page has not finished loading; reopen the popup |
+| "Nothing to search from" | The site published no coordinates on that page — expected on some sites |
 
 ## What this is, technically
 
-**Plain JavaScript. No dependencies. No build step. No framework.** About 1,300 lines across 10
-files. It loads unpacked and runs exactly as written.
+**Plain JavaScript. No dependencies. No build step. No framework.** Around 1,600 lines of code
+across 11 files — roughly 3,200 including comments, because the comments carry the reasoning behind
+decisions that would otherwise look arbitrary. It loads unpacked and runs exactly as written.
 
 That is deliberate. A dependency tree is an extension's attack surface, and it is also source that
 anyone checking the privacy claim below would have to audit. "No build step" means what runs in your

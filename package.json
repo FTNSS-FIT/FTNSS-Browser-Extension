@@ -1,10 +1,10 @@
 {
   "name": "ftnss-browser-extension",
-  "version": "0.5.25",
+  "version": "0.5.26",
   "private": true,
   "type": "module",
   "license": "MIT",
-  "description": "FTNSS browser extension — phase 1 measurement harness",
+  "description": "FTNSS browser extension \u2014 phase 1 measurement harness",
   "scripts": {
     "test": "node --test \"tools/*.test.mjs\"",
     "report": "node tools/report.mjs",
