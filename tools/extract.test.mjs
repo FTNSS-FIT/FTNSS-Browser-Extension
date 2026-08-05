@@ -2135,3 +2135,38 @@ test('a trailing slash still matches — the missed match is the costly one', ()
   });
   assert.equal(extractFromStructuredData(doc).status, 'found');
 });
+
+test('a named listing with no coordinate yields no coordinate', () => {
+  // The canonical url matches a bare lodging node; a rival supplies the only point. Selecting the
+  // primary's point only when it HAD one let the rival's point fall through and be returned as the
+  // identified listing's location — the page told us which node it was about and we answered with
+  // a different one.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/rooms/42', name: 'The listing' })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 41.1579, longitude: -8.6291 } })),
+    ],
+  });
+  const r = extractFromStructuredData(doc);
+  assert.notEqual(r.status, 'found', 'must not answer with the rival node');
+  assert.equal(r.lat, undefined);
+});
+
+test('a named listing still answers with its OWN coordinate', () => {
+  // The other direction, so the fix above cannot be satisfied by simply never answering.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/rooms/42',
+        geo: { latitude: 38.7115, longitude: -9.1287 },
+      })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 41.1579, longitude: -8.6291 } })),
+    ],
+  });
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.lat, 38.7115);
+});

@@ -591,7 +591,18 @@ export function extractFromStructuredData(doc) {
   // suppressed the refusal and then returned the rival's coordinate — turning the check meant to
   // prevent a wrong-listing answer into the thing that produced one. (Greptile, PR #22.)
   const primaryPoint = primaries.length === 1 ? primaries[0].primaryPoint : null;
-  if (primaryPoint != null) best = primaryPoint;
+
+  // WHEN THE PAGE NAMES ITS LISTING, THAT LISTING IS THE ONLY ANSWER — INCLUDING WHEN IT HAS NONE.
+  //
+  // Selecting the primary's point only when it HAD one left the other half open: a canonical url
+  // matching a bare lodging node, with a rival supplying the only coordinate, contributed nothing
+  // to the claim count and fell through to `best` — returning the rival's point as the identified
+  // listing's location. The page had said exactly which node it was about and we answered with a
+  // different one, which is worse than the generic case this was meant to fix.
+  //
+  // A single primary is authoritative in BOTH directions: its point if it has one, and no point if
+  // it does not. (Greptile, PR #22.)
+  if (allPrimaries.length === 1) best = allPrimaries[0].primaryPoint;
 
   // A conflict between rival points still stops the read — unless the page named its listing, in
   // which case there is nothing to resolve.
