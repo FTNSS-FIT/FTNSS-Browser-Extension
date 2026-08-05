@@ -1,0 +1,25 @@
+# Gemini Code Assist — the automated reviewer for this repo as of 2026-08-05.
+#
+# Replaces Greptile, which was retired on cost (~$100/day at a 50% discount, against ~$22/month
+# here). The `.greptile/` directory is deleted in the same commit; the rules it carried live in
+# styleguide.md, which is the file Gemini is documented to read.
+#
+# WHAT IS NOT KNOWN, and is not assumed here: whether Gemini reads `AGENTS.md`. Greptile did, and
+# that conclusion does NOT carry across vendors. So `styleguide.md` restates the high-value rules
+# inline rather than referencing AGENTS.md and hoping. A rule that may or may not have loaded is
+# worse than no rule, because a generic review still looks like a review.
+
+have_fun: false
+
+code_review:
+  disable: false
+  comment_severity_threshold: MEDIUM
+  # This repo's PRs are deliberately small and cohesive. A cap that silently truncates would
+  # reproduce the failure we already had once with Codex: a partial review that looks complete.
+  max_review_comments: -1
+  pull_request_opened:
+    # Reviews are triggered when a PR is marked ready, not when it is opened — every PR here opens
+    # as a draft and is marked ready once, deliberately.
+    help: false
+    summary: true
+    code_review: true

@@ -1,26 +1,33 @@
 <!--
-  ⚠️ THIS DIRECTORY IS A SUSPECT, NOT A SETTLED FEATURE.
+  THE SUSPICION THIS FILE USED TO CARRY WAS WRONG, and the correction is worth keeping.
 
-  Greptile has run twice on this repo and posted nothing either time — no review object, no
-  comments — while posting normally on Admin-Web and Consumer-Mobile. The install was verified
-  as `repository_selection: all` with `pull_requests: write`, so it is not scoping and not
-  permissions.
+  Its predecessor (`.greptile/rules.md`) opened by naming ITSELF as the prime suspect for why
+  Greptile ran twice on this repo and posted nothing both times. The install had been verified as
+  `repository_selection: all` with `pull_requests: write`, and a per-repo config directory was the
+  one thing unique to this repo — so the config looked like the variable.
 
-  What is unique to THIS repo is this directory. Admin-Web and Consumer-Mobile have no `.greptile/`
-  config at all, and it landed here before the first run.
+  It was not. Admin established (2026-08-05) that Greptile had silently stopped reviewing because
+  the ORG HAD EXCEEDED ITS MONTHLY FLEX USAGE LIMIT, while the status check went on reporting
+  SUCCESS. The real message existed only in the body of a review object on a later PR. Every
+  re-trigger sent in the meantime was another attempt against an already-exhausted limit.
 
-  The first version of config.json carried a fabricated `$schema` URL and a `files` array, which
-  per Greptile's own documentation belongs in `files.json` rather than `config.json`. Both are now
-  corrected. If the next run still posts nothing, this directory is exonerated and the cause is on
-  Greptile's side — at which point deleting these files is the next test, not a fix.
+  The rule that survives is stronger than the one we had, and it now applies to Gemini:
+
+    A GREEN CHECK DOES NOT MEAN A REVIEW HAPPENED AT ALL. Count review objects. Never read the check.
+
+  Pass condition, unchanged: a review object exists AND the delivered count matches the claim.
 -->
 
 # Review rules — FTNSS Browser Extension
 
-`AGENTS.md` → **Code Review Rules** is the authority. This file restates the highest-value rules
-inline, because Greptile's own documentation says configuration files are read but does **not**
-promise that referenced files are auto-detected — and a rule that may or may not have loaded is
-worse than no rule, since a generic review still looks like a review.
+`AGENTS.md` → **Code Review Rules** is the authority for humans and for any agent working in this
+repo. This file restates the highest-value rules inline rather than referencing it, because
+**whether Gemini reads `AGENTS.md` is unverified.** Greptile demonstrably did — its findings cited
+the file by name — and that conclusion does not carry across vendors.
+
+This file is the one Gemini is documented to read, so this is where the rules have to be. A rule
+that may or may not have loaded is worse than no rule: a generic review still looks like a review,
+and the degradation is invisible.
 
 ## The defect classes that actually occur here
 
