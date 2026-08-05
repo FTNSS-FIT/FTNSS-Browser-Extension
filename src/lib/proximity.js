@@ -36,6 +36,8 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_PATH = 300;
 /** Room for a server that over-returns, far short of one that has stopped honouring the contract. */
 const MAX_RESPONSE_GYMS = 100;
+/** A gym sells a handful of pass durations; anything past this is a different service answering. */
+const MAX_PASSES = 12;
 
 const text = (value) =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, MAX_TEXT) : null;
@@ -83,6 +85,16 @@ function gymFrom(raw) {
     slug: text(raw.slug),
     city: text(raw.city),
     distanceMetres: Math.round(metres),
+    // PASSES, PRICE AND TODAY'S HOURS — everything the panel shows about a gym beyond its name.
+    //
+    // Rebuilt field by field like the rest. A malformed price is dropped rather than rendered,
+    // because a wrong number next to a gym is a claim about what someone will be charged.
+    passes: passesFrom(raw.passes),
+    // { open: boolean, opensAt: "06:00", closesAt: "22:00" } — already resolved to the GYM's local
+    // day by the server, which is the only place that knows its timezone. The extension must never
+    // compute this: it would use the browser's clock and zone, and a traveller looking at a hotel
+    // in another country is exactly the case that breaks.
+    hours: hoursFrom(raw.hours),
     // A SITE-RELATIVE PATH, and only ever that. The gym page url is
     // /{locale}/book/gyms/{country}/{state}/{city}/{slug} — four segments this response does not
     // carry, so the client cannot build it and should not try: url structure belongs to the site
@@ -96,6 +108,92 @@ function gymFrom(raw) {
     // a panel does not need them to render. If the server starts sending them anyway, this is where
     // they stop. (Admin's addition to the Phase 0 brief.)
   };
+}
+
+/** ISO 4217-shaped, uppercased. Never rendered raw — a currency is three letters or it is nothing. */
+const currency = (value) =>
+  typeof value === 'string' && /^[A-Za-z]{3}$/.test(value.trim()) ? value.trim().toUpperCase() : null;
+
+/**
+ * The canonical pass kinds, mirroring the DB `pass_kind` enum and Consumer Web's `PassKind`.
+ *
+ * KEYED ON KIND, NOT ON A DAY COUNT — and the difference is not cosmetic. `days` is not a field the
+ * consumer path reads at all; `kind` is what the site, mobile and partner all filter on. Keying on
+ * days meant this extension was filtering by a column the rest of the platform ignores, and my
+ * measurement of "which durations exist" answered a question about the wrong column.
+ *
+ * `weekend` is the 3-day pass. `quarter` is the 90-day one, and it exists for a legal reason rather
+ * than a product one: **Pennsylvania caps prepaid membership contracts at three months**, so a
+ * quarter pass is how a PA gym sells anything longer than a month. There is a live PA gym. Dropping
+ * it because a query returned no rows would have removed the mechanism that keeps a whole US state
+ * sellable.
+ *
+ * A legacy `90day` label also exists in the enum with no rows. It is deliberately NOT accepted here:
+ * `quarter` is canonical everywhere, and honouring both would let a stale producer populate a
+ * duration the rest of the platform cannot see.
+ */
+const PASS_KINDS = Object.freeze(['day', 'weekend', 'week', 'month', 'quarter', 'year']);
+
+/** Canonical order, shortest to longest, with quarter between month and year. */
+const kindRank = (kind) => PASS_KINDS.indexOf(kind);
+
+/**
+ * The passes a gym sells.
+ *
+ * `price` MUST be the all-in customer price the site displays — Consumer Web's `customer_price`,
+ * falling back to `price` where it has not been computed. That resolution belongs to the server,
+ * which knows which of the two is authoritative in its environment; if this ever receives the raw
+ * `price` where an all-in figure exists, the panel understates what someone will be charged, and a
+ * number that is wrong in the customer's favour is still wrong.
+ *
+ * Bounded at MAX_PASSES because this drives a filter, and sorted canonically so the panel never
+ * depends on server order for something it presents as an ordered set.
+ */
+function passesFrom(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const item of raw.slice(0, MAX_PASSES)) {
+    if (item == null || typeof item !== 'object') continue;
+    const kind = typeof item.kind === 'string' ? item.kind.trim().toLowerCase() : null;
+    if (kind == null || !PASS_KINDS.includes(kind)) continue;
+    const price = typeof item.price === 'number' ? item.price : NaN;
+    if (!Number.isFinite(price) || price < 0) continue;
+    const code = currency(item.currency);
+    if (code == null) continue;
+    out.push({ kind, price, currency: code });
+  }
+  return out.sort((a, b) => kindRank(a.kind) - kindRank(b.kind));
+}
+
+/**
+ * Today's opening hours for the gym, as the SERVER resolved them.
+ *
+ * `open` is authoritative and is not recomputed here. The gym's timezone is a fact the server has
+ * and the extension does not, and a traveller browsing a hotel in another country is precisely the
+ * case where using the browser's clock would be wrong — the same person, the same moment, a
+ * different answer depending on where they happen to be sitting.
+ *
+ * `open` IS THREE-VALUED: true, false, and null for "the server did not say". It was two-valued via
+ * `raw.open === true`, which quietly turned every unsayable answer into CLOSED — so a response with
+ * real opening times but a missing or malformed `open` flag produced a gym labelled shut and
+ * dropped from "Open now". That is this codebase's recurring defect in its purest form: a method
+ * that cannot determine the thing returning a confident negative, and the negative is the one a
+ * user acts on by walking somewhere else.
+ *
+ * Note that null and false behave IDENTICALLY under the "Open now" filter, and that is correct —
+ * not knowing is not grounds for claiming a gym is open either. They differ only in what is
+ * displayed, which is the whole point: the times are still shown, unlabelled.
+ */
+function hoursFrom(raw) {
+  if (raw == null || typeof raw !== 'object') return null;
+  const time = (value) =>
+    typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim()) ? value.trim() : null;
+  const opensAt = time(raw.opensAt);
+  const closesAt = time(raw.closesAt);
+  if (typeof raw.open !== 'boolean' && opensAt == null) return null;
+  // Discarding the whole record when `open` is absent would throw away opening times the server DID
+  // send and we can legitimately show. Keep the facts, refuse the inference.
+  return { open: typeof raw.open === 'boolean' ? raw.open : null, opensAt, closesAt };
 }
 
 /**
@@ -268,21 +366,26 @@ async function readBounded(response, controller) {
 }
 
 /**
- * A BAND, not a number. "under 500 m", "about 1.5 km".
+ * "~400 m" / "~1.1 km". Never "385 m", and never a bare number.
  *
- * The transmitted point is a 250m grid cell, so the listing can sit up to ~175m from the coordinate
- * we asked about — meaning a gym reported 100m from that point may be 275m from the hotel. Printing
- * "about 100 m" for it is a factor-of-three error stated as a fact, and it survived two earlier
- * attempts at this function: first "390 m", then "about 100 m", each less wrong than the last and
- * both claiming a resolution the query never had.
+ * THIS WAS DELETED AND HAS COME BACK, so the reasoning is worth having in one place.
  *
- * Bands of 500m are wider than the total spread the grid can introduce (~350m), so the label stays
- * true whichever corner of the cell the listing is in. That is the test a distance display has to
- * pass here: not "is it close to right", but "can the grid make it wrong".
+ * It was removed because no phrasing could be made true at a boundary: the query point is a 250m
+ * cell, so a reported 499m can be ~674m from the listing, and "under 500 m" is then simply false.
+ * Four attempts — "390 m", "about 400 m", "under 500 m", nothing — each less wrong than the last
+ * while the real problem stayed put.
+ *
+ * It is back because a gym list with no distances is a worse product, and Jordan is right that a
+ * traveller needs some sense of how far. The resolution is to stop making CATEGORICAL claims and
+ * make a marked estimate instead. "~1.1 km" asserts an approximation; "under 500 m" asserted a
+ * bound, and a bound is the thing the grid can falsify. The tilde is load-bearing, and the panel
+ * repeats it in words underneath.
+ *
+ * Rounded to 100m below a kilometre and 0.1km above — finer than the grid strictly justifies, and
+ * defensible only because nothing here is presented as exact. (docs/DECISIONS.md 17.)
  */
 export function describeDistance(metres) {
   if (!Number.isFinite(metres) || metres < 0) return '';
-  if (metres < 500) return 'under 500 m';
-  const km = Math.round(metres / 500) * 500 / 1000;
-  return `about ${km % 1 === 0 ? km : km.toFixed(1)} km`;
+  if (metres < 1000) return `~${Math.max(100, Math.round(metres / 100) * 100)} m`;
+  return `~${(metres / 1000).toFixed(1)} km`;
 }

@@ -13,7 +13,9 @@
 // GYM DATA IS NOT IN THIS REPO. The repo is public and our supply numbers are not. Put a
 // `proximity-fixture.json` next to this file — gitignored — shaped as:
 //
-//   [ { "id": "…", "name": "…", "slug": "…", "city": "…", "latitude": 43.6, "longitude": -79.4 } ]
+//   [ { "id": "…", "name": "…", "slug": "…", "city": "…", "latitude": 43.6, "longitude": -79.4,
+//       "passes": [ { "days": 1, "price": 24.5, "currency": "CAD" } ],
+//       "hours": { "open": true, "opensAt": "06:00", "closesAt": "22:00" } } ]
 //
 // Without it the server runs on three obviously-fake gyms, which is enough to exercise the panel
 // and honest about being fake.
@@ -165,6 +167,10 @@ const server = createServer((req, res) => {
       .slice(0, LIMIT)
       // Explicit column list. Note what is NOT here: latitude, longitude, contact details.
       .map(({ gym, metres }) => ({
+        // Passes and today's hours, so the filters, price line and open-now button are exercised
+        // rather than assumed. Shapes match what the real endpoint has been asked for.
+        passes: gym.passes ?? [],
+        hours: gym.hours ?? null,
         // Built the way the real site builds it, from the fixture's own slugs — so the panel's
         // link handling is exercised rather than assumed. No locale prefix: that is the client's
         // choice, and the server has no business making it.

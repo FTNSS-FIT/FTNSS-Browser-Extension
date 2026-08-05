@@ -361,3 +361,62 @@ is worse than a deliberate one. The patterns now match bare references, the allo
 name a file that exists, and a structural test checks the request body is one literal built from one
 rounded point with no spread — so the privacy claim is auditable by reading, not only by testing
 behaviour.
+
+## 17. Distances are shown, as marked estimates rather than claims
+
+**Decided 2026-08-01, reversing a removal made the same week.**
+
+Distances were deleted from the panel entirely. The reasoning was sound and is worth keeping: the
+transmitted point is a 250m grid cell, so a reported 499m can be ~674m from the listing, and
+**"under 500 m" is then simply false**. Four attempts at wording — `390 m`, `about 400 m`,
+`under 500 m`, then nothing — each less wrong than the last while the underlying problem stayed
+exactly where it was.
+
+They are back because **a list of gyms with no distances is a worse product**, and a traveller
+deciding whether to walk needs some sense of how far. That is a real cost, and deleting the feature
+paid it in full to avoid an error at a boundary.
+
+**What changed is the kind of statement being made.** `~1.1 km` asserts an approximation.
+`under 500 m` asserted a bound — and a bound is precisely what a 250m grid can falsify. The tilde is
+load-bearing, the panel repeats the caveat in words beneath the list, and a reading the extractor
+itself marked `approximate` says so more strongly.
+
+Rounded to 100m below a kilometre and 0.1km above. That is finer than the grid strictly justifies,
+and it is defensible **only** because nothing is presented as exact. If anything downstream ever
+starts treating these as measurements — sorting by them across sources, comparing them between
+gyms, showing them next to a walking time — this decision needs revisiting, because at that point
+they stop being a marked estimate and become a number people act on.
+
+## 18. Pass filters are keyed on KIND, and include kinds with no local inventory
+
+**Decided 2026-08-01.**
+
+The filter offers the six canonical `pass_kind` values: `day`, `weekend` (3-day), `week`, `month`,
+`quarter` (90-day) and `year`.
+
+**Keyed on `kind`, not on a day count**, and that correction matters more than it looks. `days` is
+not a field the consumer path reads at all — the site, mobile and partner all filter on `kind`. This
+extension originally keyed on `days`, which meant it filtered by a column the rest of the platform
+ignores, and a measurement of "which durations exist" answered a question about the wrong column.
+
+**`quarter` exists for a legal reason, not a product one.** Pennsylvania caps prepaid membership
+contracts at three months, so a 90-day pass is how a PA gym sells anything longer than a month — and
+there is a live PA gym. A query returning no rows was very nearly grounds for deleting that filter,
+which would have removed the mechanism keeping a whole US state sellable.
+
+There is also a legacy `90day` label in the DB enum with no rows. It is **refused**: `quarter` is
+canonical everywhere, and accepting both would let a stale producer populate a duration the rest of
+the platform cannot see.
+
+A kind with nothing behind it near a given search is shown **disabled** rather than hidden. Hiding them would make
+the set of durations change from one search to the next, which reads as an interface glitch; a
+greyed chip saying "no gym near here sells this pass" is a true statement about coverage.
+
+Availability is derived from **the response**, never from this list, so a kind that gains inventory
+lights up without a code change and one that loses it greys out the same way.
+
+That derivation is also what absorbed a wrong answer. A measurement of mine suggested two durations
+had no inventory anywhere; it had queried the wrong column, and one of them was legally load-bearing.
+Because the panel reads availability from the response rather than a hardcoded list, the wrong
+reading never reached a user and needed no correction in code. **A design that fails safe against
+its author's own bad data is worth more than one that is merely correct today.**

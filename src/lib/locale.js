@@ -53,6 +53,19 @@ export function activeLocale() {
 }
 
 /**
+ * The locale to use for links, given what the person has chosen.
+ *
+ * Still falls back to English rather than to the browser's language. `chrome.i18n.getUILanguage()`
+ * is one line away and deliberately not wired: it would put a German browser on translated pages
+ * nobody here has checked, silently. A person who wants German can now pick it — that is what the
+ * switcher is for, and a choice someone made is worth more than a guess we made for them.
+ */
+export function localeFor(prefs) {
+  const chosen = prefs?.locale;
+  return SUPPORTED_LOCALES.includes(chosen) ? chosen : DEFAULT_LOCALE;
+}
+
+/**
  * Turn a site-relative path into a URL on the FTNSS origin we are already talking to.
  *
  * THE PATH COMES FROM THE SERVER AND IS TREATED AS HOSTILE. It arrives over the network, and this

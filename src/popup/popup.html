@@ -1,6 +1,7 @@
 <!doctype html>
 <meta charset="utf-8" />
 <title>FTNSS measurement harness</title>
+<link rel="stylesheet" href="ftnss.css" />
 <style>
   body { font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; width: 300px; margin: 0; padding: 14px;
          background: #14161a; color: #f2f3f5; }
@@ -29,6 +30,9 @@
           color: #f2f3f5; border: 1px solid #3a4049; border-radius: 6px; padding: 5px 7px; }
 </style>
 
+<div id="panel"></div>
+
+<div id="harness" hidden>
 <h1>Measuring <span id="version" class="version"></span></h1>
 <div id="cohort" class="muted">…</div>
 
@@ -55,4 +59,6 @@
   timings, the 250m-grid point the product would send, and which site — no URL, hostname, address or
   page text.
 </p>
-<script type="module" src="popup.js"></script>
+</div>
+
+<script type="module" src="main.js"></script>
