@@ -29,11 +29,34 @@ const MAX_TEXT = 120;
 const MAX_GYMS = 6;
 /** Generous against the agreed shape, tiny against anything that could hurt. */
 const MAX_RESPONSE_BYTES = 256 * 1024;
+/**
+ * Generous for a real gym path — the longest in production today is about 70 characters — and short
+ * enough that nothing absurd is carried. Exceeding it rejects the path; see pathText.
+ */
+const MAX_PATH = 300;
 /** Room for a server that over-returns, far short of one that has stopped honouring the contract. */
 const MAX_RESPONSE_GYMS = 100;
 
 const text = (value) =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, MAX_TEXT) : null;
+
+/**
+ * A path is REJECTED when it is too long, never shortened.
+ *
+ * `text()` truncates, which is right for a name — a clipped gym name is cosmetic. It is wrong for a
+ * path, because a truncated path is still a syntactically valid path: cutting
+ * `/book/gyms/ca/ontario/toronto/some-very-long-gym-name` at the cap yields something that passes
+ * every check and points at a DIFFERENT page. Truncation turns "too long to trust" into "a
+ * confident link to the wrong gym", which is the failure this whole file is arranged to avoid.
+ *
+ * Found by self-review rather than by a reviewer — Codex is out of credits and this PR had none.
+ */
+function pathText(value) {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length > MAX_PATH) return null;
+  return trimmed;
+}
 
 /**
  * Rebuild each gym field by field.
@@ -60,6 +83,14 @@ function gymFrom(raw) {
     slug: text(raw.slug),
     city: text(raw.city),
     distanceMetres: Math.round(metres),
+    // A SITE-RELATIVE PATH, and only ever that. The gym page url is
+    // /{locale}/book/gyms/{country}/{state}/{city}/{slug} — four segments this response does not
+    // carry, so the client cannot build it and should not try: url structure belongs to the site
+    // that serves it, and a client-side builder silently 404s the day routes are reorganised.
+    //
+    // Carried as an opaque string here and validated in locale.js before it becomes a link. It is
+    // absent until the endpoint sends it, and a gym without one simply renders without a link.
+    path: pathText(raw.path),
     // NOT raw.latitude / raw.longitude, which the agreed shape does not include. Returning the
     // query point and precise targets together would make the endpoint a triangulation oracle, and
     // a panel does not need them to render. If the server starts sending them anyway, this is where
