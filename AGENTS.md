@@ -93,6 +93,24 @@ alike.
 - Each finding: `file:line`, severity, the concrete failure scenario, and a specific fix.
 - If nothing qualifies, reply with exactly: `No blocking issues found.`
 
+## Opening pull requests
+
+**Open new PRs as DRAFTS.** A non-draft PR is auto-reviewed the moment it opens, and review is billed
+per run — so opening before the work is finished spends a run on a diff you already know is not
+ready. Draft → finish → self-review → mark ready-for-review once, when the paid review is actually
+wanted. Marking ready is itself a trigger, and so is every subsequent push.
+
+**Batch fixes into one push.** Each push through a review cycle is another paid run. The target is
+one review plus one batched re-review per PR — not one per finding.
+
+Self-review before opening is now the cheapest review available and the only free one.
+
+**Caveat, recorded because it is not yet established:** that drafts are skipped is UNVERIFIED. The
+evidence for it — open drafts with no reviews — is equally consistent with nothing having triggered
+at all, which is the same shape as a verified zero that cannot distinguish a working rule from an
+inert one. Adopt the policy regardless, since it costs nothing; do not cite it as fact until a test
+with a control has run.
+
 ## Working conventions
 
 - One feature per branch, cut from `main`, small enough to review in a single pass.
