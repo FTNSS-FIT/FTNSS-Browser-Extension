@@ -1415,28 +1415,6 @@ test('two competing location claims are still refused', () => {
   assert.equal(r.reason, 'coordinates could not be attributed among several listings');
 });
 
-test('the page naming its own listing settles attribution outright', () => {
-  // The strong fix: when a lodging node's @id or url is the page's canonical url, it IS the listing
-  // and no counting is needed. Inference becomes a fact the page states.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/42',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-      // A rival location claim that would otherwise force a refusal.
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' },
-      })),
-    ],
-  });
-  const r = extractFromStructuredData(doc);
-  assert.equal(r.status, 'found');
-  assert.equal(r.lat, 38.7115);
-});
 
 test('two nodes at the same point are one candidate', () => {
   // Same building, published twice. Note what this test asserted until round 16: that several
@@ -1995,26 +1973,6 @@ test('the Airbnb shape reads again: one node with a point, several without', () 
 
 // --- Greptile review, PR #22 --------------------------------------------------------------------
 
-test('a primary match selects ITS point, not whichever came first', () => {
-  // The identity check suppressed the refusal but left `best` as the first usable coordinate in
-  // DOCUMENT ORDER. A rival node before the canonical one therefore returned the rival's
-  // coordinate — the check meant to prevent a wrong-listing answer producing one instead.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
-    'script[type="application/ld+json"]': [
-      // Rival first, deliberately.
-      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 41.1579, longitude: -8.6291 } })),
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/42',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-    ],
-  });
-  const r = extractFromStructuredData(doc);
-  assert.equal(r.status, 'found');
-  assert.equal(r.lat, 38.7115, 'must be the canonical listing, not the node that came first');
-});
 
 test('a refused coordinate still counts as a location claim', () => {
   // A node publishing null-island or out-of-range coordinates is saying "the place is here" —
@@ -2029,144 +1987,8 @@ test('a refused coordinate still counts as a location claim', () => {
   assert.equal(r.reason, 'coordinates could not be attributed among several listings');
 });
 
-test('url paths are case-sensitive; only scheme and host are folded', () => {
-  // Lowercasing the whole url made /Rooms/42 and /rooms/42 the same page. Paths are case-sensitive
-  // on most hosts, so that is a FALSE identity match — it marks a rival node as the page's own
-  // listing and hands back its coordinate, which is what the identity check exists to prevent.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://Example.test/rooms/42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/Rooms/42',
-        geo: { latitude: 41.1579, longitude: -8.6291 },
-      })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } })),
-    ],
-  });
-  // /Rooms/42 is not /rooms/42, so nothing is primary and two claims force a refusal.
-  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
 
-  // Host casing IS insensitive and must still match.
-  const hostCase = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://EXAMPLE.test/rooms/42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/42',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' } })),
-    ],
-  });
-  assert.equal(extractFromStructuredData(hostCase).status, 'found');
-});
 
-test('a query parameter can identify a listing, so it is not stripped', () => {
-  // Stripping the query made ?id=42 and ?id=99 the same url, and plenty of sites identify a listing
-  // entirely by query parameter — so a rival node became primary and its coordinate was returned as
-  // the page's. A fragment cannot identify a different resource; a query routinely does.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/listing?id=42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/listing?id=99',
-        geo: { latitude: 41.1579, longitude: -8.6291 },
-      })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } })),
-    ],
-  });
-  assert.equal(extractFromStructuredData(doc).status, 'ambiguous', 'id=99 is not id=42');
 
-  // A fragment still does not distinguish — same resource, different anchor.
-  const fragment = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/listing?id=42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/listing?id=42#photos',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' } })),
-    ],
-  });
-  assert.equal(extractFromStructuredData(fragment).status, 'found');
-});
 
-test('a page that disagrees with itself about its own listing has no primary', () => {
-  // canonical names one node, og:url another. Counting only the point-bearing primary meant the one
-  // with a coordinate was treated as authoritative and bypassed every conflict check — a page
-  // contradicting itself, resolved by picking whichever happened to carry a point.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
-    'meta[property="og:url"]': [attrNode({ content: 'https://example.test/rooms/99' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/42',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/99',
-        address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' },
-      })),
-    ],
-  });
-  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
-});
 
-test('a trailing slash still matches — the missed match is the costly one', () => {
-  // Kept deliberately against review advice. Not folding it produces a MISSED match, which falls
-  // back to counting candidates — the failure that actually happened this week and took Airbnb to
-  // zero. The false match it guards against needs a site publishing two distinct listings at urls
-  // differing only by a trailing slash.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42/' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/42',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' } })),
-    ],
-  });
-  assert.equal(extractFromStructuredData(doc).status, 'found');
-});
-
-test('a named listing with no coordinate yields no coordinate', () => {
-  // The canonical url matches a bare lodging node; a rival supplies the only point. Selecting the
-  // primary's point only when it HAD one let the rival's point fall through and be returned as the
-  // identified listing's location — the page told us which node it was about and we answered with
-  // a different one.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/rooms/42', name: 'The listing' })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 41.1579, longitude: -8.6291 } })),
-    ],
-  });
-  const r = extractFromStructuredData(doc);
-  assert.notEqual(r.status, 'found', 'must not answer with the rival node');
-  assert.equal(r.lat, undefined);
-});
-
-test('a named listing still answers with its OWN coordinate', () => {
-  // The other direction, so the fix above cannot be satisfied by simply never answering.
-  const doc = fakeDocument({
-    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
-    'script[type="application/ld+json"]': [
-      scriptNode(JSON.stringify({
-        '@type': 'Hotel',
-        '@id': 'https://example.test/rooms/42',
-        geo: { latitude: 38.7115, longitude: -9.1287 },
-      })),
-      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 41.1579, longitude: -8.6291 } })),
-    ],
-  });
-  const r = extractFromStructuredData(doc);
-  assert.equal(r.status, 'found');
-  assert.equal(r.lat, 38.7115);
-});

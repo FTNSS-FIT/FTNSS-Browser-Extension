@@ -232,91 +232,7 @@ function coordinatesIn(node) {
  * @param {Document} doc
  * @returns {{status:'found'}|{status:'not_found'}}
  */
-/**
- * The urls this page says it IS.
- *
- * Read from `link[rel=canonical]` and `og:url`, and used ONLY to compare against `@id`/`url` on
- * lodging nodes. Never stored, never transmitted, never returned — the same treatment as the
- * address values, and for the same reason: this is the page's identity, which is the one thing the
- * extension promises never to carry.
- *
- * This is what turns attribution from inference into a fact the page states. A lodging node whose
- * `@id` is the canonical url of the page you are looking at IS the listing; no counting of rival
- * candidates is needed, and none of it can be wrong.
- */
-function pageIdentity(doc) {
-  const urls = new Set();
-  const add = (value) => {
-    if (typeof value !== 'string') return;
-    const normalised = normaliseUrl(value);
-    if (normalised != null) urls.add(normalised);
-  };
-  try {
-    add(doc.querySelector?.('link[rel="canonical"]')?.getAttribute?.('href'));
-    add(doc.querySelector?.('meta[property="og:url"]')?.getAttribute?.('content'));
-  } catch {
-    // A stand-in document in tests, or a page with neither. Attribution falls back to counting.
-  }
-  return urls;
-}
-
-/**
- * Normalise a url for identity comparison.
- *
- * SCHEME AND HOST LOWERCASE, PATH LEFT ALONE. Lowercasing the whole url made `/Rooms/42` and
- * `/rooms/42` the same url — and paths are case-sensitive on most hosts, so that is two different
- * pages. A false identity match is worse than a missed one here: it marks a rival node as the
- * page's own listing and hands back its coordinate, which is the exact failure this identity check
- * exists to prevent. (Greptile, PR #22.)
- */
-function normaliseUrl(value) {
-  const trimmed = String(value ?? '').trim();
-  if (trimmed.length === 0) return null;
-  // THE FRAGMENT GOES, THE QUERY STAYS. Stripping the query made `?id=42` and `?id=99` the same
-  // url, and plenty of sites identify a listing entirely by query parameter — so a rival node
-  // became primary and its coordinate was returned as the page's. A fragment cannot identify a
-  // different resource; a query routinely does. Same principle as the path casing: a false identity
-  // match is worse than a missed one, because it produces a confident wrong answer rather than a
-  // refusal. (Greptile, PR #22.)
-  // TRAILING SLASH IS NORMALISED AWAY, DELIBERATELY, against review advice — the reasoning is
-  // recorded because the advice was reasonable and the trade is not obvious.
-  //
-  // The objection: a server MAY treat /rooms/42 and /rooms/42/ as different resources, so folding
-  // them could produce a false identity match. True, and it needs a page carrying two DIFFERENT
-  // lodging nodes whose urls differ only by a trailing slash — which would mean the site publishes
-  // two distinct listings at those two urls. That is close to unheard of.
-  //
-  // The cost of NOT folding is concrete and was measured this week: a canonical url and an `@id`
-  // differing only by a trailing slash produces a MISSED match, which falls back to counting
-  // candidates, which is what took Airbnb from 100% to 0%. Missed matches are the failure that has
-  // actually happened here; the false match requires a page nobody has produced.
-  const withoutFragment = trimmed.replace(/#.*$/, '').replace(/\/+$/, '');
-  const match = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?]+)(.*)$/.exec(withoutFragment);
-  if (match == null) return withoutFragment;
-  return match[1].toLowerCase() + match[2];
-}
-
-/** The urls a node claims for itself, from the fields schema.org uses for identity. */
-function nodeUrls(node) {
-  const out = [];
-  const add = (value) => {
-    if (typeof value === 'string') {
-      const normalised = normaliseUrl(value);
-      if (normalised != null) out.push(normalised);
-    } else if (value != null && typeof value === 'object' && typeof value['@id'] === 'string') {
-      add(value['@id']);
-    }
-  };
-  add(node['@id']);
-  add(node.url);
-  add(node.mainEntityOfPage);
-  return out;
-}
-
 export function extractFromStructuredData(doc) {
-  // NOT `identity` — the loop below already binds that name to a node's own `@id`, and shadowing it
-  // here would silently make every primary check false.
-  const pageUrls = pageIdentity(doc);
   const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
   if (scripts.length === 0) return notFound('no ld+json blocks on page');
 
@@ -397,8 +313,6 @@ export function extractFromStructuredData(doc) {
         : null;
       const nodeCoordinates = coordinatesIn(node);
       const nodeValues = addressValuesOf(node);
-      // Does the page say this node is what the page is about?
-      const isPrimary = pageUrls.size > 0 && nodeUrls(node).some((u) => pageUrls.has(u));
       const nodePoint = nodeCoordinates.found
         ? { lat: nodeCoordinates.lat, lon: nodeCoordinates.lon }
         : null;
@@ -450,11 +364,8 @@ export function extractFromStructuredData(doc) {
 
       if (candidate == null) {
         candidateList.push({
-          primary: isPrimary,
-          // The primary's OWN point, so a match selects a coordinate rather than merely permitting
-          // one. And whether this candidate offered location-shaped data we REFUSED, which is a
-          // claim about a place even though it is not a usable one.
-          primaryPoint: isPrimary ? nodePoint : null,
+          // Whether this candidate offered location-shaped data we REFUSED, which is a claim about
+          // a place even though it is not a usable one.
           unusable: nodeCoordinates.sawUnusable === true,
           ids: new Set(identity == null ? [] : [identity]),
           values: nodeValues,
@@ -465,8 +376,6 @@ export function extractFromStructuredData(doc) {
         });
       } else {
         if (identity != null) candidate.ids.add(identity);
-        candidate.primary = candidate.primary || isPrimary;
-        candidate.primaryPoint = candidate.primaryPoint ?? (isPrimary ? nodePoint : null);
         candidate.unusable = candidate.unusable || nodeCoordinates.sawUnusable === true;
         candidate.values = mergeAddressValues(candidate.values, nodeValues);
         candidate.point = candidate.point ?? nodePoint;
@@ -517,20 +426,8 @@ export function extractFromStructuredData(doc) {
   const seenCandidates = candidateList;
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
-  // IF THE PAGE'S OWN IDENTITY SIGNALS DISAGREE, NONE OF THEM IS AUTHORITATIVE.
-  //
-  // `canonical` and `og:url` can name different lodging nodes. Counting only the point-bearing
-  // primary meant that when two nodes were both marked primary and just one had a coordinate, that
-  // one was treated as the page's listing and bypassed every conflict check — a page contradicting
-  // itself about which listing it is, resolved by picking whichever happened to carry a point.
-  // (Greptile, PR #22.)
-  const allPrimaries = seenCandidates.filter((c) => c.primary);
-  const primaries = allPrimaries.length === 1
-    ? allPrimaries.filter((c) => c.primaryPoint != null)
-    : [];
 
-  const primaryWithAddress = allPrimaries.length === 1 && allPrimaries[0].address;
-  if (!primaryWithAddress && (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates))) {
+  if ((candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates))) {
     addressConflict = true;
   }
   // Recorded separately from the conflict, because it means something stronger: the PAGE is about
@@ -584,33 +481,13 @@ export function extractFromStructuredData(doc) {
   // competing location evidence. Unusable is not absent. (Greptile, PR #22.)
   const locationClaims = seenCandidates.filter((c) => c.coordinate || c.address || c.unusable).length;
 
-  // And when the page NAMES its own listing, attribution stops being inference. A lodging node
-  // whose `@id` or `url` is this page's canonical url IS the listing the person is looking at.
-  // SELECT THE PRIMARY'S POINT, do not merely permit `best`. `best` is the first usable coordinate
-  // in DOCUMENT ORDER, so a rival node appearing before the canonical one meant the identity match
-  // suppressed the refusal and then returned the rival's coordinate — turning the check meant to
-  // prevent a wrong-listing answer into the thing that produced one. (Greptile, PR #22.)
-  const primaryPoint = primaries.length === 1 ? primaries[0].primaryPoint : null;
 
-  // WHEN THE PAGE NAMES ITS LISTING, THAT LISTING IS THE ONLY ANSWER — INCLUDING WHEN IT HAS NONE.
-  //
-  // Selecting the primary's point only when it HAD one left the other half open: a canonical url
-  // matching a bare lodging node, with a rival supplying the only coordinate, contributed nothing
-  // to the claim count and fell through to `best` — returning the rival's point as the identified
-  // listing's location. The page had said exactly which node it was about and we answered with a
-  // different one, which is worse than the generic case this was meant to fix.
-  //
-  // A single primary is authoritative in BOTH directions: its point if it has one, and no point if
-  // it does not. (Greptile, PR #22.)
-  if (allPrimaries.length === 1) best = allPrimaries[0].primaryPoint;
-
-  // A conflict between rival points still stops the read — unless the page named its listing, in
-  // which case there is nothing to resolve.
-  if (best != null && primaryPoint == null && coordinateConflict) {
+  // Two usable points further apart than one building: the page describes two places.
+  if (best != null && coordinateConflict) {
     return withComponents(ambiguous('structured data described two different places'));
   }
 
-  if (best != null && primaryPoint == null && (candidateOverflow || locationClaims > 1)) {
+  if (best != null && (candidateOverflow || locationClaims > 1)) {
     return withComponents(ambiguous('coordinates could not be attributed among several listings'));
   }
 
