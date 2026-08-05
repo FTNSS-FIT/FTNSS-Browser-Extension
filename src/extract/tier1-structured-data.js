@@ -232,7 +232,51 @@ function coordinatesIn(node) {
  * @param {Document} doc
  * @returns {{status:'found'}|{status:'not_found'}}
  */
+/**
+ * The urls this page says it IS.
+ *
+ * Read from `link[rel=canonical]` and `og:url`, and used ONLY to compare against `@id`/`url` on
+ * lodging nodes. Never stored, never transmitted, never returned — the same treatment as the
+ * address values, and for the same reason: this is the page's identity, which is the one thing the
+ * extension promises never to carry.
+ *
+ * This is what turns attribution from inference into a fact the page states. A lodging node whose
+ * `@id` is the canonical url of the page you are looking at IS the listing; no counting of rival
+ * candidates is needed, and none of it can be wrong.
+ */
+function pageIdentity(doc) {
+  const urls = new Set();
+  const add = (value) => {
+    if (typeof value !== 'string') return;
+    const trimmed = value.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+    if (trimmed.length > 0) urls.add(trimmed);
+  };
+  try {
+    add(doc.querySelector?.('link[rel="canonical"]')?.getAttribute?.('href'));
+    add(doc.querySelector?.('meta[property="og:url"]')?.getAttribute?.('content'));
+  } catch {
+    // A stand-in document in tests, or a page with neither. Attribution falls back to counting.
+  }
+  return urls;
+}
+
+/** The urls a node claims for itself, from the fields schema.org uses for identity. */
+function nodeUrls(node) {
+  const out = [];
+  const add = (value) => {
+    if (typeof value === 'string') out.push(value.trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase());
+    else if (value != null && typeof value === 'object' && typeof value['@id'] === 'string') add(value['@id']);
+  };
+  add(node['@id']);
+  add(node.url);
+  add(node.mainEntityOfPage);
+  return out;
+}
+
 export function extractFromStructuredData(doc) {
+  // NOT `identity` — the loop below already binds that name to a node's own `@id`, and shadowing it
+  // here would silently make every primary check false.
+  const pageUrls = pageIdentity(doc);
   const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
   if (scripts.length === 0) return notFound('no ld+json blocks on page');
 
@@ -311,6 +355,8 @@ export function extractFromStructuredData(doc) {
         : null;
       const nodeCoordinates = coordinatesIn(node);
       const nodeValues = addressValuesOf(node);
+      // Does the page say this node is what the page is about?
+      const isPrimary = pageUrls.size > 0 && nodeUrls(node).some((u) => pageUrls.has(u));
       const nodePoint = nodeCoordinates.found
         ? { lat: nodeCoordinates.lat, lon: nodeCoordinates.lon }
         : null;
@@ -362,6 +408,7 @@ export function extractFromStructuredData(doc) {
 
       if (candidate == null) {
         candidateList.push({
+          primary: isPrimary,
           ids: new Set(identity == null ? [] : [identity]),
           values: nodeValues,
           point: nodePoint,
@@ -371,6 +418,7 @@ export function extractFromStructuredData(doc) {
         });
       } else {
         if (identity != null) candidate.ids.add(identity);
+        candidate.primary = candidate.primary || isPrimary;
         candidate.values = mergeAddressValues(candidate.values, nodeValues);
         candidate.point = candidate.point ?? nodePoint;
         candidate.address = candidate.address || nodeComponents != null;
@@ -416,7 +464,8 @@ export function extractFromStructuredData(doc) {
   const seenCandidates = candidateList;
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
-  if (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates)) {
+  const primaryWithAddress = seenCandidates.filter((c) => c.primary && c.address).length === 1;
+  if (!primaryWithAddress && (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates))) {
     addressConflict = true;
   }
   // Recorded separately from the conflict, because it means something stronger: the PAGE is about
@@ -455,7 +504,22 @@ export function extractFromStructuredData(doc) {
   // apart pass that test, and `best` is then whichever appeared first in document order, which has
   // never been a reason to think it is the one on screen. The error is bounded at a few hundred
   // metres rather than unbounded, which is exactly what made it easy to miss. (Codex, PR #10.)
-  if (best != null && (candidateOverflow || candidates > 1)) {
+  // WHICH CANDIDATES ARE ACTUALLY RIVAL LOCATION CLAIMS.
+  //
+  // Counting every lodging node took Airbnb from 100% to 0%: its pages carry several lodging nodes
+  // and only one of them has a coordinate, so `candidates > 1` refused every read. That was the
+  // exact risk recorded in #11 before this rule shipped, and it landed as predicted.
+  //
+  // The rule was answering the wrong question. "How many lodging nodes are there" is not "how many
+  // places does this page claim to be about". A node carrying neither a coordinate nor an address
+  // makes no location claim at all — it cannot be the wrong answer, because it is not an answer.
+  const locationClaims = seenCandidates.filter((c) => c.coordinate || c.address).length;
+
+  // And when the page NAMES its own listing, attribution stops being inference. A lodging node
+  // whose `@id` or `url` is this page's canonical url IS the listing the person is looking at.
+  const primaryWithPoint = seenCandidates.filter((c) => c.primary && c.coordinate).length === 1;
+
+  if (best != null && !primaryWithPoint && (candidateOverflow || locationClaims > 1)) {
     return withComponents(ambiguous('coordinates could not be attributed among several listings'));
   }
 

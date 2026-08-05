@@ -8,6 +8,12 @@ export function fakeDocument(selectorMap) {
     querySelectorAll(selector) {
       return selectorMap[selector] ?? [];
     },
+    // Tier 1 reads the page's canonical url to identify which lodging node the page is about. The
+    // stand-in has to answer that too, or every test silently exercises the no-identity fallback —
+    // which is the path that was already covered.
+    querySelector(selector) {
+      return (selectorMap[selector] ?? [])[0] ?? null;
+    },
   };
 }
 
