@@ -278,6 +278,18 @@ function normaliseUrl(value) {
   // different resource; a query routinely does. Same principle as the path casing: a false identity
   // match is worse than a missed one, because it produces a confident wrong answer rather than a
   // refusal. (Greptile, PR #22.)
+  // TRAILING SLASH IS NORMALISED AWAY, DELIBERATELY, against review advice — the reasoning is
+  // recorded because the advice was reasonable and the trade is not obvious.
+  //
+  // The objection: a server MAY treat /rooms/42 and /rooms/42/ as different resources, so folding
+  // them could produce a false identity match. True, and it needs a page carrying two DIFFERENT
+  // lodging nodes whose urls differ only by a trailing slash — which would mean the site publishes
+  // two distinct listings at those two urls. That is close to unheard of.
+  //
+  // The cost of NOT folding is concrete and was measured this week: a canonical url and an `@id`
+  // differing only by a trailing slash produces a MISSED match, which falls back to counting
+  // candidates, which is what took Airbnb from 100% to 0%. Missed matches are the failure that has
+  // actually happened here; the false match requires a page nobody has produced.
   const withoutFragment = trimmed.replace(/#.*$/, '').replace(/\/+$/, '');
   const match = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?]+)(.*)$/.exec(withoutFragment);
   if (match == null) return withoutFragment;
@@ -505,7 +517,19 @@ export function extractFromStructuredData(doc) {
   const seenCandidates = candidateList;
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
-  const primaryWithAddress = seenCandidates.filter((c) => c.primary && c.address).length === 1;
+  // IF THE PAGE'S OWN IDENTITY SIGNALS DISAGREE, NONE OF THEM IS AUTHORITATIVE.
+  //
+  // `canonical` and `og:url` can name different lodging nodes. Counting only the point-bearing
+  // primary meant that when two nodes were both marked primary and just one had a coordinate, that
+  // one was treated as the page's listing and bypassed every conflict check — a page contradicting
+  // itself about which listing it is, resolved by picking whichever happened to carry a point.
+  // (Greptile, PR #22.)
+  const allPrimaries = seenCandidates.filter((c) => c.primary);
+  const primaries = allPrimaries.length === 1
+    ? allPrimaries.filter((c) => c.primaryPoint != null)
+    : [];
+
+  const primaryWithAddress = allPrimaries.length === 1 && allPrimaries[0].address;
   if (!primaryWithAddress && (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates))) {
     addressConflict = true;
   }
@@ -562,7 +586,6 @@ export function extractFromStructuredData(doc) {
 
   // And when the page NAMES its own listing, attribution stops being inference. A lodging node
   // whose `@id` or `url` is this page's canonical url IS the listing the person is looking at.
-  const primaries = seenCandidates.filter((c) => c.primary && c.primaryPoint != null);
   // SELECT THE PRIMARY'S POINT, do not merely permit `best`. `best` is the first usable coordinate
   // in DOCUMENT ORDER, so a rival node appearing before the canonical one meant the identity match
   // suppressed the refusal and then returned the rival's coordinate — turning the check meant to

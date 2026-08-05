@@ -2093,3 +2093,45 @@ test('a query parameter can identify a listing, so it is not stripped', () => {
   });
   assert.equal(extractFromStructuredData(fragment).status, 'found');
 });
+
+test('a page that disagrees with itself about its own listing has no primary', () => {
+  // canonical names one node, og:url another. Counting only the point-bearing primary meant the one
+  // with a coordinate was treated as authoritative and bypassed every conflict check — a page
+  // contradicting itself, resolved by picking whichever happened to carry a point.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
+    'meta[property="og:url"]': [attrNode({ content: 'https://example.test/rooms/99' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/rooms/42',
+        geo: { latitude: 38.7115, longitude: -9.1287 },
+      })),
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/rooms/99',
+        address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' },
+      })),
+    ],
+  });
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a trailing slash still matches — the missed match is the costly one', () => {
+  // Kept deliberately against review advice. Not folding it produces a MISSED match, which falls
+  // back to counting candidates — the failure that actually happened this week and took Airbnb to
+  // zero. The false match it guards against needs a site publishing two distinct listings at urls
+  // differing only by a trailing slash.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42/' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/rooms/42',
+        geo: { latitude: 38.7115, longitude: -9.1287 },
+      })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' } })),
+    ],
+  });
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
