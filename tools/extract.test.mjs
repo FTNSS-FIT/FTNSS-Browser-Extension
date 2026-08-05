@@ -12,7 +12,7 @@ import {
 import { extractFromStructuredData } from '../src/extract/tier1-structured-data.js';
 import { extractFromMapLinks } from '../src/extract/tier2-map-links.js';
 import { extractFromAddressText } from '../src/extract/tier3-address-text.js';
-import { ldJsonDocument, linkDocument, fakeDocument, textNode, scriptNode, attrNode } from './fake-dom.mjs';
+import { ldJsonDocument, linkDocument, fakeDocument, textNode, elementNode, scriptNode, attrNode } from './fake-dom.mjs';
 
 // ─── geo ──────────────────────────────────────────────────────────────────────
 
@@ -449,6 +449,9 @@ test('tier 1 fails closed when structured data describes two different places', 
 });
 
 test('tier 1 still answers when several lodging objects agree', () => {
+  // ~40m apart: PR #1 decided deliberately that this is one listing geocoded twice, and round 16 of
+  // #10 kept that while removing the far looser rule it had grown into — agreement within
+  // CONFLICT_METRES, which two genuinely different hotels 200m apart also satisfy.
   const doc = ldJsonDocument(
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7118, longitude: -9.129 } }),
@@ -702,9 +705,14 @@ test('address components are captured from a lodging node with no coordinates', 
     }),
   );
   const r = extractFromStructuredData(doc);
-  assert.equal(r.status, 'not_found');
+  // `found_address`, not `not_found`. This assertion said not_found until 31 July 2026 and was
+  // pinning the bug in place: a complete address is an ANSWER, and the reason the coordinate is
+  // missing is carried alongside rather than instead of it.
+  assert.equal(r.status, 'found_address');
+  assert.equal(r.reason, 'lodging type found, no coordinates published');
   assert.deepEqual(r.addressComponents, {
     street: true,
+    streetNamesABuilding: true,
     locality: true,
     region: false,
     postalCode: true,
@@ -821,10 +829,11 @@ test('a country we cannot read does not count as usable', async () => {
   assert.equal(absent.countryParsed, false);
 });
 
-test('address components are intersected across lodging nodes, not taken from the first', () => {
-  // A page carrying a complete "related hotel" ahead of an incomplete target would otherwise be
-  // reported as coarse-geocodable when the listing itself is not — the same first-wins mistake as
-  // the coordinate tiers, in the one place it had not been fixed.
+test('a complete "related hotel" alongside a different listing is refused, not merged', () => {
+  // This test used to assert the INTERSECTION of the two — street true, postcode false — which was
+  // the right answer while components were only ever a viability statistic. Once an address became
+  // an answer the page could be read from, understating was no longer enough: a merge of two
+  // different places describes neither, so the page is now refused outright. (Codex, PR #10.)
   const doc = ldJsonDocument(
     JSON.stringify({
       '@type': 'Hotel',
@@ -832,20 +841,39 @@ test('address components are intersected across lodging nodes, not taken from th
     }),
     JSON.stringify({ '@type': 'Hotel', address: { streetAddress: 'D', addressLocality: 'E' } }),
   );
-  const components = extractFromStructuredData(doc).addressComponents;
-  assert.equal(components.street, true, 'both have a street');
-  assert.equal(components.postalCode, false, 'only one has a postcode — the answer must not overstate');
-  assert.equal(components.countryParsed, false);
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.equal(r.addressComponents, null);
 });
 
-test('two lodging nodes in different countries yield no country at all', async () => {
+test('two appearances of one listing describe one complete address between them', () => {
+  // UNIONED, because they are the same hotel. This test asserted the INTERSECTION until round 12,
+  // which dropped whatever either appearance omitted — so a candidate whose street came from the
+  // other appearance was reported as naming no building, and the page was called unreadable for
+  // publishing itself twice. Intersection is for DIFFERENT candidates; union is for one.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'London', addressRegion: 'Greater London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
+    }),
+  );
+  const components = extractFromStructuredData(doc).addressComponents;
+  assert.equal(components.street, true);
+  assert.equal(components.region, true, 'one appearance carried a region — the hotel has one');
+});
+
+test('two lodging nodes in different countries are refused', async () => {
   const doc = ldJsonDocument(
     JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'A', addressCountry: 'GB' } }),
     JSON.stringify({ '@type': 'Hotel', address: { postalCode: 'B', addressCountry: 'FR' } }),
   );
   // We do not know which listing the page is about, and a geocoder aimed at the wrong country
   // returns nothing or somewhere wrong.
-  assert.equal(extractFromStructuredData(doc).addressComponents.country, null);
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
 });
 
 test('Expedia Group brands are one family but keep their own labels', async () => {
@@ -899,4 +927,996 @@ test('sibling brands keep their family across country domains', async () => {
   // Hotels.com, not of Expedia.com.
   assert.deepEqual(cohort('www.hotels.com'), { family: 'expedia', variant: 'primary', brand: 'hotels' });
   assert.deepEqual(cohort('www.vrbo.com'), { family: 'expedia', variant: 'primary', brand: 'vrbo' });
+});
+
+// ---------------------------------------------------------------------------------------------
+// A STRUCTURED ADDRESS WITHOUT COORDINATES IS A FINDING, NOT A FAILURE.
+//
+// Measured 31 July 2026: 6 of 6 Expedia and Hotels.com pages carried a complete PostalAddress in
+// JSON-LD — street, locality, region, postcode and country all present — and every one was recorded
+// `not_found`, because `found_address` was hardcoded to tier 3 and Expedia does not expose its
+// address to tier 3's text scraper. The evidence was in the record the whole time: addressComponents
+// all true, outcome not_found. Read at face value it says Expedia publishes nothing, which is the
+// opposite of what it published.
+// ---------------------------------------------------------------------------------------------
+
+const EXPEDIA_SHAPED = JSON.stringify({
+  '@type': 'Hotel',
+  address: {
+    '@type': 'PostalAddress',
+    streetAddress: '1 Example Street',
+    addressLocality: 'Exampleton',
+    addressRegion: 'EX',
+    postalCode: 'EX1 2AB',
+    addressCountry: 'United Kingdom',
+  },
+});
+
+test('tier 1 reports a structured address when the page publishes no coordinates', () => {
+  const r = extractFromStructuredData(ldJsonDocument(EXPEDIA_SHAPED));
+  assert.equal(r.status, 'found_address');
+  assert.equal(r.tier, 1);
+  // The finding about the SITE survives the rescue: we still know why there was no coordinate.
+  assert.equal(r.reason, 'lodging type found, no coordinates published');
+  // Presence, never values. A street address IS the listing identity.
+  assert.equal(r.address, null);
+  assert.equal(r.addressComponents.postalCode, true);
+});
+
+test('a page with an address and no coordinates is not recorded as unreadable', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = ldJsonDocument(EXPEDIA_SHAPED);
+  const { result, tiers } = runExtraction(doc);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+  // Tier 3 genuinely could not read it — that stays true and stays recorded.
+  assert.equal(tiers.tier3.status, 'not_found');
+});
+
+test('an address fragment is not promoted to a place', () => {
+  // A country alone, or a street alone, resolves to nothing. Reporting found_address off either
+  // would trade a false negative for a false positive, which is not an improvement.
+  const fragment = JSON.stringify({
+    '@type': 'Hotel',
+    address: { '@type': 'PostalAddress', streetAddress: '1 Example Street' },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(fragment)).status, 'not_found');
+});
+
+test('a coordinate still beats an address, from any tier', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Ordering matters: the rescue must not let a geocodable address outrank a published point.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(EXPEDIA_SHAPED)],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 2);
+});
+
+// --- Codex review, PR #10 -----------------------------------------------------------------------
+
+test('two lodging nodes with DIFFERENT addresses are ambiguous, not one merged address', () => {
+  // Intersecting presence flags cannot tell a Lisbon hotel from a Tokyo one: both have a street, a
+  // locality, a postcode and a country, so the merge reads as one complete address and describes
+  // neither. The coordinate path already failed closed here; the address path did not.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { '@type': 'PostalAddress', streetAddress: '1 A St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { '@type': 'PostalAddress', streetAddress: '9 B St', addressLocality: 'Tokyo', postalCode: '100-0001', addressCountry: 'JP' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  // Components are dropped too — a presence map merged across two places is not evidence about
+  // either, and exporting it would put a phantom address into the geocoding measurement.
+  assert.equal(r.addressComponents, null);
+});
+
+test('the same address published twice is not a conflict', () => {
+  // Pages repeat their listing across blocks constantly. Treating that as ambiguity would fail
+  // closed on the ordinary case and measure nothing.
+  const block = JSON.stringify({
+    '@type': 'Hotel',
+    address: { '@type': 'PostalAddress', streetAddress: '1 A St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(block, block)).status, 'found_address');
+});
+
+test('a country must be published, not merely non-null', () => {
+  // `addressCountry: {}` passed a `!= null` check, so a postcode plus an empty object was reported
+  // as a complete address and promoted to found_address. Every byte here is page-controlled.
+  for (const hostile of [{}, [], 42, '   ', { name: '' }]) {
+    const doc = ldJsonDocument(
+      JSON.stringify({
+        '@type': 'Hotel',
+        address: { '@type': 'PostalAddress', postalCode: 'EX1 2AB', addressCountry: hostile },
+      }),
+    );
+    const r = extractFromStructuredData(doc);
+    assert.equal(r.status, 'not_found', `${JSON.stringify(hostile)} should not count as a country`);
+    assert.equal(r.addressComponents.countryPublished, false);
+  }
+});
+
+test('a nested Country object still counts as published', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: {
+        '@type': 'PostalAddress',
+        streetAddress: '1 Oak St',
+        postalCode: 'EX1 2AB',
+        addressLocality: 'Exampleton',
+        addressCountry: { '@type': 'Country', name: 'United Kingdom' },
+      },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.addressComponents.countryPublished, true);
+  assert.equal(r.status, 'found_address');
+});
+
+// --- Codex review round 2, PR #10 ---------------------------------------------------------------
+
+test('a formatting difference does not discard a valid coordinate', () => {
+  // The conflict check used to return immediately, so a page publishing the SAME point twice with
+  // "1 Main Street" and "1 Main St" was refused over an abbreviation. A published point does not
+  // become less true because the page abbreviates a street name.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      geo: { latitude: 38.7115, longitude: -9.1287 },
+      address: { streetAddress: '1 Main Street', addressLocality: 'Lisbon', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      geo: { latitude: 38.7115, longitude: -9.1287 },
+      address: { streetAddress: '1 Main St', addressLocality: 'Lisbon', addressCountry: 'PT' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  // The components are still dropped: they disagreed, and they feed the geocoding measurement.
+  assert.equal(r.addressComponents, null);
+});
+
+test('the same conflict still refuses the page when there is no coordinate to fall back on', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main Street', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' } }),
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('two Springfields are told apart by their region', () => {
+  // The first conflict check joined four fields into one string and omitted the region, so
+  // Springfield, Illinois and Springfield, Massachusetts compared equal and merged into one address.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Springfield', addressRegion: 'IL', addressCountry: 'US' } }),
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Springfield', addressRegion: 'MA', addressCountry: 'US' } }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a city is not a listing', () => {
+  // `country + locality` promoted "Lisbon, Portugal" to a successful read. Geocoding that returns
+  // the city centre, which is not where the hotel is — and the report would have counted it as an
+  // address we could locate. A wrong answer that looks like a success is the worst outcome here.
+  const city = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'Lisbon', addressCountry: 'PT' } }),
+  );
+  assert.equal(extractFromStructuredData(city).status, 'not_found');
+
+  // A postcode pins it; so does a street with a locality to disambiguate it.
+  const pinned = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } }),
+  );
+  assert.equal(extractFromStructuredData(pinned).status, 'found_address');
+});
+
+// --- Codex review round 3, PR #10 ---------------------------------------------------------------
+
+test('an address belonging to only ONE of several lodging candidates is not attributed', () => {
+  // The listing carries no address; a "related hotel" carries a complete one. Nothing conflicts,
+  // because only one node had anything to compare — and the related hotel's address was reported
+  // as the listing's. Unknown is compatible between two addresses; it is not compatible between an
+  // address and a node that has none, once the address is the answer.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', name: 'the listing' }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.equal(r.scope, 'address');
+  assert.equal(r.addressComponents, null);
+});
+
+test('two nodes claiming one @id while contradicting each other are refused', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // An @id is the page asserting these are one entity, and the page is the thing we are being
+  // careful about — it is attacker-controlled text like everything else here. Honouring it
+  // unconditionally let two nodes claim one identity while publishing different addresses, merge,
+  // and hand back whichever coordinate one of them carried.
+  //
+  // This test asserted the opposite until round 18, as the round-3 principle that address ambiguity
+  // must not veto a coordinate. That principle still holds — see the formatting-difference test
+  // above, where two nodes at the SAME POINT disagree about spelling and the point survives — but
+  // this fixture stopped being an example of it once an @id had to survive the evidence.
+  const node = (street) => scriptNode(JSON.stringify({
+    '@type': 'Hotel',
+    '@id': 'https://example.test/#hotel',
+    address: { streetAddress: street, addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+  }));
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [node('1 Oak St'), node('9 Elm Ave')],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('a lone map link on a page about SEVERAL listings cannot be attributed', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Two distinct lodging candidates and one pin. Tier 1 already refuses this page; letting tier 2
+  // answer it would route around the refusal, and the pin belongs to whichever of them nobody can
+  // say. This is where the round-3 principle stops: a page about more than one hotel is a
+  // different statement from a page unsure how to spell one address.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', name: 'the listing' })),
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+      })),
+    ],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('tier 3 does not rescue an address the structured data could not attribute', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({ '@type': 'Hotel', name: 'the listing' })),
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: 'A', addressCountry: 'PT' },
+      })),
+    ],
+    '[itemprop="address"]': [textNode('1 Oak St, Lisbon, 1000-001')],
+  });
+  // Scraping the rendered text shows one of the very addresses in dispute. It is not new evidence.
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('a coordinate conflict still stops the read outright', () => {
+  // The scope distinction must not weaken the original guarantee.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.71, longitude: -9.12 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 35.68, longitude: 139.69 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.notEqual(r.scope, 'address');
+});
+
+// --- Codex review round 4, PR #10 ---------------------------------------------------------------
+
+test('two unrecognised countries are two countries, not two blanks', () => {
+  // schema.org allows a nested Country. Reading an object as '' made every unrecognised country
+  // compare equal — both unknown, therefore compatible, therefore one valid address. Hungary and
+  // Romania are not the same hotel, and a geocoder aimed at the wrong country returns nothing or
+  // somewhere confidently wrong.
+  const node = (country) => JSON.stringify({
+    '@type': 'Hotel',
+    address: {
+      streetAddress: '1 Oak St',
+      addressLocality: 'Springfield',
+      addressCountry: { '@type': 'Country', name: country },
+    },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(node('Hungary'), node('Romania'))).status, 'ambiguous');
+  // The same country twice is still one place, even though we cannot name it.
+  assert.equal(extractFromStructuredData(ldJsonDocument(node('Hungary'), node('Hungary'))).status, 'found_address');
+});
+
+test('a long address is compared in full, not by its first 120 characters', () => {
+  // Capping each field before comparing merged two addresses that agreed on their opening and
+  // diverged after. The cap existed to bound page-controlled input; tier 1 already refuses an
+  // oversized block before parsing it, so the bound was buying nothing and costing a difference.
+  const long = (tail) => JSON.stringify({
+    '@type': 'Hotel',
+    address: {
+      streetAddress: `${'a'.repeat(150)} ${tail}`,
+      addressLocality: 'Springfield',
+      addressCountry: 'US',
+    },
+  });
+  assert.equal(extractFromStructuredData(ldJsonDocument(long('north'), long('south'))).status, 'ambiguous');
+});
+
+test('an address that does not name the building is an area, not a listing', () => {
+  const only = (address) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({ '@type': 'Hotel', address }))).status;
+
+  // Each of these geocodes to a point that is confidently somewhere the hotel is not, and each was
+  // accepted at some stage of this PR. A US ZIP covers several square kilometres — wider than the
+  // panel's whole search radius — so postcode-only would have looked fine in the UK and been
+  // useless across the entire US market.
+  assert.equal(only({ postalCode: '90210', addressCountry: 'US' }), 'not_found');
+  assert.equal(only({ addressLocality: 'Lisbon', addressCountry: 'PT' }), 'not_found');
+  assert.equal(only({ streetAddress: '1 Oak St', addressCountry: 'US' }), 'not_found');
+  // Still an area, just a smaller one — no building is named.
+  assert.equal(only({ addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' }), 'not_found');
+
+  // A street names the building; a locality or postcode tells this "1 Oak St" from the others.
+  assert.equal(only({ streetAddress: '1 Oak St', postalCode: '90210', addressCountry: 'US' }), 'found_address');
+  assert.equal(only({ streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' }), 'found_address');
+});
+
+// --- Codex review round 5, PR #10 ---------------------------------------------------------------
+
+const withText = (json, text) =>
+  fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(json)],
+    '[itemprop="address"]': [textNode(text)],
+  });
+
+const LISTING = JSON.stringify({
+  '@type': 'Hotel',
+  address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+});
+
+test('structured data describing a DIFFERENT address than the page prints is refused', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // The JSON-LD is a related hotel; the visible text is the listing. Tier 1 used to win this
+  // without ever being compared, recording a confident successful read of the wrong property.
+  const doc = withText(LISTING, '99 Elm Avenue, Porto, 4000-999');
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+test('the rendered street corroborates the structured one', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  const { result } = runExtraction(withText(LISTING, '1 Oak St, Lisbon 1000-001, Portugal'));
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+});
+
+test('a street rendered differently is a conflict where the postcode cannot vouch for it', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // "1 Oak Street" against a structured "1 Oak St", in Portugal. The postcode matches, but a
+  // Portuguese postcode is not a building-level fact, so it cannot stand in for the street.
+  //
+  // THIS IS THE KNOWN COST of the strict bar, recorded rather than hidden: nobody has measured how
+  // often a real page states the same street differently in its text and its JSON-LD. Over-refusing
+  // shows up as an ambiguity rate in the next export; a wrong row shows up as nothing at all.
+  assert.equal(
+    runExtraction(withText(LISTING, '1 Oak Street, Lisbon 1000-001, Portugal')).result.status,
+    'ambiguous',
+  );
+});
+
+test('the internal address values never leave the extractor', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Tier 1 attaches normalised values so the cross-tier check can run. They are a street address —
+  // the one thing DECISIONS 13 exists to keep inside the browser. Storage would drop them, but an
+  // allowlist that is the ONLY thing standing between an address and an export file is one edit
+  // away from not being.
+  const { result, tiers } = runExtraction(ldJsonDocument(LISTING));
+  assert.equal(result.status, 'found_address');
+  for (const value of [result, tiers.tier1, tiers.tier2, tiers.tier3]) {
+    assert.equal('addressValues' in value, false);
+  }
+  assert.equal(JSON.stringify({ result, tiers }).includes('Oak'), false);
+});
+
+// --- Codex review round 6, PR #10 ---------------------------------------------------------------
+
+test('a neighbouring building does not corroborate by being a substring', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // "1 Oak St" is a substring of "11 Oak St", so a plain includes() corroborated the building next
+  // door — one digit away from the listing and confidently wrong. House numbers and postcodes are
+  // exactly the short tokens where a prefix collision is likely rather than exotic.
+  assert.equal(runExtraction(withText(LISTING, '11 Oak St, Lisbon, 1000-002')).result.status, 'ambiguous');
+  // The real street still corroborates.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon')).result.status, 'found_address');
+});
+
+test('a shared locality does not corroborate an otherwise different address', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // A related hotel in the same city used to pass on its locality alone — the impostor this check
+  // exists to catch, waved through by the weakest evidence available. Which town both hotels are
+  // in is not evidence that they are the same hotel.
+  assert.equal(runExtraction(withText(LISTING, '99 Elm Avenue, Lisbon, 4000-999')).result.status, 'ambiguous');
+});
+
+test('a postcode speaks only when the structured data states no street', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Until round 17 a matching postcode rescued a read whose street the rendered text did not carry
+  // — corroborating a CONFLICTING street with a value that covers a block. Where no street was
+  // published there is nothing to conflict with, and the postcode is the best evidence available.
+  const uk = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'London', postalCode: 'EC1A 1BB', addressCountry: 'GB' },
+  });
+  assert.equal(runExtraction(withText(uk, '99 Elm Avenue, London EC1A 1BB')).result.status, 'ambiguous');
+
+  // No street published, so nothing conflicts and the postcode is all there is.
+  const noStreet = JSON.stringify({
+    '@type': 'Hotel',
+    address: { addressLocality: 'London', postalCode: 'EC1A 1BB', addressCountry: 'GB' },
+  });
+  assert.equal(runExtraction(withText(noStreet, 'Somewhere, London EC1A 1BB')).result.tier ?? null, 3,
+    'tier 1 cannot call that a place, so tier 3 answers');
+});
+
+test('a page that references its own listing is not a page describing two', () => {
+  // schema.org graphs carry the same entity twice constantly — a stub with only an @id, and the
+  // full node. Counting those as two candidates made a page disagree with itself for publishing a
+  // cross-reference. Same @id is the same entity by definition.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/#hotel' }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found_address');
+
+  // Two DIFFERENT ids, only one with an address, is still unattributable.
+  const two = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/#other' }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+  );
+  assert.equal(extractFromStructuredData(two).status, 'ambiguous');
+});
+
+// --- Codex review round 8, PR #10 ---------------------------------------------------------------
+
+test('a related hotel with coordinates is not read as the listing without them', () => {
+  // The listing publishes no point; a "related hotel" block does. Reporting the related hotel's
+  // location as the listing's is a confidently wrong location, which this project treats as worse
+  // than no answer at all. Filed as #11 to be decided against a page census; fixed here because
+  // the failure is the one the whole design is organised around avoiding.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', name: 'the listing' }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  // Its own reason, so the cost of this refusal is visible in the next export rather than inferred.
+  assert.equal(r.reason, 'coordinates could not be attributed among several listings');
+});
+
+test('two nodes at the same point are one candidate', () => {
+  // Same building, published twice. Note what this test asserted until round 16: that several
+  // DISTINCT candidates were attributable as long as their points agreed within CONFLICT_METRES.
+  // Agreement is not attribution — two different hotels 200m apart pass that, and the answer was
+  // then whichever came first in document order. The error was bounded at a few hundred metres,
+  // which is exactly what made it easy to miss.
+  const near = (lat) => JSON.stringify({ '@type': 'Hotel', geo: { latitude: lat, longitude: -9.1287 } });
+  assert.equal(extractFromStructuredData(ldJsonDocument(near(38.7115), near(38.7115))).status, 'found');
+});
+
+test('two hotels a few hundred metres apart are two hotels', () => {
+  const at = (lat, street) => JSON.stringify({
+    '@type': 'Hotel',
+    geo: { latitude: lat, longitude: -9.1287 },
+    address: { streetAddress: street, addressLocality: 'Lisbon', addressCountry: 'PT' },
+  });
+  // Inside CONFLICT_METRES, so nothing "disagrees" — and still two listings, with no way to say
+  // which one the page is about.
+  assert.equal(extractFromStructuredData(ldJsonDocument(at(38.7115, '1 Oak St'), at(38.7133, '9 Elm Ave'))).status, 'ambiguous');
+});
+
+test('a road is not a building', () => {
+  const address = (street, extra = {}) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: street, addressLocality: 'London', addressCountry: 'GB', ...extra },
+    }))).status;
+
+  // "Oxford Street" is a mile long. Counting it as an address we could locate inflates exactly the
+  // number this phase exists to produce.
+  assert.equal(address('Oxford Street'), 'not_found');
+  // A house number names the building.
+  assert.equal(address('1 Oxford Street'), 'found_address');
+  // So does a postcode, where the building is named rather than numbered.
+  assert.equal(address('The Savoy', { postalCode: 'WC2R 0EZ' }), 'found_address');
+});
+
+test('word boundaries are Unicode, not ASCII', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // `/[a-z0-9]/` classified every non-Latin character as punctuation, so a different street passed
+  // a boundary check that could not see the boundary.
+  const cn = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '中山路1号', addressLocality: '上海市', postalCode: '200000', addressCountry: 'CN' },
+  });
+  assert.equal(runExtraction(withText(cn, '新中山路1号, 上海市 200000')).result.status, 'ambiguous');
+  assert.equal(runExtraction(withText(cn, '中山路1号, 上海市 200000')).result.status, 'found_address');
+});
+
+// --- Codex review round 9, PR #10 ---------------------------------------------------------------
+
+test('the same anonymous hotel published twice is one candidate, not two', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Repeating a block without an @id is the ordinary way a site publishes the same hotel twice.
+  // Counting nodes made that look like a page about two hotels, and the round-8 attribution check
+  // then threw away a perfectly good coordinate. A regression introduced by this PR, not a
+  // pre-existing one.
+  const block = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+  });
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(block), scriptNode(block)],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 2);
+
+  // Two anonymous nodes saying DIFFERENT things are still two candidates.
+  const other = JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', postalCode: '4000-999', addressCountry: 'PT' },
+  });
+  const two = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(block), scriptNode(other)],
+    'a[href], img[src], iframe[src]': [attrNode({ href: 'https://maps.google.com/?q=38.7115,-9.1287' })],
+  });
+  assert.equal(runExtraction(two).result.status, 'ambiguous');
+});
+
+test('an anonymous stub does not split a candidate that has evidence', () => {
+  // An anonymous node carrying neither an address nor a point says nothing that could distinguish
+  // it from anything else, so it cannot be counted as a rival listing.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel' }),
+    JSON.stringify({ '@type': 'Hotel' }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  // Refused, and correctly: a stub states nothing, so nothing can establish it is the same hotel as
+  // the one carrying the point. Silence is not evidence of identity — which is why clustering needs
+  // positive shared evidence rather than mere compatibility.
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+// --- Codex review round 10, PR #10 --------------------------------------------------------------
+
+test('one hotel described twice, once with its point, is one candidate', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Keying anonymous nodes on exact address-and-coordinate JSON split the ordinary case the keying
+  // was written for: the same block published once with the point and once without. All the
+  // evidence agrees, and the attribution check threw the coordinate away anyway.
+  const address = { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' };
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address, geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', address }),
+  );
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found');
+  assert.equal(result.tier, 1);
+});
+
+test('an ordinal in a road name is not a house number', () => {
+  const street = (streetAddress, extra = {}) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress, addressLocality: 'New York', addressCountry: 'US', ...extra },
+    }))).status;
+
+  // "5th Avenue" is a road. The digit is part of its name, not a building on it.
+  assert.equal(street('5th Avenue'), 'not_found');
+  assert.equal(street('12 5th Avenue'), 'found_address');
+});
+
+test('a postcode names a building only where postcodes name buildings', () => {
+  const road = (country, postalCode) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'Oxford Street', addressLocality: 'London', postalCode, addressCountry: country },
+    }))).status;
+
+  // A UK postcode pins the building on a mile of road. A US ZIP is a neighbourhood.
+  assert.equal(road('GB', 'W1D 1BS'), 'found_address');
+  assert.equal(road('US', '90210'), 'not_found');
+});
+
+test('a CJK address keeps its house number', () => {
+  // The first version of this rule required a standalone numeric token, which is a Latin-script
+  // assumption: 中山路1号 is No. 1 Zhongshan Road with the number welded between two characters, so
+  // the rule quietly reported China as unreadable.
+  const r = extractFromStructuredData(ldJsonDocument(JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '中山路1号', addressLocality: '上海市', postalCode: '200000', addressCountry: 'CN' },
+  })));
+  assert.equal(r.status, 'found_address');
+});
+
+// --- Codex review round 11, PR #10 --------------------------------------------------------------
+
+test('a shared country is not a shared hotel', () => {
+  // Overlap checked every field, so two Portuguese hotels matched on `country` and merged into one
+  // candidate — the broadest fact on the page establishing the narrowest claim, and the attribution
+  // guard bypassed by it.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', postalCode: '4000-999', addressCountry: 'PT' },
+      geo: { latitude: 41.1579, longitude: -8.6291 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a shared locality is not a shared hotel either', () => {
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '9 Elm Ave', addressLocality: 'Lisbon', postalCode: '1000-999', addressCountry: 'PT' },
+      geo: { latitude: 38.7115, longitude: -9.1287 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a shared street still merges the same hotel described twice', () => {
+  // The rule must stay usable: a street or a postcode in common is building-level evidence, and
+  // that is what the round-10 case depends on.
+  const address = { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' };
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address, geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', address }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+// --- Codex review round 12, PR #10 --------------------------------------------------------------
+
+test('a US ZIP does not establish that two hotels are one', () => {
+  // Postcodes became identity evidence in round 11 without the market caveat that governs them
+  // everywhere else: two hotels a few streets apart share a US ZIP routinely, so a listing without
+  // coordinates merged with a related hotel that had them, and the related hotel's location was
+  // shown as a successful read.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '9 Elm Ave', addressLocality: 'Beverly Hills', postalCode: '90210', addressCountry: 'US' },
+      geo: { latitude: 34.0901, longitude: -118.4065 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a postcode does not establish identity, even a full UK one', () => {
+  // This asserted the opposite until round 17. "Building-precise" was always a claim about GEOCODING
+  // RESOLUTION, not about uniqueness, and identity needs uniqueness: a Canadian postcode covers one
+  // side of a block, a Dutch one a short run of houses. Good enough to geocode to, nowhere near
+  // good enough to say two nodes are the same hotel.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Oxford St', addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
+      geo: { latitude: 51.5155, longitude: -0.1417 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('one hotel published with an @id and again without is one candidate', () => {
+  // Named and anonymous nodes were kept in SEPARATE collections, so a page describing itself twice
+  // in two different styles counted as two hotels. There is one question here — how many distinct
+  // hotels is this page about — and it now has one mechanism.
+  const address = { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' };
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', '@id': 'https://example.test/#hotel', address, geo: { latitude: 38.7115, longitude: -9.1287 } }),
+    JSON.stringify({ '@type': 'Hotel', address }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+test('a candidate whose street arrives in a second appearance still names a building', () => {
+  // The @id case of the union: one appearance publishes the full address, another omits the street.
+  // Intersecting made streetNamesABuilding false and reported the page unreadable.
+  const doc = ldJsonDocument(
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', postalCode: '1000-001', addressCountry: 'PT' },
+    }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      '@id': 'https://example.test/#hotel',
+      address: { addressLocality: 'Lisbon', addressCountry: 'PT' },
+    }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found_address');
+  assert.equal(r.addressComponents.streetNamesABuilding, true);
+});
+
+// --- Codex review round 13, PR #10 --------------------------------------------------------------
+
+test('two hotels on the same road are not the same hotel', () => {
+  // A shared road name merged the candidates, so a related hotel's point was reported as the
+  // listing's. The same road-versus-building distinction describesAPlace makes, missing from
+  // identity.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: 'Oxford Street', addressLocality: 'London', addressCountry: 'GB' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'Oxford Street', addressLocality: 'London', postalCode: 'W1D 1BS', addressCountry: 'GB' },
+      geo: { latitude: 51.5155, longitude: -0.1417 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a street agreeing across two different cities is not corroboration', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // "1 Oak St, Lisbon" against a rendered "1 Oak St, Porto" agreed on the street and described
+  // different cities, and the read was recorded as successful.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Porto, 4000-999')).result.status, 'ambiguous');
+  // The witness can be either the locality or the postcode.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon')).result.status, 'found_address');
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, 1000-001')).result.status, 'found_address');
+});
+
+test('a deeply nested country cannot take the extraction down', () => {
+  // A page could hand us {name: {name: {name: …}}} inside a block small enough to pass the size
+  // check and blow the stack — discarding a coordinate the same node may have published.
+  // Built as a STRING rather than an object graph. A reviewer flagged that JSON.stringify would
+  // overflow on the object form before the test reached the extractor; it does not on this Node
+  // (checked: 20,000 levels serialises fine), but stack limits are an engine and platform detail,
+  // and a regression test that depends on one is testing the wrong thing.
+  const nested = `${'{"name":'.repeat(20000)}"PT"${'}'.repeat(20000)}`;
+  const doc = ldJsonDocument(
+    `{"@type":"Hotel","geo":{"latitude":38.7115,"longitude":-9.1287},` +
+    `"address":{"streetAddress":"1 Oak St","addressLocality":"Lisbon","addressCountry":${nested}}}`,
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.addressComponents.countryParsed, false);
+});
+
+// --- Codex review round 14, PR #10 --------------------------------------------------------------
+
+test('a shared street needs a witness to establish identity', () => {
+  // "1 Main St" is a real address in thousands of towns, and compatibility permits silence — so a
+  // Springfield listing and an unrelated "1 Main St" node carrying the only coordinate on the page
+  // merged, and that coordinate was reported. The same correction corroboration needed, in the
+  // other place a street was trusted alone.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main St', addressLocality: 'Springfield', addressCountry: 'US' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Main St' },
+      geo: { latitude: 41.8781, longitude: -87.6298 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('a partial postcode does not name a building', () => {
+  const uk = (postalCode) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: 'Oxford Street', addressLocality: 'London', postalCode, addressCountry: 'GB' },
+    }))).status;
+
+  // "W1" is a postal district covering a large slice of the West End. A country whose postcodes are
+  // building-precise does not make every string in its postcode field one.
+  assert.equal(uk('W1'), 'not_found');
+  assert.equal(uk('W1D 1BS'), 'found_address');
+  assert.equal(uk('w1d1bs'), 'found_address', 'formatting varies; the format does not');
+});
+
+test('a page describing hundreds of hotels is refused without doing the work', () => {
+  // Clustering compares each node against every candidate so far, and the limits allowed tens of
+  // millions of comparisons — repeated by the readiness poll every 250ms until the tab stopped
+  // responding. The bound costs nothing real: such a page is refused either way.
+  const many = Array.from({ length: 400 }, (unused, i) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: `${i} Oak St`, addressLocality: `Town${i}`, addressCountry: 'US' },
+    geo: { latitude: 40 + i / 1000, longitude: -70 },
+  }));
+  const started = performance.now();
+  const r = extractFromStructuredData(ldJsonDocument(...many));
+  assert.equal(r.status, 'ambiguous');
+  assert.ok(performance.now() - started < 500, 'must not scale with the page');
+});
+
+// --- Codex review round 15, PR #10 --------------------------------------------------------------
+
+test('a shared region is not a witness', () => {
+  // A region is a state or a county. Two hotels at "1 Main St" in different Californian cities
+  // share it, and with the locality omitted they merged — the related hotel's coordinate shown as
+  // the listing's. A witness has to narrow the claim to a building.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Main St', addressRegion: 'CA', addressCountry: 'US' } }),
+    JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress: '1 Main St', addressRegion: 'CA', addressCountry: 'US' },
+      geo: { latitude: 37.7749, longitude: -122.4194 },
+    }),
+  );
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+});
+
+test('the witness must belong to the same rendered address', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Searching the whole blob let two unrelated fragments be assembled into an agreement neither of
+  // them states: the address says Porto, and the word Lisbon appears elsewhere on the page.
+  const mixed = '1 Oak St, Porto, 4000-999 — popular destinations: Lisbon, Faro, Braga';
+  assert.equal(runExtraction(withText(LISTING, mixed)).result.status, 'ambiguous');
+  // The same tokens, this time in one address.
+  assert.equal(runExtraction(withText(LISTING, '1 Oak St, Lisbon, 1000-001')).result.status, 'found_address');
+});
+
+test('a guessed visible address cannot veto a published one', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Tier 3's last selectors are guesses: [class*="address" i] matches a newsletter block, a footer,
+  // a delivery-address form. A guess was being allowed to contradict a structured address the site
+  // published deliberately. A claim can contradict a claim; a guess cannot.
+  const guessed = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[class*="address" i]': [textNode('99 Elm Avenue, Porto, 4000-999')],
+  });
+  const { result } = runExtraction(guessed);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+
+  // An explicit one still can — that is the whole point of the cross-tier check.
+  assert.equal(
+    runExtraction(withText(LISTING, '99 Elm Avenue, Porto, 4000-999')).result.status,
+    'ambiguous',
+  );
+});
+
+// --- Codex review round 17, PR #10 --------------------------------------------------------------
+
+test('a block boundary survives into corroboration', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Text nodes were concatenated with NOTHING between them, so <div>a</div><div>b</div> arrived as
+  // one unbroken run and round 15's segmentation had nothing to segment on. It was reading a string
+  // that had already had every structural boundary erased — a fix that cannot work, rather than one
+  // that works badly.
+  const split = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[itemprop="address"]': [
+      elementNode('DIV', [
+        elementNode('DIV', ['1 Oak St, Porto, 4000-999']),
+        elementNode('DIV', ['Popular destinations Lisbon Faro Braga']),
+      ]),
+    ],
+  });
+  assert.equal(runExtraction(split).result.status, 'ambiguous');
+});
+
+test('an address split across inline spans is NOT a boundary', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // Sites mark addresses up as a run of inline spans, one per component, constantly. Treating every
+  // element boundary as a separator would split "1 Oak St" from "Lisbon" and refuse the ordinary
+  // case — which is why the boundary list is block-level tags rather than "any element".
+  const inline = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[itemprop="address"]': [
+      elementNode('DIV', [
+        elementNode('SPAN', ['1 Oak St']),
+        elementNode('SPAN', [', Lisbon']),
+        elementNode('SPAN', [' 1000-001']),
+      ]),
+    ],
+  });
+  const { result } = runExtraction(inline);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+});
+
+test('an <address> element cannot contradict structured data', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // The HTML element means contact information for the nearest article — a support number, an
+  // email, a byline — and "Support 24/7: +1 212 555 0100" passes the digit-and-length shape test.
+  // A fine last-resort SOURCE; not a strong enough claim to contradict published structured data.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    address: [textNode('Support 24/7 call +1 212 555 0100 or write to 500 Corporate Way, Dallas')],
+  });
+  const { result } = runExtraction(doc);
+  assert.equal(result.status, 'found_address');
+  assert.equal(result.tier, 1);
+});
+
+// --- Codex review round 18, PR #10 --------------------------------------------------------------
+
+test('two hotels on a numbered road are not one hotel', () => {
+  // "Route 66" carries a standalone number that identifies the ROAD, so two different hotels on it
+  // in one town looked identical to every rule that treats a number as a building. The fourth
+  // round on this question, and the first three answers were each one qualification short.
+  const on = (extra) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: 'Route 66', addressLocality: 'Springfield', addressCountry: 'US' },
+    ...extra,
+  });
+  const doc = ldJsonDocument(on({}), on({ geo: { latitude: 37.2153, longitude: -93.2982 } }));
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+
+  // A house number still merges the ordinary duplicate — which is what deleting street identity
+  // outright would have broken, and is the Booking and Expedia shape.
+  const numbered = (extra) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '1 Oak St', addressLocality: 'Springfield', addressCountry: 'US' },
+    ...extra,
+  });
+  const dup = ldJsonDocument(numbered({}), numbered({ geo: { latitude: 37.2153, longitude: -93.2982 } }));
+  assert.equal(extractFromStructuredData(dup).status, 'found');
+});
+
+test('a block boundary is emitted on the way OUT as well as in', async () => {
+  const { runExtraction } = await import('../src/extract/index.js');
+  // A block followed by an inline sibling produced one segment, because nothing marked where the
+  // block ENDED.
+  const doc = fakeDocument({
+    'script[type="application/ld+json"]': [scriptNode(LISTING)],
+    '[itemprop="address"]': [
+      elementNode('DIV', [
+        elementNode('DIV', ['1 Oak St, Porto, 4000-999']),
+        elementNode('SPAN', ['popular destinations Lisbon']),
+      ]),
+    ],
+  });
+  assert.equal(runExtraction(doc).result.status, 'ambiguous');
+});
+
+// --- Codex review round 19, PR #10 --------------------------------------------------------------
+
+test('a road number and a house number on the same street are told apart', () => {
+  const place = (streetAddress) =>
+    extractFromStructuredData(ldJsonDocument(JSON.stringify({
+      '@type': 'Hotel',
+      address: { streetAddress, addressLocality: 'Springfield', addressCountry: 'US' },
+    }))).status;
+
+  // The road's own number is not a building.
+  assert.equal(place('Route 66'), 'not_found');
+  // A house number ON that road is. Rejecting the whole string on any designator match got this
+  // exactly backwards — the two are the same mistake seen from either side.
+  assert.equal(place('123 Route 66'), 'found_address');
+
+  // And the identity half, which uses the same helper so the two cannot drift apart.
+  const dup = (extra) => JSON.stringify({
+    '@type': 'Hotel',
+    address: { streetAddress: '123 Route 66', addressLocality: 'Springfield', addressCountry: 'US' },
+    ...extra,
+  });
+  assert.equal(
+    extractFromStructuredData(ldJsonDocument(dup({}), dup({ geo: { latitude: 37.2153, longitude: -93.2982 } }))).status,
+    'found',
+  );
 });

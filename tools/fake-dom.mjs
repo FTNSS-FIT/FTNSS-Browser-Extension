@@ -23,6 +23,21 @@ export function textNode(text) {
   return { textContent: text };
 }
 
+/**
+ * An element tree, so tier 3's block-boundary handling can be exercised.
+ *
+ * `textNode` above is a stand-in with no children — fine for "what does this element say", useless
+ * for "where did the page put a boundary", which is what corroboration turns on.
+ */
+export function elementNode(tagName, children) {
+  return {
+    tagName,
+    childNodes: children.map((child) =>
+      typeof child === 'string' ? { nodeType: 3, nodeValue: child } : child,
+    ),
+  };
+}
+
 /** Tier 1 only ever asks for one selector. */
 export function ldJsonDocument(...blocks) {
   return fakeDocument({ 'script[type="application/ld+json"]': blocks.map(scriptNode) });

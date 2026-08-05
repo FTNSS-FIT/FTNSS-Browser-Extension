@@ -72,6 +72,9 @@ function sameReading(a, b) {
   return true;
 }
 
+/** A tier answered if it produced a point or an address; only tier 2 can never produce the latter. */
+const answered = (status) => status === 'found' || status === 'found_address';
+
 function describe(result) {
   if (result?.status === 'found') {
     // Two decimals whatever the classification. Three is ~100m, which is a precision claim, and no
@@ -79,7 +82,12 @@ function describe(result) {
     const tag = result.precision === 'approximate' ? 'approximate' : 'precision unverified';
     return `Tier ${result.tier} · ~${result.lat.toFixed(2)}, ${result.lon.toFixed(2)} · ${tag}`;
   }
-  if (result?.status === 'found_address') return 'Tier 3 · address only, not geocoded';
+  // `result.tier`, NOT a hardcoded 3. Tier 1 now answers with an address too, and the whole reason
+  // the operator is shown a tier is so a wrong reading can be traced to the thing that produced it.
+  // Labelling every address "Tier 3" would have made the Expedia fix unverifiable from the popup.
+  if (result?.status === 'found_address') {
+    return `Tier ${result.tier ?? '?'} · address only, not geocoded`;
+  }
   if (result?.status === 'ambiguous') return 'Ambiguous — the page disagreed with itself';
   return 'No read — could not read this page';
 }
@@ -175,8 +183,10 @@ async function render() {
   readingEl.appendChild(
     el(
       'div',
-      `t1 ${t.tier1 === 'found' ? '✓' : '·'}  t2 ${t.tier2 === 'found' ? '✓' : '·'}  t3 ${
-        t.tier3 === 'found_address' ? '✓' : '·'
+      // A tier ANSWERED if it produced either a point or an address. Checking tier 1 for 'found'
+      // alone left it showing a dot on the very pages the address path was added for.
+      `t1 ${answered(t.tier1) ? '✓' : '·'}  t2 ${answered(t.tier2) ? '✓' : '·'}  t3 ${
+        answered(t.tier3) ? '✓' : '·'
       }`,
       'muted',
     ),
@@ -246,7 +256,11 @@ async function render() {
       const latest = await readActivePage();
       if (latest == null || latest.pageToken !== reading.pageToken) return;
 
-      if (latest.result?.status !== reading.result?.status) {
+      // sameReading, not a status comparison. Tier 3 finding an address first and tier 1 catching
+      // up leaves the status identical and the TIER different, so the panel went on showing
+      // "Tier 3" while Log stored tier 1 — the operator verifying one reading and recording
+      // another. sameReading already compares tier and coordinates; it just was not being used.
+      if (!sameReading(latest, reading)) {
         pollsRemaining = MAX_POLLS;
         await render();
         return;

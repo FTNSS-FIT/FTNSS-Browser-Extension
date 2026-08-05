@@ -114,7 +114,8 @@
       // address's timing and passed an 800ms budget it had actually missed. The two are measured
       // separately because they are different events.
       // (Codex review round 21, PR #1.)
-      const status = runExtraction(document).result.status;
+      const extraction = runExtraction(document);
+      const status = extraction.result.status;
       if (status === 'found') {
         readingReadyMs = readyAt == null ? null : Math.max(0, performance.now() - readyAt);
         // The coordinate became available at some point between the previous probe and this one, so
@@ -127,7 +128,13 @@
         return;
       }
       lastProbeAt = performance.now();
-      if (status === 'found_address' && addressReadyMs == null) {
+      // TIER 3's STATUS, NOT THE AGGREGATE. This measures how long the page took to PRINT an
+      // address on screen. Tier 1 can now answer `found_address` from JSON-LD, which is present at
+      // parse time and has nothing to do with rendering — so the aggregate would have recorded a
+      // visible-address readiness of a few hundred milliseconds on pages that never rendered one at
+      // all, and the latency finding is one of the few numbers here nobody can sanity-check by eye.
+      // (Codex, PR #10.)
+      if (extraction.tiers.tier3.status === 'found_address' && addressReadyMs == null) {
         addressReadyMs = readyAt == null ? null : Math.max(0, performance.now() - readyAt);
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
