@@ -33,6 +33,7 @@ import {
   isUsableCoordinate,
 } from '../lib/geo.js';
 import { gymsNear, describeDistance } from '../lib/proximity.js';
+import { gymUrl } from '../lib/locale.js';
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -755,7 +756,24 @@ async function renderGyms() {
   for (const gym of answer.gyms) {
     const row = el('div', null, 'gym');
     const left = el('div');
-    left.appendChild(el('b', gym.name));
+    // A LINK ONLY IF ONE CAN BE BUILT SAFELY. gymUrl refuses anything that is not a site-relative
+    // path under the gym directory, and refuses a locale it cannot confirm the site serves — both
+    // failures returning null rather than a guess. A gym with no link is a small loss; a gym with
+    // the wrong link is the entire problem, because the panel is the part a person trusts.
+    const href = gymUrl(gym.path, endpoint);
+    if (href == null) {
+      left.appendChild(el('b', gym.name));
+    } else {
+      const link = document.createElement('a');
+      link.textContent = gym.name;
+      link.href = href;
+      link.target = '_blank';
+      // noopener because the opened page gets window.opener otherwise and can navigate us; noreferrer
+      // so the hotel page we were on is not announced to our own site.
+      link.rel = 'noopener noreferrer';
+      link.className = 'gymlink';
+      left.appendChild(link);
+    }
     if (gym.city) left.appendChild(el('div', gym.city, 'muted'));
     row.appendChild(left);
     // NO DISTANCE AT ALL. Not for approximate reads, not for `unknown` ones — which is every other
