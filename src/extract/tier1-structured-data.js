@@ -9,8 +9,15 @@
 // types, 40-deep nesting, a `__proto__` key, a `geo` that is a string. Nothing below trusts a shape
 // it has not checked, and nothing is copied wholesale out of the parsed object.
 
-import { found, notFound, ambiguous } from './result.js';
-import { addressComponentsOf } from './address-components.js';
+import { found, foundAddress, notFound, ambiguous } from './result.js';
+import {
+  addressComponentsOf,
+  describesAPlace,
+  addressValuesOf,
+  addressesCompatible,
+  addressesOverlap,
+  mergeAddressValues,
+} from './address-components.js';
 import { isUsableCoordinate, parseCoordinate, distanceMetres } from '../lib/geo.js';
 
 /**
@@ -57,6 +64,31 @@ const MAX_DEPTH = 12;
 // (Codex review, PR #1.)
 const MAX_SCRIPTS = 25;
 const MAX_JSON_CHARS = 512 * 1024;
+/**
+ * How many DISTINCT lodging candidates a page may describe before we stop counting.
+ *
+ * Not a performance tuning knob so much as a statement about what a listing page is. Anything past
+ * a couple of dozen distinct hotels is a search results page or a hostile one, and either way the
+ * answer is the same refusal — so the work of telling them apart is work we never need to do.
+ */
+const MAX_CANDIDATES = 24;
+/**
+ * How close two published points must be to mean "the same building", as opposed to "not obviously
+ * a contradiction".
+ *
+ * Much tighter than CONFLICT_METRES, and the difference is the point. That one answers "do these
+ * two disagree", where a few hundred metres is noise. This one answers "are these the same hotel",
+ * where a few hundred metres is a different hotel — reusing the loose threshold here merged two
+ * listings 200m apart into one candidate and handed back whichever came first.
+ *
+ * Set at a large building's footprint. A page repeating its own block usually publishes the
+ * identical coordinate, so most of this budget is spent on the case where the two copies were
+ * geocoded from different sources and land a few tens of metres apart — which PR #1 decided
+ * deliberately was still one listing. A JUDGEMENT, not a measurement: nobody has counted how far
+ * apart a real page's two copies of one hotel actually land. It sits between "float noise", which
+ * would be too tight to be useful, and CONFLICT_METRES, which is provably too loose.
+ */
+const IDENTITY_METRES = 50;
 
 /** `@type` may be a string or an array. Normalise, and ignore anything that is neither. */
 function typesOf(node) {
@@ -124,6 +156,7 @@ function* walk(root) {
 function intersectComponents(a, b) {
   return {
     street: a.street && b.street,
+    streetNamesABuilding: a.streetNamesABuilding && b.streetNamesABuilding,
     locality: a.locality && b.locality,
     region: a.region && b.region,
     postalCode: a.postalCode && b.postalCode,
@@ -132,6 +165,31 @@ function intersectComponents(a, b) {
     // Only if they agree; two different countries on one page means we do not know which listing
     // this is, and a geocoder pointed at the wrong country returns nothing or somewhere wrong.
     country: a.country === b.country ? a.country : null,
+  };
+}
+
+/**
+ * Union, for two appearances of ONE hotel.
+ *
+ * The mirror of intersectComponents and used in the opposite place: within a candidate rather than
+ * across candidates. A page that publishes its listing twice, once with the street and once with
+ * the postcode, has told us both — intersecting them there dropped whatever either omitted, and a
+ * candidate whose street came from the other appearance was reported as naming no building.
+ */
+function unionComponents(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return {
+    street: a.street || b.street,
+    streetNamesABuilding: a.streetNamesABuilding || b.streetNamesABuilding,
+    locality: a.locality || b.locality,
+    region: a.region || b.region,
+    postalCode: a.postalCode || b.postalCode,
+    countryPublished: a.countryPublished || b.countryPublished,
+    countryParsed: a.countryParsed || b.countryParsed,
+    // These appearances are the same hotel, so a country stated by either is the country. A
+    // disagreement cannot arise: contradicting countries would have stopped them clustering.
+    country: a.country ?? b.country,
   };
 }
 
@@ -185,6 +243,39 @@ export function extractFromStructuredData(doc) {
   // matters most is precisely the one where it does NOT, because that is the page that would need
   // geocoding. Presence only; see address-components.js for why.
   let addressComponents = null;
+  /**
+   * What the lodging addresses SAID, so a later one can be checked against them. Local only —
+   * compared and dropped, never returned. See addressValuesOf.
+   */
+  let addressSeen = null;
+  /** Set when two nodes state different things. Does NOT stop the coordinate search — see below. */
+  let addressConflict = false;
+  /**
+   * EVERY lodging candidate the page described, in ONE collection.
+   *
+   * This started as two — a map keyed by `@id` and a separate list of clustered anonymous nodes —
+   * and the split was itself a bug: one hotel published once with an `@id` and once without became
+   * "several listings", and a page could be refused for describing itself twice in two different
+   * styles. There is one question here, "how many distinct hotels is this page about", and it
+   * deserves one mechanism. An `@id` is not a different KIND of identity, it is stronger evidence
+   * of the same identity.
+   *
+   * A node joins a candidate when it shares an `@id` with it, or when it states BUILDING-LEVEL
+   * evidence in common with it and contradicts nothing — the same street, or the same postcode
+   * where a postcode names a building, or a point in the same building. Everything weaker was tried
+   * and let a related-hotel block in: a shared country is a shared market, a shared locality is a
+   * shared city, a shared US ZIP is a shared neighbourhood. None of them is a shared hotel.
+   *
+   * Components are UNIONED within a candidate and INTERSECTED across candidates, and the difference
+   * matters: two appearances of one hotel each publishing part of its address describe one complete
+   * address, while two different hotels describe only what they both happen to carry.
+   * (Codex, PR #10.)
+   */
+  const candidateList = [];
+  /** Set when the page described more distinct listings than MAX_CANDIDATES. */
+  let candidateOverflow = false;
+  /** Two usable coordinates further apart than one building. Only decides if no primary is found. */
+  let coordinateConflict = false;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -217,10 +308,86 @@ export function extractFromStructuredData(doc) {
       // candidate has it, so the answer can understate viability but never overstate it.
       // (Codex review, PR #8.)
       const nodeComponents = addressComponentsOf(node);
-      if (nodeComponents != null) {
-        addressComponents =
-          addressComponents == null ? nodeComponents : intersectComponents(addressComponents, nodeComponents);
+      const identity = typeof node['@id'] === 'string' && node['@id'].trim().length > 0
+        ? node['@id'].trim()
+        : null;
+      const nodeCoordinates = coordinatesIn(node);
+      const nodeValues = addressValuesOf(node);
+      const nodePoint = nodeCoordinates.found
+        ? { lat: nodeCoordinates.lat, lon: nodeCoordinates.lon }
+        : null;
+      const samePoint = (c) =>
+        c.point != null && nodePoint != null && distanceMetres(c.point, nodePoint) <= IDENTITY_METRES;
+
+      // FLAG, DO NOT RETURN. Returning here abandoned the coordinate search the moment two
+      // addresses disagreed — so a page publishing the SAME point twice with "1 Main Street" and
+      // "1 Main St" threw away a perfectly good coordinate over a formatting difference. The
+      // conflict only matters if we end up answering FROM the address; a published point does not
+      // become less true because the page abbreviates a street name. (Codex, PR #10.)
+      if (nodeValues != null) {
+        if (!addressesCompatible(addressSeen, nodeValues)) addressConflict = true;
+        addressSeen = mergeAddressValues(addressSeen, nodeValues);
       }
+
+      // BOUND THE WORK. Clustering compares each node against every candidate so far, and the
+      // existing limits allow 25 scripts of lodging nodes — tens of millions of comparisons on a
+      // hostile page, repeated by the readiness poll every 250ms until the tab stops responding.
+      // The bound costs nothing real: a page describing more than MAX_CANDIDATES distinct hotels is
+      // not a listing page, and it is already going to be refused as unattributable. Stop counting
+      // and say so. (Codex, PR #10.)
+      if (candidateList.length >= MAX_CANDIDATES) {
+        candidateOverflow = true;
+        break;
+      }
+
+      const candidate = candidateList.find((c) => {
+        // An @id is the page telling us outright that these are one entity — but the page is the
+        // thing we are being careful about. An `@id` is attacker-controlled text like everything
+        // else here, and honouring it unconditionally meant two nodes could claim one identity
+        // while publishing different addresses, merge, and hand back whichever coordinate one of
+        // them carried. A claim of identity still has to survive the evidence. (Codex, PR #10.)
+        if (identity != null && c.ids.has(identity)) {
+          return addressesCompatible(c.values, nodeValues) &&
+            (c.point == null || nodePoint == null || samePoint(c));
+        }
+        // A SHARED POINT IS THE STRONGEST EVIDENCE THERE IS, and it was being gated behind address
+        // compatibility — so two nodes at the same coordinate whose streets read "1 Main Street"
+        // and "1 Main St" failed to cluster, became two candidates, and the page was refused for
+        // publishing one hotel twice. Same building, different spelling. The spelling disagreement
+        // is still recorded, and still disqualifies the ADDRESS path; it has no business
+        // disqualifying the point.
+        if (samePoint(c)) return true;
+        if (!addressesCompatible(c.values, nodeValues)) return false;
+        if (c.point != null && nodePoint != null) return false; // different points, checked above
+        return addressesOverlap(c.values, nodeValues);
+      });
+
+      if (candidate == null) {
+        candidateList.push({
+          // Whether this candidate offered location-shaped data we REFUSED, which is a claim about
+          // a place even though it is not a usable one.
+          unusable: nodeCoordinates.sawUnusable === true,
+          ids: new Set(identity == null ? [] : [identity]),
+          values: nodeValues,
+          point: nodePoint,
+          address: nodeComponents != null,
+          coordinate: nodeCoordinates.found,
+          components: nodeComponents,
+        });
+      } else {
+        if (identity != null) candidate.ids.add(identity);
+        candidate.unusable = candidate.unusable || nodeCoordinates.sawUnusable === true;
+        candidate.values = mergeAddressValues(candidate.values, nodeValues);
+        candidate.point = candidate.point ?? nodePoint;
+        candidate.address = candidate.address || nodeComponents != null;
+        candidate.coordinate = candidate.coordinate || nodeCoordinates.found;
+        // UNION, not intersect. Two appearances of ONE hotel each carrying part of its address
+        // describe one complete address between them; intersecting them dropped whatever either
+        // omitted, and a candidate whose street came from the other appearance was then reported as
+        // naming no building — the page called unreadable for publishing itself twice.
+        candidate.components = unionComponents(candidate.components, nodeComponents);
+      }
+
       const coordinates = coordinatesIn(node);
       if (coordinates.conflicting) {
         return { ...ambiguous('structured data described two different places'), addressComponents };
@@ -242,15 +409,98 @@ export function extractFromStructuredData(doc) {
       // first in document order need not be the one on screen. Same reasoning as the map-link tier:
       // a confident coordinate for the wrong hotel is worse than no coordinate at all.
       // (Codex review round 17, PR #1.)
-      if (best != null && distanceMetres(best, geo) > CONFLICT_METRES) {
-        return ambiguous('structured data described two different places');
-      }
+      // FLAG, DO NOT RETURN — the same correction the address path needed. Returning here ended the
+      // walk before the canonical-url match could be found, so a page that NAMES its own listing was
+      // refused because some other node disagreed with it. Identity is stronger evidence than
+      // disagreement: if the page says which listing it is about, a rival's coordinate is not a
+      // contradiction, it is a different listing. Resolved after the loop, where both facts are in
+      // hand. (Greptile, PR #22.)
+      if (best != null && distanceMetres(best, geo) > CONFLICT_METRES) coordinateConflict = true;
       if (best == null) best = geo;
     }
   }
 
+  // UNATTRIBUTABLE IS AS BAD AS CONFLICTING. If some lodging candidates carry an address and
+  // others do not, we have an address and no way to say whose it is — which is exactly the state
+  // that produces a confident answer about the wrong hotel.
+  const seenCandidates = candidateList;
+  const candidates = seenCandidates.length;
+  const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
+
+  if ((candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates))) {
+    addressConflict = true;
+  }
+  // Recorded separately from the conflict, because it means something stronger: the PAGE is about
+  // more than one place. A conflict between two addresses is about which of them we believe; this
+  // is about whether any single answer can be attributed to the listing at all, and the runner
+  // needs it to judge a lone map link. (Codex, PR #10.)
+  const manyCandidates = candidates > 1 || candidateOverflow;
+
+  // INTERSECT ACROSS CANDIDATES. A component counts as available only if EVERY distinct hotel on the
+  // page has it, so the answer can understate viability but never overstate it. Within a candidate
+  // the parts were unioned; the two directions are not interchangeable. (PR #8, and #10.)
+  addressComponents = seenCandidates
+    .map((c) => c.components)
+    .filter((c) => c != null)
+    .reduce((a, b) => (a == null ? b : intersectComponents(a, b)), null);
+
+  // A merged presence map across two different places is not evidence about either, and it feeds
+  // the geocoding measurement — so it is dropped whether or not a coordinate rescued the read.
+  if (addressConflict) addressComponents = null;
+
+  const withComponents = (result) => ({ ...result, addressComponents, manyCandidates });
+
+  // THE COORDINATE HAS THE SAME ATTRIBUTION PROBLEM THE ADDRESS DID, and it was filed as #11 to be
+  // decided against a lodging-node census rather than in the dark. It is fixed here instead,
+  // because the failure it produces — the listing publishes no point, a "related hotel" block does,
+  // and we report the related hotel's location as the listing's — is a confidently wrong location,
+  // which is the outcome this project treats as worse than no answer at all.
+  //
+  // The cost is the risk #11 was written about: Airbnb reads 100% from this tier today, and if its
+  // pages carry a lodging node without geo, those reads become ambiguous. The refusal carries its
+  // own reason string so that shows up in the very next export rather than being inferred.
+  // MORE THAN ONE CANDIDATE IS MORE THAN ONE HOTEL, however close their points happen to be.
+  //
+  // This used to allow a page through when EVERY candidate published a coordinate and they agreed
+  // within CONFLICT_METRES — but agreement is not attribution. Two genuinely different hotels 200m
+  // apart pass that test, and `best` is then whichever appeared first in document order, which has
+  // never been a reason to think it is the one on screen. The error is bounded at a few hundred
+  // metres rather than unbounded, which is exactly what made it easy to miss. (Codex, PR #10.)
+  // WHICH CANDIDATES ARE ACTUALLY RIVAL LOCATION CLAIMS.
+  //
+  // Counting every lodging node took Airbnb from 100% to 0%: its pages carry several lodging nodes
+  // and only one of them has a coordinate, so `candidates > 1` refused every read. That was the
+  // exact risk recorded in #11 before this rule shipped, and it landed as predicted.
+  //
+  // The rule was answering the wrong question. "How many lodging nodes are there" is not "how many
+  // places does this page claim to be about". A node carrying neither a coordinate nor an address
+  // makes no location claim at all — it cannot be the wrong answer, because it is not an answer.
+  // A REFUSED COORDINATE IS STILL A CLAIM. A node publishing null-island, out-of-range or
+  // unparseable coordinates is saying "the place is here" — badly. Excluding it from the count let
+  // another node's usable point be returned confidently while the page was in fact offering
+  // competing location evidence. Unusable is not absent. (Greptile, PR #22.)
+  const locationClaims = seenCandidates.filter((c) => c.coordinate || c.address || c.unusable).length;
+
+
+  // Two usable points further apart than one building: the page describes two places.
+  if (best != null && coordinateConflict) {
+    return withComponents(ambiguous('structured data described two different places'));
+  }
+
+  if (best != null && (candidateOverflow || locationClaims > 1)) {
+    return withComponents(ambiguous('coordinates could not be attributed among several listings'));
+  }
+
   if (best != null) {
-    return found({
+    // EXPLICITLY attached, via the same wrapper as every other return.
+    //
+    // This used to pass `addressComponents` inside the `found()` argument, where it was silently
+    // discarded — `found()` builds a fixed shape. Harmless while nothing depended on it, and a trap
+    // now that a conflict must clear the components: anyone adding the field to `found()`'s shape
+    // would have started leaking a merged phantom address onto coordinate-bearing pages. It also
+    // means we now learn which components a site publishes even when it publishes a point, which is
+    // the question every geocoding decision turns on and was being thrown away for free.
+    return withComponents(found({
       lat: best.lat,
       lon: best.lon,
       tier: 1,
@@ -266,14 +516,55 @@ export function extractFromStructuredData(doc) {
       // building-accurate on every single listing. The person records the precision verdict.
       // (Codex review round 1, PR #1.)
       precision: 'unknown',
-      addressComponents,
-    });
+    }));
   }
 
-  const withComponents = (result) => ({ ...result, addressComponents });
   if (!parsedAny) return withComponents(notFound('ld+json present but none parsed'));
+
+  // NO COORDINATES IS NOT NO ANSWER.
+  //
+  // Reaching here with a complete PostalAddress in hand and reporting `not_found` was wrong, and
+  // wrong in the direction that costs most: it made a site that publishes addresses-without-
+  // coordinates — the Booking shape, and the shape Expedia and Hotels.com turn out to share —
+  // indistinguishable from a site we cannot read at all. Those call for opposite responses. One
+  // needs a geocoder; the other needs a different extraction strategy or dropping the site.
+  //
+  // The diagnostic reason is carried THROUGH rather than replaced. "lodging type found, no
+  // coordinates published" is the finding about the site, and it stays true and stays recorded
+  // whether or not an address rescued the read.
+  const reason = sawUnusableGeo
+    ? 'lodging type found, coordinates present but refused'
+    : sawLodgingWithoutGeo
+      ? 'lodging type found, no coordinates published'
+      : 'no lodging type in structured data';
+
+  // Only NOW does the address conflict decide anything: we are about to answer from the address.
+  if (addressConflict) {
+    return {
+      // SCOPED. This ambiguity is about the address only; a coordinate tier below is still free to
+      // answer, and the runner relies on that distinction.
+      ...ambiguous('structured data described two different places', 'address'),
+      addressComponents: null,
+      manyCandidates,
+    };
+  }
+
+  if (describesAPlace(addressComponents)) {
+    return withComponents(
+      foundAddress({
+        // `address: null` — presence, never values. See result.js.
+        source: 'ld+json.address',
+        tier: 1,
+        reason,
+        // FOR THE RUNNER'S CROSS-TIER CHECK, AND NOTHING ELSE. The runner strips this before the
+        // extraction leaves this module, so it never reaches the popup, storage or an export — see
+        // index.js. It exists because corroborating tier 1 against tier 3 needs the values, and the
+        // only alternative was to hand the same values to every caller and trust each of them.
+        addressValues: addressSeen,
+      }),
+    );
+  }
+
   // Two different findings, deliberately not collapsed into one reason.
-  if (sawUnusableGeo) return withComponents(notFound('lodging type found, coordinates present but refused'));
-  if (sawLodgingWithoutGeo) return withComponents(notFound('lodging type found, no coordinates published'));
-  return withComponents(notFound('no lodging type in structured data'));
+  return withComponents(notFound(reason));
 }

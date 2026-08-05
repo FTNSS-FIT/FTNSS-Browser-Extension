@@ -16,13 +16,22 @@ test('a gym path becomes a locale-prefixed url on the endpoint origin', () => {
   assert.equal(gymUrl(PATH, ENDPOINT), `https://ftnss.fit/en${PATH}`);
 });
 
-test('the origin comes from the endpoint, never from the response', () => {
-  // Point the extension at staging and the links follow it. More importantly, a response cannot
-  // choose where a link goes — that is the property being protected.
-  assert.equal(
-    gymUrl(PATH, 'https://staging.ftnss.example/api/proximity'),
-    `https://staging.ftnss.example/en${PATH}`,
-  );
+test('a link opens the SITE, not whatever host serves the endpoint', () => {
+  // This asserted that links follow the endpoint's origin, and real use found the flaw: with the
+  // endpoint pointed at the local stub, every gym link resolved to
+  // http://localhost:8787/en/book/gyms/… and the stub answered `extension origins only`. The link
+  // was built correctly and pointed at a machine with no website on it.
+  //
+  // Endpoint origin and site origin coincide in production and diverge everywhere else — the shape
+  // of thing that passes every test and fails the first time somebody clicks.
+  assert.equal(gymUrl(PATH, 'http://localhost:8787/api/proximity'), `https://ftnss.fit/en${PATH}`);
+  assert.equal(gymUrl(PATH, 'https://not-ftnss.example/api/proximity'), `https://ftnss.fit/en${PATH}`);
+
+  // An FTNSS host IS followed, so a real second origin still works.
+  assert.equal(gymUrl(PATH, 'https://www.ftnss.fit/api/proximity'), `https://www.ftnss.fit/en${PATH}`);
+
+  // The property that mattered is untouched: the origin is ours, and no response can choose it.
+  assert.equal(gymUrl(PATH, ENDPOINT), `https://ftnss.fit/en${PATH}`);
 });
 
 test('nothing that is not a site-relative gym path becomes a link', () => {
@@ -60,6 +69,13 @@ test('an unsupported locale produces no link rather than a 404', () => {
 
 test('a malformed endpoint yields no link', () => {
   assert.equal(gymUrl(PATH, 'not a url'), null);
+});
+
+test('a hostile path is still refused whatever the endpoint', () => {
+  // The site-origin fallback must not become a way to smuggle a path — the path checks run first
+  // and independently.
+  assert.equal(gymUrl('//evil.example/login', 'http://localhost:8787/api/proximity'), null);
+  assert.equal(gymUrl('https://evil.example', 'https://ftnss.fit/api/proximity'), null);
 });
 
 test('this build is English, and the plumbing for more is real', () => {

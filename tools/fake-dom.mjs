@@ -8,6 +8,11 @@ export function fakeDocument(selectorMap) {
     querySelectorAll(selector) {
       return selectorMap[selector] ?? [];
     },
+    // Kept though tier 1 no longer uses it — tier 3 and future readers may, and a stand-in that
+    // answers one query shape and not the other is a trap.
+    querySelector(selector) {
+      return (selectorMap[selector] ?? [])[0] ?? null;
+    },
   };
 }
 
@@ -21,6 +26,21 @@ export function attrNode(attrs) {
 
 export function textNode(text) {
   return { textContent: text };
+}
+
+/**
+ * An element tree, so tier 3's block-boundary handling can be exercised.
+ *
+ * `textNode` above is a stand-in with no children — fine for "what does this element say", useless
+ * for "where did the page put a boundary", which is what corroboration turns on.
+ */
+export function elementNode(tagName, children) {
+  return {
+    tagName,
+    childNodes: children.map((child) =>
+      typeof child === 'string' ? { nodeType: 3, nodeValue: child } : child,
+    ),
+  };
 }
 
 /** Tier 1 only ever asks for one selector. */
