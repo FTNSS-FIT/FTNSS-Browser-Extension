@@ -33,4 +33,19 @@ async function start() {
   await renderPanel(root);
 }
 
-void start();
+/*
+ * A POPUP THAT THROWS SHOWS NOTHING AT ALL, which is the one failure a user cannot act on or
+ * report — it looks identical to the extension being broken, uninstalled, or having found no gyms.
+ * Anything that escapes start() lands here and says so instead. There is no error surface in a
+ * popup otherwise: no console anyone will open, no page to reload.
+ */
+void start().catch(() => {
+  const root = document.getElementById('panel');
+  if (root == null) return;
+  root.hidden = false;
+  root.replaceChildren();
+  const message = document.createElement('div');
+  message.className = 'panel-body';
+  message.textContent = 'Something went wrong opening this panel. Closing and reopening it usually clears it.';
+  root.appendChild(message);
+});
