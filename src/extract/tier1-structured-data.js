@@ -272,9 +272,15 @@ function pageIdentity(doc) {
 function normaliseUrl(value) {
   const trimmed = String(value ?? '').trim();
   if (trimmed.length === 0) return null;
-  const withoutQuery = trimmed.replace(/[?#].*$/, '').replace(/\/+$/, '');
-  const match = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/]+)(.*)$/.exec(withoutQuery);
-  if (match == null) return withoutQuery;
+  // THE FRAGMENT GOES, THE QUERY STAYS. Stripping the query made `?id=42` and `?id=99` the same
+  // url, and plenty of sites identify a listing entirely by query parameter — so a rival node
+  // became primary and its coordinate was returned as the page's. A fragment cannot identify a
+  // different resource; a query routinely does. Same principle as the path casing: a false identity
+  // match is worse than a missed one, because it produces a confident wrong answer rather than a
+  // refusal. (Greptile, PR #22.)
+  const withoutFragment = trimmed.replace(/#.*$/, '').replace(/\/+$/, '');
+  const match = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?]+)(.*)$/.exec(withoutFragment);
+  if (match == null) return withoutFragment;
   return match[1].toLowerCase() + match[2];
 }
 

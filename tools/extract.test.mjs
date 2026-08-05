@@ -2061,3 +2061,35 @@ test('url paths are case-sensitive; only scheme and host are folded', () => {
   });
   assert.equal(extractFromStructuredData(hostCase).status, 'found');
 });
+
+test('a query parameter can identify a listing, so it is not stripped', () => {
+  // Stripping the query made ?id=42 and ?id=99 the same url, and plenty of sites identify a listing
+  // entirely by query parameter — so a rival node became primary and its coordinate was returned as
+  // the page's. A fragment cannot identify a different resource; a query routinely does.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/listing?id=42' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/listing?id=99',
+        geo: { latitude: 41.1579, longitude: -8.6291 },
+      })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } })),
+    ],
+  });
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous', 'id=99 is not id=42');
+
+  // A fragment still does not distinguish — same resource, different anchor.
+  const fragment = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/listing?id=42' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/listing?id=42#photos',
+        geo: { latitude: 38.7115, longitude: -9.1287 },
+      })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' } })),
+    ],
+  });
+  assert.equal(extractFromStructuredData(fragment).status, 'found');
+});
