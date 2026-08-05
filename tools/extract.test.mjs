@@ -1992,3 +1992,72 @@ test('the Airbnb shape reads again: one node with a point, several without', () 
   assert.equal(r.status, 'found');
   assert.equal(r.lat, 43.6645);
 });
+
+// --- Greptile review, PR #22 --------------------------------------------------------------------
+
+test('a primary match selects ITS point, not whichever came first', () => {
+  // The identity check suppressed the refusal but left `best` as the first usable coordinate in
+  // DOCUMENT ORDER. A rival node before the canonical one therefore returned the rival's
+  // coordinate — the check meant to prevent a wrong-listing answer producing one instead.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://example.test/rooms/42' })],
+    'script[type="application/ld+json"]': [
+      // Rival first, deliberately.
+      scriptNode(JSON.stringify({ '@type': 'Hotel', geo: { latitude: 41.1579, longitude: -8.6291 } })),
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/rooms/42',
+        geo: { latitude: 38.7115, longitude: -9.1287 },
+      })),
+    ],
+  });
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.lat, 38.7115, 'must be the canonical listing, not the node that came first');
+});
+
+test('a refused coordinate still counts as a location claim', () => {
+  // A node publishing null-island or out-of-range coordinates is saying "the place is here" —
+  // badly. Excluding it from the count let another node's usable point be returned confidently
+  // while the page was in fact offering competing location evidence. Unusable is not absent.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 0, longitude: 0 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.equal(r.reason, 'coordinates could not be attributed among several listings');
+});
+
+test('url paths are case-sensitive; only scheme and host are folded', () => {
+  // Lowercasing the whole url made /Rooms/42 and /rooms/42 the same page. Paths are case-sensitive
+  // on most hosts, so that is a FALSE identity match — it marks a rival node as the page's own
+  // listing and hands back its coordinate, which is what the identity check exists to prevent.
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://Example.test/rooms/42' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/Rooms/42',
+        geo: { latitude: 41.1579, longitude: -8.6291 },
+      })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } })),
+    ],
+  });
+  // /Rooms/42 is not /rooms/42, so nothing is primary and two claims force a refusal.
+  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+
+  // Host casing IS insensitive and must still match.
+  const hostCase = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://EXAMPLE.test/rooms/42' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://example.test/rooms/42',
+        geo: { latitude: 38.7115, longitude: -9.1287 },
+      })),
+      scriptNode(JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '9 Elm Ave', addressLocality: 'Porto', addressCountry: 'PT' } })),
+    ],
+  });
+  assert.equal(extractFromStructuredData(hostCase).status, 'found');
+});
