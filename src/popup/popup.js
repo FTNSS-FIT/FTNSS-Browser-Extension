@@ -33,6 +33,7 @@ import {
   isUsableCoordinate,
 } from '../lib/geo.js';
 import { gymsNear, describeDistance } from '../lib/proximity.js';
+import { gymUrl } from '../lib/locale.js';
 
 const readingEl = document.getElementById('reading');
 const controlsEl = document.getElementById('controls');
@@ -140,13 +141,26 @@ async function render() {
     statusEl.appendChild(el('span', pendingNotice, 'warn'));
     pendingNotice = null;
   }
-  // Read the page as it is right now, retrying while the content script may still be attaching.
+  // START THE READ, DO NOT WAIT FOR IT.
+  //
+  // The retry budget below is 9 seconds, sized for the slowest content-script attachment actually
+  // measured — 5.8s on a Booking page. Awaiting it here meant the popup rendered NOTHING for those
+  // 9 seconds on any page where the script never attaches at all, which is every page that is not a
+  // listing: a new tab, GitHub, anything. The common case was paying the worst case's budget, and
+  // the symptom was a popup that looked frozen and was simply waiting.
+  //
+  // The budget is right and the awaiting was wrong. Everything below paints straight away and the
+  // reading fills itself in when it arrives — which also means a slow Booking page now shows its
+  // gyms panel and its record count immediately instead of a blank rectangle.
   readingEl.className = 'muted';
   readingEl.textContent = 'reading the page…';
-  // Long enough to cover the SLOWEST attachment actually measured — 5.8 seconds on a Booking page,
-  // where 12 attempts at 300ms covered only 3.3 and gave up while the page was still coming up. A
-  // retry budget shorter than the thing it retries for is a retry that reports a false negative.
-  let reading = await readActivePage({ attempts: 30, intervalMs: 300 });
+  const readingPromise = readActivePage({ attempts: 30, intervalMs: 300 });
+
+  // The rest of the popup does not depend on the page, so it should never wait on it.
+  await refreshCount();
+  void renderGymsIdle();
+
+  let reading = await readingPromise;
 
   if (reading == null) {
     readingEl.className = 'muted';
@@ -155,7 +169,7 @@ async function render() {
     // person holding the instrument.
     readingEl.textContent =
       'Nothing here to read. Either this is not a listing on a site we measure, or the page is still loading — reload and try again.';
-    await refreshCount();
+    // Count and gyms panel are already on screen — painted before this read was awaited.
     return;
   }
 
@@ -756,7 +770,24 @@ async function renderGyms() {
   for (const gym of answer.gyms) {
     const row = el('div', null, 'gym');
     const left = el('div');
-    left.appendChild(el('b', gym.name));
+    // A LINK ONLY IF ONE CAN BE BUILT SAFELY. gymUrl refuses anything that is not a site-relative
+    // path under the gym directory, and refuses a locale it cannot confirm the site serves — both
+    // failures returning null rather than a guess. A gym with no link is a small loss; a gym with
+    // the wrong link is the entire problem, because the panel is the part a person trusts.
+    const href = gymUrl(gym.path, endpoint);
+    if (href == null) {
+      left.appendChild(el('b', gym.name));
+    } else {
+      const link = document.createElement('a');
+      link.textContent = gym.name;
+      link.href = href;
+      link.target = '_blank';
+      // noopener because the opened page gets window.opener otherwise and can navigate us; noreferrer
+      // so the hotel page we were on is not announced to our own site.
+      link.rel = 'noopener noreferrer';
+      link.className = 'gymlink';
+      left.appendChild(link);
+    }
     if (gym.city) left.appendChild(el('div', gym.city, 'muted'));
     row.appendChild(left);
     // NO DISTANCE AT ALL. Not for approximate reads, not for `unknown` ones — which is every other
@@ -933,11 +964,9 @@ async function start() {
   showVersion();
   await migrateAwayLocalCohort();
   await migrateStoredRecords();
+  // render() paints the gyms panel itself, before it awaits the page read — so there is nothing to
+  // schedule here. It makes NO network request either way; that happens only on Find gyms.
   await render();
-  // AFTER the recorder renders, and not awaited alongside it. This one touches storage, and the
-  // measurement UI must never wait on it to appear. It makes NO network request — that happens only
-  // when someone presses Find gyms.
-  void renderGymsIdle();
 }
 
 void start();

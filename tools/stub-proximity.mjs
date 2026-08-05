@@ -165,6 +165,12 @@ const server = createServer((req, res) => {
       .slice(0, LIMIT)
       // Explicit column list. Note what is NOT here: latitude, longitude, contact details.
       .map(({ gym, metres }) => ({
+        // Built the way the real site builds it, from the fixture's own slugs — so the panel's
+        // link handling is exercised rather than assumed. No locale prefix: that is the client's
+        // choice, and the server has no business making it.
+        path: gym.countrySlug && gym.stateSlug && gym.citySlug && gym.slug
+          ? `/book/gyms/${gym.countrySlug}/${gym.stateSlug}/${gym.citySlug}/${gym.slug}`
+          : undefined,
         id: gym.id,
         name: gym.name,
         slug: gym.slug,

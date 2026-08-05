@@ -23,3 +23,6 @@ tools/proximity-fixture.json
 
 # Working state: in-flight notes, open questions, internal numbers. Never published.
 HANDOFF.md
+
+# Local design preview, built from the gitignored fixture. Never committed.
+.preview/
