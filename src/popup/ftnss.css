@@ -35,8 +35,30 @@
   --ink: #0E0E0C;           /* text primary */
   --ink-soft: #64645C;      /* text muted */
   --line: #0E0E0C;          /* border — equals ink, deliberately: hairlines are full contrast */
+
+  /*
+   * A SECOND, QUIETER RULE — not on the site, and needed here.
+   *
+   * The site's hairlines are full-contrast because they separate large poster tiles with air around
+   * them. This panel is 360px wide with four rows stacked directly on each other, and at that
+   * density the same rule draws a black ladder that competes with the gym names for attention. So:
+   * full contrast for STRUCTURE (the panel edge, the header, the filter bar — the things that say
+   * where one region ends) and this for SEPARATION inside a list. Same colour, less of it.
+   */
+  --line-soft: rgba(14, 14, 12, 0.18);
   --orange: #FD5115;        /* FILLS ONLY — see the contrast note below */
   --orange-label: #BE3D08;  /* orange TEXT at label sizes */
+
+  /*
+   * TEXT SITTING ON AN ORANGE FILL. A CONSTANT, and deliberately NOT --ink.
+   *
+   * It was --ink, which is correct in light mode and silently wrong in dark: --ink flips to #ECEAE3
+   * there, so every primary button and every selected chip became white-on-orange — 3.30:1, the
+   * exact pairing the note below exists to prevent. The fill does not change between themes, so
+   * neither may its foreground. A token that follows the theme is the wrong tool for a colour whose
+   * background does not.
+   */
+  --on-orange: #0E0E0C;
 
   /*
    * CONTRAST, MEASURED RATHER THAN ASSUMED.
@@ -92,6 +114,7 @@
     --line: #ECEAE3;
     --orange: #FD5115;
     --orange-label: #FF6A33; /* 6.77:1 on dark ground */
+    --line-soft: rgba(236, 234, 227, 0.22);
     --shadow-hard: 6px 6px 0 rgba(236, 234, 227, 0.10);
   }
 }
@@ -155,7 +178,7 @@ button:hover { background: var(--sunken); }
 button.primary {
   background: var(--orange);
   border-color: var(--orange);
-  color: var(--ink);
+  color: var(--on-orange);
 }
 
 button.primary:hover { box-shadow: var(--shadow-hard); }
@@ -186,8 +209,9 @@ hr {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 12px 14px;
+  padding: 13px 14px;
   border-bottom: var(--hair) solid var(--line);
+  background: var(--card);
 }
 
 /* The header carries the real mark, not type. `.wordmark` is now the view title beside it. */
@@ -214,6 +238,8 @@ button.ghost {
 button.block { width: 100%; margin-top: 8px; }
 
 .panel-body { padding: 14px; display: flex; flex-direction: column; gap: 4px; }
+/* The list needs to breathe away from the filter rule above it. */
+.panel-body > .label:first-child { margin-bottom: 2px; }
 .panel-body.scroll { max-height: 420px; overflow-y: auto; }
 
 .state { font-size: 14px; padding: 4px 0 2px; }
@@ -230,15 +256,45 @@ button.block { width: 100%; margin-top: 8px; }
  * A row, not the site's poster tile. Full-contrast 1.5px hairline between rows and no radius —
  * that pairing is most of what makes it read as FTNSS rather than as a browser popup.
  */
+/*
+ * A row is a grid, not a stack. The rank sits in its own column so every name starts on the same
+ * line however long the one above it ran — that vertical edge is most of what makes a list read as
+ * ordered rather than as four separate things.
+ */
 .gym-row {
-  display: block;
-  padding: 10px 0;
-  border-bottom: var(--hair) solid var(--line);
+  display: grid;
+  grid-template-columns: 16px 1fr;
+  column-gap: 10px;
+  padding: 12px 8px 12px 6px;
+  /* Negative margin so the hover fill bleeds to the panel edge while the text keeps its measure. */
+  margin: 0 -8px 0 -6px;
+  border-bottom: var(--hair) solid var(--line-soft);
   text-decoration: none;
   color: inherit;
 }
 
+/*
+ * Nearest first is the panel's one ordering claim. Numbering it says so without a sentence.
+ *
+ * Baseline-aligned with the gym name rather than top-aligned: the rank's own line-height is set to
+ * match the 17px serif's first line, so the digit sits ON the name's baseline. Top-aligning a 10px
+ * glyph beside a 17px one leaves it floating a few pixels high, which reads as a mistake even to
+ * someone who could not say what is wrong.
+ */
+.rank {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 2.1;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+a.gym-row:hover .rank { color: var(--orange-label); }
+
+/* Full contrast where the list STARTS — that edge is structure. Between rows it is separation. */
 .gym-row:first-of-type { border-top: var(--hair) solid var(--line); }
+.gym-row:last-of-type { border-bottom: var(--hair) solid var(--line); }
 .gym-row:hover { background: var(--sunken); }
 
 .gym-name {
@@ -247,6 +303,9 @@ button.block { width: 100%; margin-top: 8px; }
   font-size: 17px;
   line-height: 1.25;
   letter-spacing: var(--serif-tight);
+  /* A grid/flex child will not shrink below its content without this, so a long name pushed the
+     distance off the row instead of wrapping. */
+  min-width: 0;
 }
 
 a.gym-row:hover .gym-name { color: var(--orange-label); }
@@ -283,30 +342,67 @@ a.gym-row:hover .gym-name { color: var(--orange-label); }
 .filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 14px;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 13px;
   border-bottom: var(--hair) solid var(--line);
 }
 
+/*
+ * OPEN NOW IS NOT A DURATION, and putting it in the same wrapping row of seven chips made it look
+ * like one — so the row read as "seven pass types" with an odd one at the front. It is a different
+ * kind of question (when, not what), so it gets its own row and a rule between.
+ */
+.filters.primary {
+  border-bottom: 0;
+  padding-bottom: 6px;
+}
+
+/* The two filter rows are one bar, so only the bar gets the structural rule under it. */
+.filters:not(.primary) { padding-top: 0; }
+
+/* Pushed to the far right of the open-now row: it is the bar's result, not another control. */
+.count { margin-left: auto; }
+
+/*
+ * SEVEN FULL-CONTRAST BOXES IS NOT A FILTER BAR, it is seven buttons all shouting equally — and
+ * the one that is actually ON has to shout louder than six neighbours to be seen. Softening the
+ * resting state costs nothing (the border is still there, still 1.5px, still the ink colour) and
+ * buys the selected chip its contrast back for free.
+ */
 .chip {
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  padding: 5px 8px;
-  border: var(--hair) solid var(--line);
+  /*
+   * SIX DURATIONS MUST FIT ON ONE LINE at 360px, and the sixth was wrapping alone onto a second —
+   * a single orphaned chip reads as a different category rather than as the end of a row. The
+   * padding and tracking below are set from that constraint, not from taste: 6 chips + 5 gaps has
+   * to come in under the 332px the filter bar leaves after its own padding.
+   */
+  letter-spacing: 0.04em;
+  padding: 5px 7px;
+  border: var(--hair) solid var(--line-soft);
   border-radius: var(--radius);
   background: transparent;
-  color: var(--ink);
+  color: var(--ink-soft);
   cursor: pointer;
+}
+
+.chip:hover:not([disabled]) {
+  border-color: var(--line);
+  color: var(--ink);
+  background: transparent;
 }
 
 .chip[aria-pressed="true"] {
   background: var(--orange);
   border-color: var(--orange);
-  color: var(--ink);
+  color: var(--on-orange);
 }
+
+.chip[aria-pressed="true"]:hover { border-color: var(--orange); }
 
 /*
  * A filter with nothing behind it stays visible and says so, rather than vanishing. Hiding it
@@ -327,13 +423,18 @@ a.gym-row:hover .gym-name { color: var(--orange-label); }
   gap: 10px;
 }
 
+/*
+ * DISTANCE IN THE SERIF, not the 10px mono label. It was the quietest thing on the row and it is
+ * the field a traveller actually decides on — "is this walkable" comes before the price and before
+ * the name. Serif at 15px puts it in a two-item hierarchy with the gym name instead of down among
+ * the metadata.
+ */
 .distance {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--ink-soft);
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.2;
+  letter-spacing: var(--serif-tight);
+  color: var(--ink);
   white-space: nowrap;
 }
 
@@ -341,14 +442,16 @@ a.gym-row:hover .gym-name { color: var(--orange-label); }
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 10px;
-  margin-top: 5px;
+  gap: 3px 9px;
+  margin-top: 6px;
 }
 
+/* The one orange thing in a row, so it is the one thing that catches the eye after the name. */
 .price {
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.02em;
   color: var(--orange-label);
 }
 

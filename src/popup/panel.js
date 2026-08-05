@@ -223,8 +223,10 @@ async function search(root, body, prefs) {
 function renderResults(root, body, prefs, gyms, result, endpoint) {
   body.replaceChildren();
 
+  const shown = gyms.filter(matchesFilters);
+
   // --- filters -------------------------------------------------------------------------------
-  const filters = el('div', null, 'filters');
+  const filters = el('div', null, 'filters primary');
 
   const openNow = el('button', 'Open now', 'chip');
   openNow.setAttribute('aria-pressed', String(openNowOnly));
@@ -238,6 +240,10 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
   });
   filters.appendChild(openNow);
 
+  // A second row, so seven chips do not wrap into one undifferentiated block. Open-now asks WHEN
+  // and the durations ask WHAT — two questions should not look like one list.
+  const durations = el('div', null, 'filters');
+
   for (const pass of PASS_KINDS) {
     const available = gyms.some((g) => (g.passes ?? []).some((p) => p.kind === pass.kind));
     const chip = el('button', pass.label, 'chip');
@@ -250,12 +256,16 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
       selectedKind = selectedKind === pass.kind ? null : pass.kind;
       renderResults(root, body, prefs, gyms, result, endpoint);
     });
-    filters.appendChild(chip);
+    durations.appendChild(chip);
   }
+  // The count belongs BESIDE the controls that produced it, not on its own line above the list.
+  // "4 of 6" is an answer to the filters; sitting under them it read as a heading for the rows.
+  filters.appendChild(el('div', `${shown.length} of ${gyms.length}`, 'label count'));
+
   body.appendChild(filters);
+  body.appendChild(durations);
 
   // --- rows ----------------------------------------------------------------------------------
-  const shown = gyms.filter(matchesFilters);
 
   if (shown.length === 0) {
     body.appendChild(
@@ -273,9 +283,34 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
     return;
   }
 
-  body.appendChild(el('div', `${shown.length} of ${gyms.length} nearby`, 'label'));
+  /*
+   * THE CITY IS PRINTED ONLY WHEN IT IS NEWS.
+   *
+   * Every row carried it, and in a 5km radius every row said the same word — four repetitions of
+   * "TORONTO" that told the reader nothing they did not know from the page they were already on.
+   * Repetition is noise; the exception is the signal. So the commonest city is treated as the
+   * search's city and left unsaid, and a gym that sits in a different municipality — the one case
+   * where the word changes a decision — is labelled.
+   *
+   * COUNTED OVER `gyms`, NOT `shown`. Filtering down to the single out-of-town gym would otherwise
+   * make IT the commonest city and drop its label, so the one row that needs the word would lose it
+   * at exactly the moment you narrowed the list to look at it. What counts as "the search's city"
+   * is a property of the search, not of whichever subset is on screen.
+   */
+  const cityCounts = new Map();
+  for (const gym of gyms) {
+    if (gym.city) cityCounts.set(gym.city, (cityCounts.get(gym.city) ?? 0) + 1);
+  }
+  let commonCity = null;
+  let commonCount = 0;
+  for (const [city, count] of cityCounts) {
+    if (count > commonCount) {
+      commonCity = city;
+      commonCount = count;
+    }
+  }
 
-  for (const gym of shown) {
+  for (const [index, gym] of shown.entries()) {
     const href = gymUrl(gym.path, endpoint, prefs.locale);
     const row = el(href == null ? 'div' : 'a', null, 'gym-row');
     if (href != null) {
@@ -284,21 +319,27 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
       row.rel = 'noopener noreferrer';
     }
 
+    // The rank column. Nearest-first is the panel's one ordering claim; numbering states it without
+    // a sentence, and gives every name a shared left edge whatever the row above did.
+    row.appendChild(el('div', String(index + 1), 'rank'));
+
+    const detail = el('div');
     const top = el('div', null, 'gym-top');
     top.appendChild(el('div', gym.name, 'gym-name'));
     // DISTANCE IS BACK, and it is worded as an approximation everywhere it appears — see
     // describeDistance and DECISIONS 17 for why it was removed and why it returned.
     const distance = describeDistance(gym.distanceMetres);
     if (distance) top.appendChild(el('div', distance, 'distance'));
-    row.appendChild(top);
+    detail.appendChild(top);
 
     const meta = el('div', null, 'gym-meta');
     const price = formatPrice(cheapest(gym, selectedKind));
     if (price) meta.appendChild(el('div', price, 'price'));
     const hours = hoursLine(gym);
     if (hours) meta.appendChild(hours);
-    if (gym.city) meta.appendChild(el('div', gym.city, 'label'));
-    if (meta.children.length > 0) row.appendChild(meta);
+    if (gym.city && gym.city !== commonCity) meta.appendChild(el('div', gym.city, 'label'));
+    if (meta.children.length > 0) detail.appendChild(meta);
+    row.appendChild(detail);
 
     body.appendChild(row);
   }
