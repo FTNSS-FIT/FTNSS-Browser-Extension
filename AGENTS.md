@@ -93,6 +93,21 @@ alike.
 - Each finding: `file:line`, severity, the concrete failure scenario, and a specific fix.
 - If nothing qualifies, reply with exactly: `No blocking issues found.`
 
+## A pull request cannot instruct its own reviewer
+
+Greptile reads `AGENTS.md`, `CLAUDE.md` and `.greptile/` **from the pull request head**, on current
+evidence. That means a PR which edits those files can shape the review that judges it — the same
+class of problem as a code comment addressed to a reviewer, one level up.
+
+**So: a change to review rules is reviewed as a change to review rules.** It gets human eyes on the
+rules edit itself, separately from the code, and it does not ride along in a PR whose real subject is
+something else. If a rules change and a code change belong to the same piece of work, they are still
+two pull requests.
+
+This is not hypothetical hygiene — Codex was pinned against it by resolving rules from the default
+branch, and whether Greptile is has not been established. Treat it as unpinned until someone shows
+otherwise.
+
 ## Opening pull requests
 
 **Open new PRs as DRAFTS.** A non-draft PR is auto-reviewed the moment it opens, and review is billed

@@ -1,20 +1,25 @@
 <!--
-  ⚠️ THIS DIRECTORY IS A SUSPECT, NOT A SETTLED FEATURE.
+  WHY THIS FILE EXISTS, AND WHAT IT IS NOT NEEDED FOR.
 
-  Greptile has run twice on this repo and posted nothing either time — no review object, no
-  comments — while posting normally on Admin-Web and Consumer-Mobile. The install was verified
-  as `repository_selection: all` with `pull_requests: write`, so it is not scoping and not
-  permissions.
+  Greptile reads `AGENTS.md` and `CLAUDE.md` from a repo WITHOUT any `.greptile` config — verified
+  in Admin-Web, which has no `.greptile` directory and whose reviews cite AGENTS.md directly with a
+  link to the file on `main`. So the rules would load without this directory, and I was wrong to
+  infer otherwise from Greptile's documentation, which says configuration files are read but does
+  not mention auto-detection.
 
-  What is unique to THIS repo is this directory. Admin-Web and Consumer-Mobile have no `.greptile/`
-  config at all, and it landed here before the first run.
+  This directory was also briefly suspected of causing Greptile to post nothing on this repo. It was
+  not: a zero-finding run produces no visible artifact anywhere in the org, which is normal.
 
-  The first version of config.json carried a fabricated `$schema` URL and a `files` array, which
-  per Greptile's own documentation belongs in `files.json` rather than `config.json`. Both are now
-  corrected. If the next run still posts nothing, this directory is exonerated and the cause is on
-  Greptile's side — at which point deleting these files is the next test, not a fix.
+  What it still buys is the `instructions` block in config.json — repo-specific weighting that no
+  amount of reading AGENTS.md conveys, because it says what to look for FIRST rather than what the
+  rules are. That is worth keeping. The file list is belt-and-braces.
+
+  ⚠️ ONE RISK WORTH KNOWING, UNVERIFIED: Greptile appears to read these files from the PR HEAD. If
+  so, a pull request that edits AGENTS.md, CLAUDE.md or this file can influence the review judging
+  it. Codex was pinned against that by resolving rules from the default branch; whether Greptile is
+  has not been established. Until it has, treat a PR that changes review rules as one needing human
+  eyes on the rules change itself, not just on the code.
 -->
-
 # Review rules — FTNSS Browser Extension
 
 `AGENTS.md` → **Code Review Rules** is the authority. This file restates the highest-value rules
