@@ -67,7 +67,8 @@ export function activeLocale() {
  * loss, and a gym with the wrong link is the whole problem.
  *
  * @param {string} path      site-relative, no locale prefix, e.g. `/book/gyms/ca/ontario/…`
- * @param {string} endpoint  the proximity endpoint, used only for its origin
+ * @param {string} endpoint  the proximity endpoint — used only to decide WHICH FTNSS site to
+ *                           link to, never as the link's origin directly. See siteOriginFor.
  */
 /**
  * The FTNSS sites a gym link may point at.
@@ -107,6 +108,23 @@ export function siteOriginFor(endpoint) {
   return SITE_ORIGINS[0];
 }
 
+/**
+ * Turn a site-relative path into a URL on the FTNSS origin we are already talking to.
+ *
+ * THE PATH COMES FROM THE SERVER AND IS TREATED AS HOSTILE. It arrives over the network, and this
+ * is a public repo whose endpoint anyone can repoint by editing one setting — so a server-supplied
+ * link is an open-redirect waiting to happen. A page that can make the panel render
+ * `https://not-ftnss.example/login` has a phishing surface handed to it by the one part of the
+ * extension a user is meant to trust.
+ *
+ * So the origin is OURS — taken from the endpoint being called, never from the response — and the
+ * path must be a plain site-relative path under the gym directory. Anything else returns null and
+ * the panel renders no link at all, which is the correct failure: a gym with no link is a minor
+ * loss, and a gym with the wrong link is the whole problem.
+ *
+ * @param {string} path      site-relative, no locale prefix, e.g. `/book/gyms/ca/ontario/…`
+ * @param {string} endpoint  the proximity endpoint, used only for its origin
+ */
 export function gymUrl(path, endpoint, locale = activeLocale()) {
   if (typeof path !== 'string' || typeof endpoint !== 'string') return null;
   if (!SUPPORTED_LOCALES.includes(locale)) return null;
