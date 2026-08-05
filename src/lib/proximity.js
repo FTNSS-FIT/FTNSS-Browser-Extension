@@ -172,6 +172,17 @@ function passesFrom(raw) {
  * and the extension does not, and a traveller browsing a hotel in another country is precisely the
  * case where using the browser's clock would be wrong — the same person, the same moment, a
  * different answer depending on where they happen to be sitting.
+ *
+ * `open` IS THREE-VALUED: true, false, and null for "the server did not say". It was two-valued via
+ * `raw.open === true`, which quietly turned every unsayable answer into CLOSED — so a response with
+ * real opening times but a missing or malformed `open` flag produced a gym labelled shut and
+ * dropped from "Open now". That is this codebase's recurring defect in its purest form: a method
+ * that cannot determine the thing returning a confident negative, and the negative is the one a
+ * user acts on by walking somewhere else.
+ *
+ * Note that null and false behave IDENTICALLY under the "Open now" filter, and that is correct —
+ * not knowing is not grounds for claiming a gym is open either. They differ only in what is
+ * displayed, which is the whole point: the times are still shown, unlabelled.
  */
 function hoursFrom(raw) {
   if (raw == null || typeof raw !== 'object') return null;
@@ -180,7 +191,9 @@ function hoursFrom(raw) {
   const opensAt = time(raw.opensAt);
   const closesAt = time(raw.closesAt);
   if (typeof raw.open !== 'boolean' && opensAt == null) return null;
-  return { open: raw.open === true, opensAt, closesAt };
+  // Discarding the whole record when `open` is absent would throw away opening times the server DID
+  // send and we can legitimately show. Keep the facts, refuse the inference.
+  return { open: typeof raw.open === 'boolean' ? raw.open : null, opensAt, closesAt };
 }
 
 /**

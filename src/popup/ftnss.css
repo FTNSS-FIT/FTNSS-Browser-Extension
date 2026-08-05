@@ -475,3 +475,10 @@ a.gym-row:hover .gym-name { color: var(--orange-label); }
 }
 
 .hours.closed .open-dot { background: var(--ink-soft); }
+
+/*
+ * Times shown WITHOUT a verdict, for when the server sent hours but would not say whether the doors
+ * are open right now. It carries no dot at all — the square is the open/closed indicator, and a
+ * greyed one would read as "closed", which is exactly the claim this state exists to avoid making.
+ */
+.hours.unknown { text-transform: none; letter-spacing: 0.02em; }

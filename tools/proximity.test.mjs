@@ -439,3 +439,36 @@ test('open-now comes from the server and is never computed here', async () => {
   });
   assert.deepEqual(junk.gyms[0].hours, { open: true, opensAt: null, closesAt: null });
 });
+
+test('an unsayable open state stays unsayable and does not become "closed"', async () => {
+  // The finding this covers: `open` was coerced with `=== true`, so a response carrying real
+  // opening times but no usable `open` flag produced a gym labelled CLOSED — a confident negative
+  // derived from the absence of evidence, and the negative is the one a person acts on by walking
+  // somewhere else.
+  for (const open of [undefined, null, 'yes', 1, {}]) {
+    const answer = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+      endpoint: ENDPOINT,
+      fetchImpl: stub({ gyms: [{ ...GYM, hours: { open, opensAt: '06:00', closesAt: '22:00' } }] }),
+    });
+    assert.deepEqual(
+      answer.gyms[0].hours,
+      { open: null, opensAt: '06:00', closesAt: '22:00' },
+      `open: ${JSON.stringify(open)} must not resolve to false`,
+    );
+  }
+
+  // `false` still means false. The point is to stop inventing it, not to stop believing it.
+  const shut = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [{ ...GYM, hours: { open: false, opensAt: '06:00', closesAt: '22:00' } }] }),
+  });
+  assert.equal(shut.gyms[0].hours.open, false);
+
+  // And a record with neither a usable flag nor a usable time is still dropped whole — there is
+  // nothing left in it to show.
+  const empty = await gymsNear({ lat: 43.6425, lon: -79.3875 }, {
+    endpoint: ENDPOINT,
+    fetchImpl: stub({ gyms: [{ ...GYM, hours: { open: 'maybe', opensAt: 'later' } }] }),
+  });
+  assert.equal(empty.gyms[0].hours, null);
+});

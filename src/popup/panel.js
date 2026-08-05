@@ -91,12 +91,24 @@ function formatPrice(pass) {
   }
 }
 
+/*
+ * Three states, not two. `hours.open === null` means the server sent times but would not say
+ * whether the doors are open right now, and the row shows the times WITHOUT a verdict — no dot, no
+ * "closed". Rendering an unknown as closed is a claim we cannot support and the one a traveller
+ * acts on by going elsewhere.
+ */
 function hoursLine(gym) {
   const hours = gym.hours;
   if (hours == null) return null;
+  const window = hours.opensAt && hours.closesAt ? `${hours.opensAt}–${hours.closesAt}` : null;
+
+  if (hours.open == null) {
+    // No dot: the square is the open/closed indicator, and there is nothing to indicate.
+    return window ? el('div', `${window} today`, 'hours unknown') : null;
+  }
+
   const line = el('div', null, hours.open ? 'hours' : 'hours closed');
   line.appendChild(el('span', '', 'open-dot'));
-  const window = hours.opensAt && hours.closesAt ? `${hours.opensAt}–${hours.closesAt}` : null;
   line.appendChild(
     document.createTextNode(
       hours.open
@@ -230,9 +242,15 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
 
   const openNow = el('button', 'Open now', 'chip');
   openNow.setAttribute('aria-pressed', String(openNowOnly));
-  // Disabled when the server sent no hours at all — a filter that cannot work should say so rather
-  // than silently returning everything and looking broken.
-  const anyHours = gyms.some((g) => g.hours != null);
+  // Disabled when nothing in the answer can satisfy it — a filter that cannot work should say so
+  // rather than silently returning everything and looking broken.
+  //
+  // The test is a KNOWN open state, not merely the presence of an hours record. A response where
+  // every gym has opening times but no `open` flag has `hours != null` everywhere and yet cannot
+  // put a single row through this filter: the chip would look live, and pressing it would empty the
+  // list and report "no gym near here is open right now" — a claim about the world derived from a
+  // gap in our data.
+  const anyHours = gyms.some((g) => typeof g.hours?.open === 'boolean');
   if (!anyHours) openNow.disabled = true;
   openNow.addEventListener('click', () => {
     openNowOnly = !openNowOnly;
