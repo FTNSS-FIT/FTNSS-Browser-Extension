@@ -8,6 +8,11 @@ export function fakeDocument(selectorMap) {
     querySelectorAll(selector) {
       return selectorMap[selector] ?? [];
     },
+    // Kept though tier 1 no longer uses it — tier 3 and future readers may, and a stand-in that
+    // answers one query shape and not the other is a trap.
+    querySelector(selector) {
+      return (selectorMap[selector] ?? [])[0] ?? null;
+    },
   };
 }
 

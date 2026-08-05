@@ -274,6 +274,8 @@ export function extractFromStructuredData(doc) {
   const candidateList = [];
   /** Set when the page described more distinct listings than MAX_CANDIDATES. */
   let candidateOverflow = false;
+  /** Two usable coordinates further apart than one building. Only decides if no primary is found. */
+  let coordinateConflict = false;
   /** The first usable lodging coordinate; every later one must agree with it. */
   let best = null;
   let visited = 0;
@@ -362,6 +364,9 @@ export function extractFromStructuredData(doc) {
 
       if (candidate == null) {
         candidateList.push({
+          // Whether this candidate offered location-shaped data we REFUSED, which is a claim about
+          // a place even though it is not a usable one.
+          unusable: nodeCoordinates.sawUnusable === true,
           ids: new Set(identity == null ? [] : [identity]),
           values: nodeValues,
           point: nodePoint,
@@ -371,6 +376,7 @@ export function extractFromStructuredData(doc) {
         });
       } else {
         if (identity != null) candidate.ids.add(identity);
+        candidate.unusable = candidate.unusable || nodeCoordinates.sawUnusable === true;
         candidate.values = mergeAddressValues(candidate.values, nodeValues);
         candidate.point = candidate.point ?? nodePoint;
         candidate.address = candidate.address || nodeComponents != null;
@@ -403,9 +409,13 @@ export function extractFromStructuredData(doc) {
       // first in document order need not be the one on screen. Same reasoning as the map-link tier:
       // a confident coordinate for the wrong hotel is worse than no coordinate at all.
       // (Codex review round 17, PR #1.)
-      if (best != null && distanceMetres(best, geo) > CONFLICT_METRES) {
-        return ambiguous('structured data described two different places');
-      }
+      // FLAG, DO NOT RETURN — the same correction the address path needed. Returning here ended the
+      // walk before the canonical-url match could be found, so a page that NAMES its own listing was
+      // refused because some other node disagreed with it. Identity is stronger evidence than
+      // disagreement: if the page says which listing it is about, a rival's coordinate is not a
+      // contradiction, it is a different listing. Resolved after the loop, where both facts are in
+      // hand. (Greptile, PR #22.)
+      if (best != null && distanceMetres(best, geo) > CONFLICT_METRES) coordinateConflict = true;
       if (best == null) best = geo;
     }
   }
@@ -416,7 +426,8 @@ export function extractFromStructuredData(doc) {
   const seenCandidates = candidateList;
   const candidates = seenCandidates.length;
   const candidatesWithAddress = seenCandidates.filter((c) => c.address).length;
-  if (candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates)) {
+
+  if ((candidateOverflow || (candidatesWithAddress > 0 && candidatesWithAddress < candidates))) {
     addressConflict = true;
   }
   // Recorded separately from the conflict, because it means something stronger: the PAGE is about
@@ -455,7 +466,28 @@ export function extractFromStructuredData(doc) {
   // apart pass that test, and `best` is then whichever appeared first in document order, which has
   // never been a reason to think it is the one on screen. The error is bounded at a few hundred
   // metres rather than unbounded, which is exactly what made it easy to miss. (Codex, PR #10.)
-  if (best != null && (candidateOverflow || candidates > 1)) {
+  // WHICH CANDIDATES ARE ACTUALLY RIVAL LOCATION CLAIMS.
+  //
+  // Counting every lodging node took Airbnb from 100% to 0%: its pages carry several lodging nodes
+  // and only one of them has a coordinate, so `candidates > 1` refused every read. That was the
+  // exact risk recorded in #11 before this rule shipped, and it landed as predicted.
+  //
+  // The rule was answering the wrong question. "How many lodging nodes are there" is not "how many
+  // places does this page claim to be about". A node carrying neither a coordinate nor an address
+  // makes no location claim at all — it cannot be the wrong answer, because it is not an answer.
+  // A REFUSED COORDINATE IS STILL A CLAIM. A node publishing null-island, out-of-range or
+  // unparseable coordinates is saying "the place is here" — badly. Excluding it from the count let
+  // another node's usable point be returned confidently while the page was in fact offering
+  // competing location evidence. Unusable is not absent. (Greptile, PR #22.)
+  const locationClaims = seenCandidates.filter((c) => c.coordinate || c.address || c.unusable).length;
+
+
+  // Two usable points further apart than one building: the page describes two places.
+  if (best != null && coordinateConflict) {
+    return withComponents(ambiguous('structured data described two different places'));
+  }
+
+  if (best != null && (candidateOverflow || locationClaims > 1)) {
     return withComponents(ambiguous('coordinates could not be attributed among several listings'));
   }
 

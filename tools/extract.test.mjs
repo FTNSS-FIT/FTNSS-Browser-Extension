@@ -1387,20 +1387,34 @@ test('a page that references its own listing is not a page describing two', () =
 
 // --- Codex review round 8, PR #10 ---------------------------------------------------------------
 
-test('a related hotel with coordinates is not read as the listing without them', () => {
-  // The listing publishes no point; a "related hotel" block does. Reporting the related hotel's
-  // location as the listing's is a confidently wrong location, which this project treats as worse
-  // than no answer at all. Filed as #11 to be decided against a page census; fixed here because
-  // the failure is the one the whole design is organised around avoiding.
+test('a lone coordinate is used when nothing else on the page claims a location', () => {
+  // THIS ASSERTED `ambiguous` UNTIL AIRBNB WENT TO ZERO. Counting every lodging node as a rival
+  // took the one site that worked from 100% to 0% — its pages carry several lodging nodes and only
+  // one has a coordinate, so `candidates > 1` refused every read. Exactly the risk recorded in #11
+  // before the rule shipped.
+  //
+  // The rule was answering the wrong question. "How many lodging nodes" is not "how many places
+  // does this page claim to be about". A node with neither a coordinate nor an address makes no
+  // location claim — it cannot be the wrong answer because it is not an answer.
   const doc = ldJsonDocument(
     JSON.stringify({ '@type': 'Hotel', name: 'the listing' }),
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
   );
+  assert.equal(extractFromStructuredData(doc).status, 'found');
+});
+
+test('two competing location claims are still refused', () => {
+  // The safety the relaxation above must not cost: when a second node DOES claim a location, the
+  // page is describing more than one place and neither can be attributed.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', address: { streetAddress: '1 Oak St', addressLocality: 'Lisbon', addressCountry: 'PT' } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
   const r = extractFromStructuredData(doc);
   assert.equal(r.status, 'ambiguous');
-  // Its own reason, so the cost of this refusal is visible in the next export rather than inferred.
   assert.equal(r.reason, 'coordinates could not be attributed among several listings');
 });
+
 
 test('two nodes at the same point are one candidate', () => {
   // Same building, published twice. Note what this test asserted until round 16: that several
@@ -1491,10 +1505,11 @@ test('an anonymous stub does not split a candidate that has evidence', () => {
     JSON.stringify({ '@type': 'Hotel' }),
     JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
   );
-  // Refused, and correctly: a stub states nothing, so nothing can establish it is the same hotel as
-  // the one carrying the point. Silence is not evidence of identity — which is why clustering needs
-  // positive shared evidence rather than mere compatibility.
-  assert.equal(extractFromStructuredData(doc).status, 'ambiguous');
+  // Two stubs and one point. The stubs remain separate CANDIDATES — silence is not evidence of
+  // identity, so clustering still refuses to merge them — but they are not rival LOCATION CLAIMS,
+  // so they no longer block attribution of the only coordinate on the page. Those are different
+  // questions and conflating them is what cost Airbnb.
+  assert.equal(extractFromStructuredData(doc).status, 'found');
 });
 
 // --- Codex review round 10, PR #10 --------------------------------------------------------------
@@ -1920,3 +1935,60 @@ test('a road number and a house number on the same street are told apart', () =>
     'found',
   );
 });
+
+test('the page identity never leaves the extractor', async () => {
+  // The canonical url is the page's identity — the one thing this extension promises never to
+  // carry. It is read to match against lodging nodes and must not survive into the result, the
+  // tiers, or anything an export could reach.
+  const { runExtraction } = await import('../src/extract/index.js');
+  const doc = fakeDocument({
+    'link[rel="canonical"]': [attrNode({ href: 'https://airbnb.test/rooms/12345' })],
+    'meta[property="og:url"]': [attrNode({ content: 'https://airbnb.test/rooms/12345' })],
+    'script[type="application/ld+json"]': [
+      scriptNode(JSON.stringify({
+        '@type': 'Hotel',
+        '@id': 'https://airbnb.test/rooms/12345',
+        geo: { latitude: 43.6645, longitude: -79.3826 },
+      })),
+    ],
+  });
+  const out = runExtraction(doc);
+  assert.equal(out.result.status, 'found');
+  assert.equal(JSON.stringify(out).includes('12345'), false, 'the listing id must not survive');
+  assert.equal(JSON.stringify(out).includes('airbnb.test'), false, 'the hostname must not survive');
+});
+
+test('the Airbnb shape reads again: one node with a point, several without', () => {
+  // The regression itself, as a fixture. Several lodging nodes, one coordinate, no canonical url —
+  // so this exercises the location-claim fallback rather than the primary path.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'LodgingBusiness', name: 'Similar stay' }),
+    JSON.stringify({ '@type': 'Apartment', name: 'The listing', geo: { latitude: 43.6645, longitude: -79.3826 } }),
+    JSON.stringify({ '@type': 'LodgingBusiness', name: 'Another similar stay' }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'found');
+  assert.equal(r.lat, 43.6645);
+});
+
+// --- Greptile review, PR #22 --------------------------------------------------------------------
+
+
+test('a refused coordinate still counts as a location claim', () => {
+  // A node publishing null-island or out-of-range coordinates is saying "the place is here" —
+  // badly. Excluding it from the count let another node's usable point be returned confidently
+  // while the page was in fact offering competing location evidence. Unusable is not absent.
+  const doc = ldJsonDocument(
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 0, longitude: 0 } }),
+    JSON.stringify({ '@type': 'Hotel', geo: { latitude: 38.7115, longitude: -9.1287 } }),
+  );
+  const r = extractFromStructuredData(doc);
+  assert.equal(r.status, 'ambiguous');
+  assert.equal(r.reason, 'coordinates could not be attributed among several listings');
+});
+
+
+
+
+
+
