@@ -69,6 +69,44 @@ export function activeLocale() {
  * @param {string} path      site-relative, no locale prefix, e.g. `/book/gyms/ca/ontario/…`
  * @param {string} endpoint  the proximity endpoint, used only for its origin
  */
+/**
+ * The FTNSS sites a gym link may point at.
+ *
+ * Same list as the manifest's `optional_host_permissions`, minus localhost — because a local stub
+ * is an endpoint, not a website. Kept here rather than read from the manifest so this stays a pure
+ * function usable outside an extension context (tools/check-links.mjs runs it in plain node).
+ */
+const SITE_ORIGINS = Object.freeze(['https://ftnss.fit', 'https://www.ftnss.fit']);
+
+/**
+ * Which site a gym link should open, given the endpoint being called.
+ *
+ * THE ENDPOINT ORIGIN IS NOT THE SITE ORIGIN, and assuming they were the same shipped a bug that
+ * only real use could find: with the endpoint pointed at the local stub, every gym link resolved to
+ * `http://localhost:8787/en/book/gyms/…` and the stub answered `{"error":"extension origins only"}`.
+ * The link was built correctly and pointed at a machine with no website on it.
+ *
+ * They coincide in production and diverge everywhere else — which is exactly the shape of thing that
+ * passes every test and fails the first time somebody clicks.
+ *
+ * So: follow the endpoint's origin only when it IS an FTNSS site, and otherwise fall back to
+ * production. That keeps the property worth having — the origin is ours, never the response's — and
+ * makes a stub behave like a stub: it answers proximity queries, and gym pages still open on the
+ * real site.
+ */
+export function siteOriginFor(endpoint) {
+  let origin;
+  try {
+    origin = new URL(endpoint).origin;
+  } catch {
+    return null;
+  }
+  if (SITE_ORIGINS.includes(origin)) return origin;
+  // A staging FTNSS host would be added to SITE_ORIGINS deliberately. Anything else — a stub, a
+  // tunnel, a mistake — gets production, because a gym page exists there and nowhere else.
+  return SITE_ORIGINS[0];
+}
+
 export function gymUrl(path, endpoint, locale = activeLocale()) {
   if (typeof path !== 'string' || typeof endpoint !== 'string') return null;
   if (!SUPPORTED_LOCALES.includes(locale)) return null;
@@ -87,11 +125,7 @@ export function gymUrl(path, endpoint, locale = activeLocale()) {
   // pattern is the kind of thing that gets loosened one character at a time.
   if (path.includes('//')) return null;
 
-  let origin;
-  try {
-    origin = new URL(endpoint).origin;
-  } catch {
-    return null;
-  }
+  const origin = siteOriginFor(endpoint);
+  if (origin == null) return null;
   return `${origin}/${locale}${path}`;
 }
