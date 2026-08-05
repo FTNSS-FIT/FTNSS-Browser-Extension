@@ -1,3 +1,20 @@
+<!--
+  ⚠️ THIS DIRECTORY IS A SUSPECT, NOT A SETTLED FEATURE.
+
+  Greptile has run twice on this repo and posted nothing either time — no review object, no
+  comments — while posting normally on Admin-Web and Consumer-Mobile. The install was verified
+  as `repository_selection: all` with `pull_requests: write`, so it is not scoping and not
+  permissions.
+
+  What is unique to THIS repo is this directory. Admin-Web and Consumer-Mobile have no `.greptile/`
+  config at all, and it landed here before the first run.
+
+  The first version of config.json carried a fabricated `$schema` URL and a `files` array, which
+  per Greptile's own documentation belongs in `files.json` rather than `config.json`. Both are now
+  corrected. If the next run still posts nothing, this directory is exonerated and the cause is on
+  Greptile's side — at which point deleting these files is the next test, not a fix.
+-->
+
 # Review rules — FTNSS Browser Extension
 
 `AGENTS.md` → **Code Review Rules** is the authority. This file restates the highest-value rules
