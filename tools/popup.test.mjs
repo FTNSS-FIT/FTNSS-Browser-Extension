@@ -12,6 +12,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ── The smallest DOM popup.js can run on ─────────────────────────────────────
 const created = [];
@@ -92,6 +94,7 @@ function installChrome(reading) {
       async query() {
         return [{ id: 1 }];
       },
+      // Overridable, so a test can model a page where the content script never answers.
       async sendMessage() {
         return reading;
       },
@@ -163,4 +166,33 @@ test('pressing Log twice records once', async () => {
   const { local } = installChrome(BOOKING_READING);
   const records = local.get('phase1_records') ?? [];
   assert.ok(records.length <= 1);
+});
+
+test('the popup does not await the page read before painting', () => {
+  // On a page with no content script — a new tab, GitHub, anything that is not a listing — every
+  // retry throws instantly and waits out its interval, so the 9-second budget sized for the slowest
+  // Booking attachment was paid in full by the commonest case. Nothing rendered for those 9 seconds
+  // and the popup looked frozen while it was merely waiting.
+  //
+  // Asserted structurally rather than behaviourally: the popup module can only be imported once per
+  // process, and this is a property of the ORDER of two statements, which reads clearly in source
+  // and would be obscured by a timing test that could pass on a fast machine either way.
+  // `import.meta.dirname`, not `new URL` — the DOM mock installed by the tests above replaces the
+  // global URL constructor, so the usual idiom throws here and nowhere else.
+  const source = readFileSync(join(import.meta.dirname, '../src/popup/popup.js'), 'utf8');
+  const body = source.slice(source.indexOf('async function render()'));
+
+  const kickOff = body.indexOf('const readingPromise = readActivePage(');
+  const paintCount = body.indexOf('await refreshCount()');
+  const paintGyms = body.indexOf('renderGymsIdle()');
+  const awaitRead = body.indexOf('await readingPromise');
+
+  assert.ok(kickOff !== -1, 'the read must be started as a promise, not awaited inline');
+  assert.ok(awaitRead !== -1, 'and awaited later');
+  assert.ok(paintCount > kickOff && paintCount < awaitRead,
+    'the record count must paint before the read is awaited');
+  assert.ok(paintGyms > kickOff && paintGyms < awaitRead,
+    'the gyms panel must paint before the read is awaited');
+  assert.equal(/await readActivePage\(\{ attempts: 30/.test(body), false,
+    'the 30-attempt read must never be awaited inline again');
 });
