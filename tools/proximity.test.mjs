@@ -472,3 +472,41 @@ test('an unsayable open state stays unsayable and does not become "closed"', asy
   });
   assert.equal(empty.gyms[0].hours, null);
 });
+
+test('a filter this answer cannot apply is dropped, not merely greyed', async () => {
+  const { prunedFilters } = await import('../src/popup/panel.js');
+  const withHours = [{ hours: { open: true }, passes: [{ kind: 'day' }] }];
+  const unknownHours = [{ hours: { open: null, opensAt: '06:00' }, passes: [{ kind: 'day' }] }];
+
+  // The bug: filter state outlives a search. Pressed on one page, inapplicable on the next — the
+  // chip greys out while STILL PRESSED, so it filters every row away, reports "no gym near here is
+  // open right now", and cannot be switched off, because a disabled button fires no handler. A dead
+  // end containing a false statement.
+  assert.deepEqual(
+    prunedFilters(unknownHours, { openNowOnly: true, selectedKind: 'day' }),
+    { openNowOnly: false, selectedKind: 'day' },
+  );
+
+  // An applicable filter is left alone — pruning must not undo a choice the answer CAN honour.
+  assert.deepEqual(
+    prunedFilters(withHours, { openNowOnly: true, selectedKind: 'day' }),
+    { openNowOnly: true, selectedKind: 'day' },
+  );
+
+  // Same rule for pass kinds, and `null` survives as `null` rather than becoming a selection.
+  assert.deepEqual(
+    prunedFilters(withHours, { openNowOnly: false, selectedKind: 'year' }),
+    { openNowOnly: false, selectedKind: null },
+  );
+  assert.deepEqual(
+    prunedFilters([], { openNowOnly: true, selectedKind: 'day' }),
+    { openNowOnly: false, selectedKind: null },
+  );
+
+  // A known-CLOSED gym still makes the filter applicable: "nothing is open right now" is then a
+  // statement about the world, which is the one case the empty-list message may be shown.
+  assert.equal(
+    prunedFilters([{ hours: { open: false } }], { openNowOnly: true }).openNowOnly,
+    true,
+  );
+});

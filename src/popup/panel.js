@@ -232,8 +232,64 @@ async function search(root, body, prefs) {
   renderResults(root, body, prefs, answer.gyms, result, endpoint);
 }
 
+/**
+ * Which filters THIS answer is capable of applying.
+ *
+ * Computed from `gyms`, the whole answer, never from the filtered subset — a filter must not
+ * decide its own availability from the list it produced.
+ */
+export function applicableFilters(gyms) {
+  return {
+    // A KNOWN open state, not merely the presence of an hours record. A response where every gym
+    // has opening times but no `open` flag has `hours != null` everywhere and yet cannot put a
+    // single row through this filter.
+    openNow: gyms.some((g) => typeof g.hours?.open === 'boolean'),
+    kinds: new Set(
+      PASS_KINDS.map((p) => p.kind).filter((kind) =>
+        gyms.some((g) => (g.passes ?? []).some((p) => p.kind === kind)),
+      ),
+    ),
+  };
+}
+
+/**
+ * The filter selection, with anything this answer cannot apply dropped.
+ *
+ * Pure and exported for the tests: the bug it prevents lives in state that survives across searches,
+ * which is exactly the kind a DOM-level test would have to stage two renders to reach.
+ */
+export function prunedFilters(gyms, { openNowOnly, selectedKind }) {
+  const applicable = applicableFilters(gyms);
+  return {
+    openNowOnly: applicable.openNow ? openNowOnly === true : false,
+    selectedKind: selectedKind != null && applicable.kinds.has(selectedKind) ? selectedKind : null,
+  };
+}
+
 function renderResults(root, body, prefs, gyms, result, endpoint) {
   body.replaceChildren();
+
+  const applicable = applicableFilters(gyms);
+
+  /*
+   * A FILTER THAT CANNOT BE APPLIED MUST NOT STAY APPLIED. Greying the control was half a fix and
+   * it created a worse bug than the one it closed.
+   *
+   * `openNowOnly` and `selectedKind` are module state that outlives a search. Press "Open now" on
+   * one hotel page, open the panel on another whose gyms have no known open state, and the chip is
+   * disabled while STILL PRESSED — so it filters every row away, reports "no gym near here is open
+   * right now", and cannot be switched off, because a disabled button does not fire its handler.
+   * A dead end with a false statement in it, and the only way out is closing the popup.
+   *
+   * So a stale selection is dropped rather than merely disabled. What survives is the honest case:
+   * the filter is applicable, the user applied it, and nothing matched — "no gym near here is open
+   * right now" then describes the world instead of describing a gap in our data.
+   *
+   * The rule itself is `prunedFilters`, kept pure and exported so it can be tested without a DOM.
+   */
+  const pruned = prunedFilters(gyms, { openNowOnly, selectedKind });
+  openNowOnly = pruned.openNowOnly;
+  selectedKind = pruned.selectedKind;
 
   const shown = gyms.filter(matchesFilters);
 
@@ -242,16 +298,9 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
 
   const openNow = el('button', 'Open now', 'chip');
   openNow.setAttribute('aria-pressed', String(openNowOnly));
-  // Disabled when nothing in the answer can satisfy it — a filter that cannot work should say so
-  // rather than silently returning everything and looking broken.
-  //
-  // The test is a KNOWN open state, not merely the presence of an hours record. A response where
-  // every gym has opening times but no `open` flag has `hours != null` everywhere and yet cannot
-  // put a single row through this filter: the chip would look live, and pressing it would empty the
-  // list and report "no gym near here is open right now" — a claim about the world derived from a
-  // gap in our data.
-  const anyHours = gyms.some((g) => typeof g.hours?.open === 'boolean');
-  if (!anyHours) openNow.disabled = true;
+  // Still greyed when inapplicable — the control stays visible and says "this exists and this
+  // answer cannot support it", which is truer than hiding it. It is just no longer also pressed.
+  if (!applicable.openNow) openNow.disabled = true;
   openNow.addEventListener('click', () => {
     openNowOnly = !openNowOnly;
     renderResults(root, body, prefs, gyms, result, endpoint);
@@ -263,10 +312,9 @@ function renderResults(root, body, prefs, gyms, result, endpoint) {
   const durations = el('div', null, 'filters');
 
   for (const pass of PASS_KINDS) {
-    const available = gyms.some((g) => (g.passes ?? []).some((p) => p.kind === pass.kind));
     const chip = el('button', pass.label, 'chip');
     chip.setAttribute('aria-pressed', String(selectedKind === pass.kind));
-    if (!available) {
+    if (!applicable.kinds.has(pass.kind)) {
       chip.disabled = true;
       chip.title = 'No gym near here sells this pass';
     }
