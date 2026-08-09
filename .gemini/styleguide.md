@@ -16,6 +16,13 @@
     A GREEN CHECK DOES NOT MEAN A REVIEW HAPPENED AT ALL. Count review objects. Never read the check.
 
   Pass condition, unchanged: a review object exists AND the delivered count matches the claim.
+
+  ONE REFINEMENT TO THAT PASS CONDITION, measured 2026-08-05: `reviews=N` COUNTS HUMAN REPLIES
+  TOO. An inline reply to a finding creates a review object, so a PR where somebody answered two
+  findings reads `reviews=2` with zero reviewer activity. Filter by author before believing the
+  count -- otherwise the metric we adopted BECAUSE the status check lied has the same failure mode.
+
+    gh api repos/{o}/{r}/pulls/{n}/reviews --jq '[.[] | select(.user.login | test("gemini"))] | length'
 -->
 
 # Review rules — FTNSS Browser Extension
