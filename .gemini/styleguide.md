@@ -25,6 +25,21 @@
     gh api repos/{o}/{r}/pulls/{n}/reviews --jq '[.[] | select(.user.login | test("gemini"))] | length'
 -->
 
+> 🔴 **THIS FILE IS THE ONE THE REVIEWER WILL NEVER READ BACK TO YOU.**
+>
+> Gemini declines to review anything under `.gemini/`. Its refusal blames "file types not
+> supported", and that message is **wrong about its own behaviour** — the discriminator is the
+> PATH, not the type: `CLAUDE.md` is reviewed, `.gemini/styleguide.md` is declined, and `.sql`,
+> `.json`, `.ts` and `.css` are all fully supported. Two windows independently reached the same
+> incorrect "markdown is unsupported" conclusion from an accurate reading of it.
+>
+> So the file with the most influence over every review in this repo is the only one with no
+> safety net. A rule worded backwards here fails **silently and permanently** — every review after
+> it looks normal and is subtly steered wrong.
+>
+> **Every change to this directory gets a human read. Do not request a review on a `.gemini/`-only
+> PR: it will be declined, and the declined attempt still costs one of the org's ~3-5 daily runs.**
+
 # Review rules — FTNSS Browser Extension
 
 `AGENTS.md` → **Code Review Rules** is the authority for humans and for any agent working in this
