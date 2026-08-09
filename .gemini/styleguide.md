@@ -38,7 +38,21 @@
 > it looks normal and is subtly steered wrong.
 >
 > **Every change to this directory gets a human read. Do not request a review on a `.gemini/`-only
-> PR: it will be declined, and the declined attempt still costs one of the org's ~3-5 daily runs.**
+> PR: it will be declined, and a declined attempt still spends one of the org's shared daily runs.**
+
+## Before trusting a review, ask "was it ever triggered?"
+
+There are **three** ways a PR in this repo can look reviewed without having been properly reviewed,
+and only one of them announces itself:
+
+| what happened | what it leaves behind |
+|---|---|
+| reviewed with **no rules loaded** (no `.gemini/` directory) | nothing — a generic review is indistinguishable from an informed one |
+| **not reviewed, quota exhausted** | an issue comment on *some* PRs, silence on others |
+| **never triggered at all** — opened as a draft, and `ready_for_review` fires nothing | **no artifact whatsoever** |
+
+So the question to ask is **"was it ever triggered?"**, not "why did the review not appear?" — the
+third case has no failure to investigate, because nothing was ever asked for.
 
 # Review rules — FTNSS Browser Extension
 

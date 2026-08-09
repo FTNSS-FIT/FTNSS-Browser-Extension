@@ -20,24 +20,24 @@ code_review:
   pull_request_opened:
     help: false
     summary: true
-    # AUTO-REVIEW ON OPEN IS OFF, DELIBERATELY, AND THIS IS THE EXPENSIVE LEVER.
+    # AUTO-REVIEW ON OPEN IS OFF, DELIBERATELY.
     #
-    # Measured 2026-08-05 by Consumer-Web: the org-wide daily allowance is ~3-5 reviews, not the
-    # ~20 our notes claimed — off by roughly 5x. It is SHARED across every FTNSS repo, so an
-    # attempt spent here is one Admin-Web or Consumer-Mobile cannot make. Three reviews at 13:07,
-    # 13:09 and 13:15 exhausted the day by 14:36.
+    # THE REASON IS OUR WORKFLOW, NOT THE QUOTA NUMBER. Every PR here opens as a draft, so
+    # `code_review: true` reviews the work at its least finished moment — and then, because
+    # `ready_for_review` is a DIFFERENT EVENT THAT GEMINI IGNORES, nothing fires when the work is
+    # actually done. Auto-on-open gives us a review of the wrong commit and no review of the right
+    # one. Consumer-Web #939 was marked ready and sat unreviewed while the quota was demonstrably
+    # live (two other PRs reviewed either side of it).
     #
-    # `code_review: true` spends one of those on EVERY pull_request_opened event — including
-    # drafts and docs-only PRs nobody wants reviewed. Our workflow opens every PR as a draft, so
-    # leaving this on would spend the org's scarcest resource on the least valuable moment: before
-    # the work is finished.
-    #
-    # THE TRAP THAT MAKES THIS NECESSARY RATHER THAN MERELY TIDY: `ready_for_review` is a
-    # DIFFERENT EVENT AND GEMINI IGNORES IT. Marking a draft ready triggers nothing. So the
-    # draft-first loop in CLAUDE.md — "open as draft -> mark ready ONCE -> one review" — has no
-    # step that ever asks for a review. Consumer-Web #939 sat unreviewed after being marked ready
-    # while the quota was demonstrably live.
-    #
-    # So the trigger here is always explicit: comment `/gemini review` when the PR is actually
+    # So the trigger here is always explicit: comment `/gemini review` when the PR is genuinely
     # ready. One deliberate attempt, at the moment it is worth spending.
+    #
+    # On cost, for context rather than as the argument: the daily allowance is shared org-wide
+    # across every FTNSS repo, order 15-20 reviews, and an attempt spent here is one Admin-Web or
+    # Consumer-Mobile cannot make. An earlier version of this comment said ~3-5 and called our
+    # notes "off by roughly 5x" -- that was wrong, and wrong in an instructive way: the figure came
+    # from a window measuring what was LEFT after another window had spent most of the day's
+    # allowance. A limit observed at the moment you hit it tells you the remainder, never the
+    # capacity. Capacity needs the total across every consumer, which means asking the other
+    # windows rather than measuring harder locally.
     code_review: false
