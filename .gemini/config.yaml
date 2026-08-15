@@ -1,4 +1,6 @@
-# Gemini Code Assist — the automated reviewer for this repo as of 2026-08-05.
+# Gemini Code Assist — the automated reviewer for this repo.
+#
+# The fleet switched 2026-08-05; THIS repo was missed and migrated 2026-08-15.
 #
 # Replaces Greptile, which was retired on cost (~$100/day at a 50% discount, against ~$22/month
 # here). The `.greptile/` directory is deleted in the same commit; the rules it carried live in

@@ -6,7 +6,7 @@
   `repository_selection: all` with `pull_requests: write`, and a per-repo config directory was the
   one thing unique to this repo — so the config looked like the variable.
 
-  It was not. Admin established (2026-08-05) that Greptile had silently stopped reviewing because
+  It was not. Admin established (2026-08-15) that Greptile had silently stopped reviewing because
   the ORG HAD EXCEEDED ITS MONTHLY FLEX USAGE LIMIT, while the status check went on reporting
   SUCCESS. The real message existed only in the body of a review object on a later PR. Every
   re-trigger sent in the meantime was another attempt against an already-exhausted limit.
@@ -17,7 +17,7 @@
 
   Pass condition, unchanged: a review object exists AND the delivered count matches the claim.
 
-  ONE REFINEMENT TO THAT PASS CONDITION, measured 2026-08-05: `reviews=N` COUNTS HUMAN REPLIES
+  ONE REFINEMENT TO THAT PASS CONDITION, measured 2026-08-15: `reviews=N` COUNTS HUMAN REPLIES
   TOO. An inline reply to a finding creates a review object, so a PR where somebody answered two
   findings reads `reviews=2` with zero reviewer activity. Filter by author before believing the
   count -- otherwise the metric we adopted BECAUSE the status check lied has the same failure mode.
