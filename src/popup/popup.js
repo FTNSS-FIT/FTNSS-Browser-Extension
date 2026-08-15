@@ -22,6 +22,7 @@ import {
   migrateAwayLocalCohort,
   migrateStoredRecords,
   loadEndpoint,
+  matchPatternFor,
   saveEndpoint,
   endpointProblem,
 } from '../lib/storage.js';
@@ -848,26 +849,6 @@ async function releaseOrigin(previous, next) {
   }
 }
 
-/**
- * A Chrome host match pattern: `scheme://host/*`, with NO PORT.
- *
- * `URL.origin` includes the port, so the documented `http://localhost:8787/api/proximity` produced
- * `http://localhost:8787/*` — which is not a valid match pattern. Chrome would have rejected the
- * request outright, meaning the local stub, the one path anyone can exercise today, could never
- * have been authorised at all.
- *
- * Ports are also why comparison has to happen here rather than on origins: patterns cover every
- * port on a host, so moving the stub from 8787 to 8788 is the SAME permission — and comparing
- * origins would have revoked the permission the new endpoint had just been granted.
- */
-function matchPatternFor(value) {
-  try {
-    const url = new URL(value);
-    return `${url.protocol}//${url.hostname}/*`;
-  } catch {
-    return null;
-  }
-}
 
 /** Set or change the endpoint, and ask for that origin's permission at the same time. */
 function endpointForm(current) {
