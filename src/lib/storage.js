@@ -579,22 +579,43 @@ export function exportableRecords(records) {
 // ---------------------------------------------------------------------------------------------
 // The proximity endpoint address.
 //
-// STORED, NOT COMPILED IN, and that is a decision rather than a convenience. Consumer Web's dev
-// origin is Vercel-auth-gated and an extension cannot pass that gate, so which environment this
-// build can reach is still unresolved (Phase 0 brief, question 1). Shipping a default would mean
-// picking prod by omission — the environment nobody chose is the one that gets called.
+// STILL OVERRIDABLE, BUT IT NOW HAS A DEFAULT — and the reasoning that argued against one has
+// expired rather than been overruled.
 //
-// It also means the panel is testable against a local stub before the real endpoint exists, which
-// is the difference between building now and waiting.
+// The original note said shipping a default would mean "picking prod by omission — the environment
+// nobody chose is the one that gets called." That was written while the route did not exist and
+// question 1 of the Phase 0 brief was open. Both have since resolved, in the same direction:
+// `POST https://ftnss.fit/api/proximity` went live 2026-08-15 (Consumer-Web #957, verified against
+// the deployed origin, not the branch), and Consumer Web's dev origin is Vercel-auth-gated so an
+// extension cannot reach it at all. Production is not one option among several; it is the only
+// environment this build can talk to.
+//
+// AND "BY OMISSION" NO LONGER DESCRIBES IT. Two gates still stand in front of every request, both
+// requiring a person to act: the host permission is `optional_host_permissions` and must be
+// granted, and nothing is sent until the panel button is pressed. A default address is not a
+// default transmission. Weighed against that, no-default meant every user typing an endpoint into a
+// settings box before the extension could do anything at all — friction with no privacy dividend.
+//
+// The override stays for the local stub, which is still how the failure paths (timeout, 500,
+// malformed body, empty result) get exercised without breaking production to do it.
 // ---------------------------------------------------------------------------------------------
 
 const ENDPOINT_KEY = 'ftnss.proximityEndpoint';
 
-/** @returns {Promise<string|null>} */
+/**
+ * Where the panel asks, unless someone has chosen otherwise.
+ *
+ * Apex, not `www`: `siteOriginFor()` maps both to a valid site origin, and this is the host the
+ * route was verified against.
+ */
+export const DEFAULT_ENDPOINT = 'https://ftnss.fit/api/proximity';
+
+/** @returns {Promise<string>} */
 export async function loadEndpoint() {
   const bag = await chrome.storage.local.get(ENDPOINT_KEY);
   const value = bag?.[ENDPOINT_KEY];
-  return typeof value === 'string' && value.length > 0 ? value : null;
+  // A stored value wins, including a local stub. Only absence falls back.
+  return typeof value === 'string' && value.length > 0 ? value : DEFAULT_ENDPOINT;
 }
 
 /**
@@ -658,4 +679,25 @@ export async function saveEndpoint(value) {
   const problem = endpointProblem(trimmed);
   if (problem != null) throw new Error(problem);
   await chrome.storage.local.set({ [ENDPOINT_KEY]: trimmed });
+}
+
+/**
+ * A Chrome host match pattern: `scheme://host/*`, with NO PORT.
+ *
+ * `URL.origin` includes the port, so the documented `http://localhost:8787/api/proximity` produced
+ * `http://localhost:8787/*` — which is not a valid match pattern. Chrome would have rejected the
+ * request outright, meaning the local stub, the one path anyone can exercise today, could never
+ * have been authorised at all.
+ *
+ * Ports are also why comparison has to happen here rather than on origins: patterns cover every
+ * port on a host, so moving the stub from 8787 to 8788 is the SAME permission — and comparing
+ * origins would have revoked the permission the new endpoint had just been granted.
+ */
+export function matchPatternFor(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.hostname}/*`;
+  } catch {
+    return null;
+  }
 }

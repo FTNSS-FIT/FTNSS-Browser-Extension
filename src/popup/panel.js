@@ -17,7 +17,7 @@ import { gymsNear, describeDistance } from '../lib/proximity.js';
 import { gymUrl } from '../lib/locale.js';
 import { DISPLAY_LANGUAGES, languagesWithFirst, languageFor } from '../lib/languages.js';
 import { loadPrefs, savePrefs } from '../lib/prefs.js';
-import { loadEndpoint, readActivePage } from '../lib/storage.js';
+import { loadEndpoint, matchPatternFor, readActivePage } from '../lib/storage.js';
 
 const el = (tag, text, className) => {
   const node = document.createElement(tag);
@@ -134,8 +134,47 @@ export async function renderPanel(root) {
   root.appendChild(body);
   body.appendChild(el('div', 'Nothing has been sent yet.', 'label'));
 
+  /*
+   * THE PERMISSION IS REQUESTED HERE, IN THE CLICK, AND IT HAS TO BE.
+   *
+   * `ftnss.fit` is an OPTIONAL host permission — the extension ships without access to it, which is
+   * the point: a user can read the manifest and see that installing it grants nothing. But that
+   * means the first search would otherwise fail with a network error indistinguishable from the
+   * server being down, and the only place that ever asked for the grant was the internal harness.
+   * Shipping a default endpoint without this would be shipping a button that cannot work.
+   *
+   * Chrome only honours `permissions.request()` from inside a user gesture, and an `await` before
+   * it breaks that chain — so the endpoint is resolved when the panel RENDERS, not when the button
+   * is pressed, and the handler calls request() first with nothing awaited ahead of it.
+   *
+   * Declining is a real answer and is handled as one: no search is attempted, and the panel says
+   * what was declined rather than reporting a failure.
+   */
+  const endpoint = await loadEndpoint();
+  const pattern = matchPatternFor(endpoint);
+
   const find = el('button', 'Find gyms near this stay', 'primary block');
-  find.addEventListener('click', () => void search(root, body, prefs));
+  find.addEventListener('click', () => {
+    if (pattern == null) {
+      void search(root, body, prefs);
+      return;
+    }
+    chrome.permissions.request({ origins: [pattern] }).then((granted) => {
+      if (granted) {
+        void search(root, body, prefs);
+        return;
+      }
+      body.replaceChildren(
+        el('div', `Gym search needs permission to contact ${new URL(endpoint).hostname}.`, 'state'),
+      );
+      const retry = el('button', 'Allow and search', 'primary block');
+      retry.addEventListener('click', () => void renderPanel(root));
+      body.appendChild(retry);
+      body.appendChild(
+        el('div', 'Nothing is sent until you ask, and only a coordinate rounded to a 250m grid.', 'fineprint'),
+      );
+    });
+  });
   body.appendChild(find);
 
   body.appendChild(
