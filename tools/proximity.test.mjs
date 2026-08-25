@@ -3,6 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import { gymsNear, describeDistance, SEARCH_RADIUS_METRES } from '../src/lib/proximity.js';
 import { toTransmittablePoint } from '../src/lib/geo.js';
@@ -509,4 +510,29 @@ test('a filter this answer cannot apply is dropped, not merely greyed', async ()
     prunedFilters([{ hours: { open: false } }], { openNowOnly: true }).openNowOnly,
     true,
   );
+});
+
+test('the default endpoint is production, and a stored value still wins', async () => {
+  const { DEFAULT_ENDPOINT, matchPatternFor } = await import('../src/lib/storage.js');
+
+  // Shipping a default only became correct once the route existed and dev proved unreachable — an
+  // extension cannot pass Consumer Web's Vercel auth gate. Pinned so it cannot drift to a host the
+  // manifest does not list, which would fail as an unrequestable permission rather than loudly.
+  assert.equal(DEFAULT_ENDPOINT, 'https://ftnss.fit/api/proximity');
+
+  // The default must be inside optional_host_permissions or the panel can never obtain the grant.
+  const manifest = JSON.parse(
+    readFileSync(new URL('../src/manifest.json', import.meta.url), 'utf8'),
+  );
+  assert.ok(
+    manifest.optional_host_permissions.includes(`${new URL(DEFAULT_ENDPOINT).origin}/*`),
+    'the default endpoint must be a host the extension can actually ask permission for',
+  );
+
+  // Ports are why the pattern is derived rather than using the origin: a match pattern may not
+  // carry one, so `http://localhost:8787/*` would be rejected by Chrome outright — and the local
+  // stub is the only way to exercise the timeout, 500 and malformed-body paths.
+  assert.equal(matchPatternFor('http://localhost:8787/api/proximity'), 'http://localhost/*');
+  assert.equal(matchPatternFor(DEFAULT_ENDPOINT), 'https://ftnss.fit/*');
+  assert.equal(matchPatternFor('not a url'), null);
 });
