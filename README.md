@@ -1,23 +1,74 @@
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="docs/assets/ftnss-logo-dark.svg">
-    <img src="docs/assets/ftnss-logo-light.svg" alt="FTNSS" width="90">
+    <img src="docs/assets/ftnss-logo-light.svg" width="120" alt="FTNSS logo">
   </picture>
 </p>
 
 <h1 align="center">FTNSS Browser Extension</h1>
 
 <p align="center">
-  Shows which FTNSS gyms are near a hotel you are looking at —<br>
+  Shows which FTNSS gyms are near the hotel you are looking at —<br>
   without us ever seeing what you are browsing.
 </p>
 
----
+<p align="center">
+  <a href="https://ftnss.fit">Website</a> ·
+  <a href="#install-it-in-chrome">Install</a> ·
+  <a href="#what-it-does">Features</a> ·
+  <a href="#the-privacy-claim-and-how-to-check-it-yourself">Privacy</a> ·
+  <a href="docs/DECISIONS.md">Decisions</a> ·
+  <a href="#contributing">Contributing</a> ·
+  <a href="mailto:hello@ftnss.fit">Contact</a>
+</p>
 
-> **Status: pre-release.** This repository currently holds the **phase 1 measurement harness**, not
-> the product. It exists to answer one question before anyone builds further: how often can a listing
-> page's location actually be read? **Nothing here has been published to the Chrome Web Store**, so
-> the only way to run it is to load it unpacked — which is what the next section covers.
+<p align="center">
+  <a href="https://github.com/FTNSS-FIT/FTNSS-Browser-Extension/actions/workflows/codeql.yml"><img src="https://github.com/FTNSS-FIT/FTNSS-Browser-Extension/actions/workflows/codeql.yml/badge.svg?branch=main" alt="CodeQL status"></a>
+  <a href="#what-this-is-technically"><img src="https://img.shields.io/badge/dependencies-0-FD5115" alt="Zero dependencies"></a>
+  <a href="#what-this-is-technically"><img src="https://img.shields.io/badge/build%20step-none-FD5115" alt="No build step"></a>
+  <a href="src/manifest.json"><img src="https://img.shields.io/badge/Chrome-MV3-black" alt="Chrome Manifest V3"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT licence"></a>
+</p>
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/panel-results-dark.png">
+    <img src="docs/assets/readme/panel-results-light.png" width="240" alt="The panel listing four nearby gyms with approximate distances">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/panel-idle-dark.png">
+    <img src="docs/assets/readme/panel-idle-light.png" width="240" alt="The panel before anything has been sent, with the Find gyms button">
+  </picture>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/readme/panel-languages-dark.png">
+    <img src="docs/assets/readme/panel-languages-light.png" width="240" alt="The language picker, listing the languages FTNSS serves">
+  </picture>
+</p>
+
+Open a hotel listing on Airbnb, Booking.com, Expedia, Hotels.com or Vrbo, click the icon, and see the
+FTNSS gyms near that stay with walking distances and a link straight to each one. It reads the page
+**only when you click**, and the only thing that ever leaves your browser is a single coordinate
+rounded to a 250m grid — never the URL, the hotel, or anything else about what you were doing.
+
+> **Not on the Chrome Web Store yet.** Load it unpacked; the next section is the five-minute version.
+> The panel is the product and it works today. The measurement harness that came first is still in
+> here, behind a developer-mode toggle in Settings.
+
+## What it does
+
+- **Nearby gyms, nearest first.** Up to six FTNSS gyms within 5km of the listing, each with an
+  approximate distance and a link that opens the gym on the FTNSS site.
+- **Reads the page only on click.** Nothing runs while you browse. There is no background crawl and
+  no content script watching you type.
+- **Fails closed, out loud.** When a page does not publish a usable location, the panel says the
+  location could not be read. It never guesses, and it never picks one listing's coordinates off a
+  page that describes several.
+- **Distances are marked as estimates.** The query point is rounded before it is sent, so the answer
+  is rounded too — `~1.2 km`, never `1,247 m`. Precision the input cannot support is a lie.
+- **57 languages.** Pick one and gym links open on that version of the site. Only languages FTNSS
+  actually serves are offered, because an unrecognised prefix silently 404s.
+- **Pass filters and opening hours.** Day, 3-day, week, month, 90-day and year, plus an Open Now
+  button. A filter with nothing behind it greys out rather than returning an empty list.
 
 ## Install it in Chrome
 
@@ -56,8 +107,9 @@ toolbar if you want it visible.
 Open a listing on any supported site — Airbnb, Booking.com, Expedia, Hotels.com or Vrbo — and click
 the extension. It reads the page **only when you click**, never while you browse.
 
-To see nearby gyms you also need an endpoint, which is not public yet. Without one the panel says so
-and sends nothing.
+The panel asks `https://ftnss.fit/api/proximity`, which is live. Chrome will ask for permission to
+contact that host the first time you press **Find gyms near this stay** — the extension ships without
+it, so installing it grants nothing until you say yes. Decline and nothing is sent.
 
 ### After you change the code
 
@@ -72,22 +124,31 @@ actually took — if it has not changed, Chrome is still running the old code.
 | No FTNSS entry after "Load unpacked" | You chose the repository folder instead of `src` |
 | The extension is there but the popup is empty | The page has not finished loading; reopen the popup |
 | "Nothing to search from" | The site published no coordinates on that page — expected on some sites |
+| The panel lists gyms but no prices or hours | Expected today: the endpoint does not serve pass or hours data yet, so those fields are omitted rather than guessed |
 
 ## What this is, technically
 
-**Plain JavaScript. No dependencies. No build step. No framework.** Around 1,600 lines of code
-across 11 files — roughly 3,200 including comments, because the comments carry the reasoning behind
-decisions that would otherwise look arbitrary. It loads unpacked and runs exactly as written.
+**Plain JavaScript. No dependencies. No build step. No framework.** It loads unpacked and runs
+exactly as written. The comments are dense on purpose: they carry the reasoning behind decisions that
+would otherwise look arbitrary, and this is a repository whose main claim is that you can read it.
 
 That is deliberate. A dependency tree is an extension's attack surface, and it is also source that
 anyone checking the privacy claim below would have to audit. "No build step" means what runs in your
 browser is byte-for-byte what is in this repository.
 
 ```bash
-npm test    # extractors against hostile input, plus the no-network and permission assertions
+npm test                            # extractors against hostile input, plus the no-network and
+                                    # permission assertions
+node tools/screenshot-panels.mjs    # regenerate the panel images above from the real stylesheet
 ```
 
-To run the harness: `chrome://extensions` → Developer mode → **Load unpacked** → select `src/`.
+The screenshots at the top are **rendered from `src/popup/ftnss.css` itself**, not captured by hand,
+so a design change that never reaches the README is hard to ship by accident. Both themes are
+generated, because GitHub serves this page in either.
+
+The measurement harness — tiers, timings and extraction reasons — is behind **Settings → developer
+mode**. It answered the question this project opened with: how often can a listing page's location
+actually be read. See [`docs/PHASE-1-FINDINGS.md`](docs/PHASE-1-FINDINGS.md).
 
 **Chrome only, today.** Firefox and Safari are real work, not a switch — see
 [`ARCHITECTURE.md`](ARCHITECTURE.md) for what each would cost.
