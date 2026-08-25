@@ -1,0 +1,45 @@
+# Gemini Code Assist — the automated reviewer for this repo.
+#
+# The fleet switched 2026-08-05; THIS repo was missed and migrated 2026-08-15.
+#
+# Replaces Greptile, which was retired on cost (~$100/day at a 50% discount, against ~$22/month
+# here). The `.greptile/` directory is deleted in the same commit; the rules it carried live in
+# styleguide.md, which is the file Gemini is documented to read.
+#
+# WHAT IS NOT KNOWN, and is not assumed here: whether Gemini reads `AGENTS.md`. Greptile did, and
+# that conclusion does NOT carry across vendors. So `styleguide.md` restates the high-value rules
+# inline rather than referencing AGENTS.md and hoping. A rule that may or may not have loaded is
+# worse than no rule, because a generic review still looks like a review.
+
+have_fun: false
+
+code_review:
+  disable: false
+  comment_severity_threshold: MEDIUM
+  # This repo's PRs are deliberately small and cohesive. A cap that silently truncates would
+  # reproduce the failure we already had once with Codex: a partial review that looks complete.
+  max_review_comments: -1
+  pull_request_opened:
+    help: false
+    summary: true
+    # AUTO-REVIEW ON OPEN IS OFF, DELIBERATELY.
+    #
+    # THE REASON IS OUR WORKFLOW, NOT THE QUOTA NUMBER. Every PR here opens as a draft, so
+    # `code_review: true` reviews the work at its least finished moment — and then, because
+    # `ready_for_review` is a DIFFERENT EVENT THAT GEMINI IGNORES, nothing fires when the work is
+    # actually done. Auto-on-open gives us a review of the wrong commit and no review of the right
+    # one. Consumer-Web #939 was marked ready and sat unreviewed while the quota was demonstrably
+    # live (two other PRs reviewed either side of it).
+    #
+    # So the trigger here is always explicit: comment `/gemini review` when the PR is genuinely
+    # ready. One deliberate attempt, at the moment it is worth spending.
+    #
+    # On cost, for context rather than as the argument: the daily allowance is shared org-wide
+    # across every FTNSS repo, order 15-20 reviews, and an attempt spent here is one Admin-Web or
+    # Consumer-Mobile cannot make. An earlier version of this comment said ~3-5 and called our
+    # notes "off by roughly 5x" -- that was wrong, and wrong in an instructive way: the figure came
+    # from a window measuring what was LEFT after another window had spent most of the day's
+    # allowance. A limit observed at the moment you hit it tells you the remainder, never the
+    # capacity. Capacity needs the total across every consumer, which means asking the other
+    # windows rather than measuring harder locally.
+    code_review: false
