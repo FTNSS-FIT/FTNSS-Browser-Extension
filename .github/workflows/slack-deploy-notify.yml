@@ -37,6 +37,12 @@ jobs:
     #     Consumer-Web     0 of 13 — immune, and instructively so; see below
     #     everywhere else  no dependabot runs yet
     #
+    # 🔴 AND THE CONTROL, WHICH IS THE LOAD-BEARING LINE HERE: every NON-Dependabot branch on the
+    # same day SUCCEEDED — including branches whose names begin with "dependabot/" but were
+    # authored by a HUMAN. That is the arm proving the discriminator is the ACTOR rather than the
+    # branch name, and it is the only reason `github.actor` is the right mechanism. Without it the
+    # table above is a list of failures with nothing to compare them against.
+    #
     # ⚠️ THESE ARE SIBLING REPOS. Several, possibly including this one, have never had a Dependabot
     # PR at all, so this is NOT a claim that this repo has been broken. The guard is correct either
     # way — it prevents a failure that is structural, not one that is necessarily in the history.
@@ -54,10 +60,6 @@ jobs:
     # rejected at the bottom of this comment — it also swallows a rotated secret. Measured: it is
     # the only repo of the twelve with that guard, which is why this file does not need a
     # loud-failure step: here an empty webhook already throws, loudly.
-    #
-    # while every NON-Dependabot branch on the same day succeeded, including branches whose names
-    # begin with "dependabot" but were authored by a human. The discriminator is the ACTOR, which
-    # is why this tests github.actor and not the branch name.
     #
     # ⚠️ Scoped to `opened` on purpose. The merge job below is NOT skipped: on `closed`,
     # github.actor is the HUMAN who merged, so secrets are present and the notification works —
