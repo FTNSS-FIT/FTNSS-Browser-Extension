@@ -18,7 +18,35 @@ on:
 
 jobs:
   notify-opened:
-    if: github.event.action == 'opened'
+    # 🔴 SKIPPED FOR DEPENDABOT, BECAUSE IT CANNOT WORK — NOT BECAUSE IT IS NOISY.
+    #
+    # A workflow run triggered by Dependabot does NOT receive repository secrets. GitHub gives it a
+    # restricted token and a SEPARATE Dependabot secrets store, so `secrets.*SLACK*` resolves to
+    # the empty string and the action dies with
+    #
+    #     SlackError: Missing input! Either a method or webhook is required to take action.
+    #
+    # ⚠️ NOT HYPOTHETICAL, AND NOT NEW. Measured across the fleet on 2026-08-31 — this repo's
+    # siblings have been failing this way for a while and nobody connected the alerts to a cause:
+    #
+    #     Partner-Web     5 dependabot runs, 5 FAILED
+    #     Payments-Api   12 runs,            8 FAILED
+    #     eShop-Web       4 runs,            4 FAILED
+    #     Admin-Web       4 notify runs,     4 FAILED
+    #
+    # while every NON-Dependabot branch on the same day succeeded, including branches whose names
+    # begin with "dependabot" but were authored by a human. The discriminator is the ACTOR, which
+    # is why this tests github.actor and not the branch name.
+    #
+    # ⚠️ Scoped to `opened` on purpose. The merge job below is NOT skipped: on `closed`,
+    # github.actor is the HUMAN who merged, so secrets are present and the notification works —
+    # and a Dependabot merge is a real deploy that should still be announced.
+    #
+    # ⚠️ And deliberately NOT a "skip if the webhook is empty" guard. That reads as the more
+    # general fix and is worse: it would also swallow a rotated or deleted secret and switch
+    # deploy notifications off SILENTLY. Dependabot is a known, permanent, expected condition and
+    # is named as such. Every other cause of an empty webhook must stay loud.
+    if: github.event.action == 'opened' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Build payload
