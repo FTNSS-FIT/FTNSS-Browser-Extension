@@ -26,13 +26,34 @@ jobs:
     #
     #     SlackError: Missing input! Either a method or webhook is required to take action.
     #
-    # ⚠️ NOT HYPOTHETICAL, AND NOT NEW. Measured across the fleet on 2026-08-31 — this repo's
-    # siblings have been failing this way for a while and nobody connected the alerts to a cause:
+    # ⚠️ NOT HYPOTHETICAL. Measured 2026-08-31, counting ONLY this notify workflow, ONLY runs on
+    # dependabot/* branches, and confirming the SlackError in the log rather than trusting a red X:
     #
-    #     Partner-Web     5 dependabot runs, 5 FAILED
-    #     Payments-Api   12 runs,            8 FAILED
-    #     eShop-Web       4 runs,            4 FAILED
-    #     Admin-Web       4 notify runs,     4 FAILED
+    #     Partner-Web      5 of 5  FAILED
+    #     Payments-Api     4 of 4  FAILED
+    #     eShop-Web        4 of 4  FAILED
+    #     Admin-Web        4 of 5  FAILED (1 skipped)
+    #     Partner-Mobile   1 of 1  FAILED
+    #     Consumer-Web     0 of 13 — immune, and instructively so; see below
+    #     everywhere else  no dependabot runs yet
+    #
+    # ⚠️ THESE ARE SIBLING REPOS. Several, possibly including this one, have never had a Dependabot
+    # PR at all, so this is NOT a claim that this repo has been broken. The guard is correct either
+    # way — it prevents a failure that is structural, not one that is necessarily in the history.
+    #
+    # 🔴 TWO EARLIER VERSIONS OF THIS TABLE WERE WRONG, AND BOTH ERRORS ARE WORTH KNOWING:
+    #   * "Payments-Api 8 of 12" counted every workflow on those branches, not this one. Four of
+    #     those eight were codex-review failing because the OpenAI credits are gone — a different
+    #     mechanism, absorbed into this one by proximity. A true cause must earn each incident.
+    #   * "Consumer-Web 1 failure" was a HUMAN branch inside the 04:11-07:00Z GitHub Actions
+    #     incident: 2-3s, zero steps. The tell is DURATION — a real secrets failure runs long
+    #     enough to reach the Slack step and throw. Consumer-Web has never failed this way.
+    #
+    # Consumer-Web is immune because its Slack step is guarded `if: env.SLACK_WEBHOOK_URL != ''`,
+    # so a Dependabot run skips and the job goes green. ⚠️ That is precisely the SILENT failure
+    # rejected at the bottom of this comment — it also swallows a rotated secret. Measured: it is
+    # the only repo of the twelve with that guard, which is why this file does not need a
+    # loud-failure step: here an empty webhook already throws, loudly.
     #
     # while every NON-Dependabot branch on the same day succeeded, including branches whose names
     # begin with "dependabot" but were authored by a human. The discriminator is the ACTOR, which
