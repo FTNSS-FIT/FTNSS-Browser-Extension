@@ -449,8 +449,11 @@ request is added. `tools/no-network.test.mjs` does not change.
 - **Constant values only.** Never a listing id, never a hostname, and **not the site family either**:
   §11 says the shipped product never records which site a reading came from, and
   `utm_content=airbnb` on a click would record exactly that on our own server.
-- **Captured only under Consumer Web's consent rules.** Analytics there is opt-in; the extension
-  cannot and should not work around that.
+- **Consent is Consumer Web's side, and it is not uniform there.** Measured by Consumer Web on
+  2026-09-13: the PostHog event that reads these parameters is opt-in, but Vercel Web Analytics renders
+  unconditionally and records page views, full URL included, before the cookie prompt is answered.
+  Gating it, stripping the query string, or exempting it as cookieless is Jordan's decision on the
+  site. The extension neither depends on nor works around the outcome, and makes no consent claim.
 - The exact values are agreed with Consumer Web before they ship (#35).
 
 ## 20. The store build lists the primary domains of all five brands
