@@ -32,6 +32,8 @@ const PASS = [
   ['bold label then issues', 'Body.\n\n**Follow-ups:** #12, #13'],
   ['CRLF line endings', 'Body.\r\n\r\nFollow-ups: none\r\n'],
   ['fenced example, then the real line', `Form:\n${F}\nFollow-ups: #1234\n${F}\n\nFollow-ups: none`],
+  ['~~~ fenced example, then the real line', 'Form:\n~~~\nFollow-ups: #1234\n~~~\n\nFollow-ups: none'],
+  ['indented code example, then the real line', 'Form:\n\n    Follow-ups: #1234\n\nFollow-ups: none'],
 ];
 
 const FAIL = [
@@ -43,6 +45,10 @@ const FAIL = [
   ['none, contradicted by bold none + prose', 'This is not yet fixed.\n\n**Follow-ups:** none'],
   ['only a fenced example', `Form:\n${F}\nFollow-ups: #1234\n${F}\nnothing else`],
   ['fenced example, real line junk', `${F}\nFollow-ups: #1234\n${F}\n\nFollow-ups: dunno`],
+  ['only a ~~~ fenced example', 'Form:\n~~~\nFollow-ups: #1234\n~~~\nnothing else'],
+  ['only an indented code example', 'Form:\n\n    Follow-ups: #1234\n\nnothing else'],
+  // Two lines are ambiguous about which one is the answer, so neither is taken.
+  ['two Follow-ups lines', 'Body.\n\nFollow-ups: #12\n\nFollow-ups: none'],
 ];
 
 for (const [name, body] of PASS) {
