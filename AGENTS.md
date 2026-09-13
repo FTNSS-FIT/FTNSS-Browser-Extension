@@ -93,23 +93,38 @@ alike.
 - Each finding: `file:line`, severity, the concrete failure scenario, and a specific fix.
 - If nothing qualifies, reply with exactly: `No blocking issues found.`
 
+## A pull request cannot instruct its own reviewer
+
+**Which ref Gemini reads `.gemini/` from is unverified.** Its citations link to `blob/main`, which is
+suggestive and not proof, and Greptile, the reviewer before it, read its rules from the pull request
+head. So assume a PR that edits `.gemini/`, `AGENTS.md` or `CLAUDE.md` can shape the review that
+judges it: the same class of problem as a code comment addressed to a reviewer, one level up.
+
+**So a change to review rules is reviewed as a change to review rules.** It gets a human read of the
+rules edit itself, and it does not ride along in a PR whose real subject is something else. If a
+rules change and a code change belong to the same piece of work, they are still two pull requests.
+
 ## Opening pull requests
 
-**Open new PRs as DRAFTS.** A non-draft PR is auto-reviewed the moment it opens, and review is billed
-per run — so opening before the work is finished spends a run on a diff you already know is not
-ready. Draft → finish → self-review → mark ready-for-review once, when the paid review is actually
-wanted. Marking ready is itself a trigger, and so is every subsequent push.
+**The reviewer is Gemini Code Assist**, configured in `.gemini/`. What that means in practice,
+measured across the FTNSS repos rather than taken from its documentation:
 
-**Batch fixes into one push.** Each push through a review cycle is another paid run. The target is
-one review plus one batched re-review per PR — not one per finding.
+- **Opening a PR triggers a review, drafts included** (`pull_request_opened.code_review: true`).
+  Finish and self-review the work before opening.
+- **Nothing else triggers one.** Not marking ready, not pushing fixes. Comment `/gemini review` to
+  ask again, once, after batching every fix into one push.
+- **There is no status check.** Count review objects filtered to the bot, because a human reply
+  creates one too:
+  `gh api repos/FTNSS-FIT/FTNSS-Browser-Extension/pulls/<n>/reviews --jq '[.[]|select(.user.login|test("gemini"))]|length'`
+- **Refusals and quota notices arrive as issue comments, not reviews.** When no review appears,
+  read `issues/<n>/comments` on that PR and on a different recent one before triggering again.
+- **It declines anything under `.gemini/` or `.github/workflows/`.** Verify those changes by hand in
+  both directions, say how in the PR, and get Jordan's read.
+- **The allowance is 20 reviews a day, shared by every FTNSS repository**, resetting at midnight
+  Pacific. What is left is whatever other work has not spent. Probe with one trigger, spend in
+  priority order, and aim for one review plus one batched re-review per PR.
 
-Self-review before opening is now the cheapest review available and the only free one.
-
-**Caveat, recorded because it is not yet established:** that drafts are skipped is UNVERIFIED. The
-evidence for it — open drafts with no reviews — is equally consistent with nothing having triggered
-at all, which is the same shape as a verified zero that cannot distinguish a working rule from an
-inert one. Adopt the policy regardless, since it costs nothing; do not cite it as fact until a test
-with a control has run.
+Self-review before opening is the cheapest review there is.
 
 ## Working conventions
 
