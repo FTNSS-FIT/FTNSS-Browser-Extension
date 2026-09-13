@@ -86,6 +86,22 @@ least reliable" and puts last, and it is the main path for roughly half the mark
 
 ---
 
+### Expedia and Hotels.com: address only, the same shape as Booking
+
+_Measured 2026-07-31 from an operator export. Recorded here on 2026-09-13: until then it lived only in
+a gitignored handoff file and a test comment, so anyone reading these findings saw Booking and Airbnb
+and concluded Airbnb was typical._
+
+**6 of 6 pages** carried a complete `PostalAddress` in JSON-LD (street, locality, region, postcode,
+country) and **no coordinate**. The export first read `not_found` on every page, which was our bug:
+`found_address` was hardcoded to tier 3, and Expedia publishes its address to JSON-LD without
+rendering one tier 3 can scrape. Fixed in #10.
+
+**So three of the four brands measured are address-only, and geocoding is the main path rather than
+a minority one.** See DECISIONS §13. The sample is small and was not split by brand.
+
+**Vrbo has never been measured.**
+
 ## Gate 2 — supply coverage: NOT MEASURED
 
 Of the listings we read correctly, how many have an FTNSS gym near enough to show?
