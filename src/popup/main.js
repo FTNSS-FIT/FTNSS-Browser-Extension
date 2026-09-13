@@ -22,6 +22,9 @@ async function start() {
   }
 
   if (prefs.devMode) {
+    // Opts the page into the harness's own stylesheet in popup.html. Without this class none of it
+    // applies — which is the point: those rules used to be global and restyled the consumer panel.
+    document.body.classList.add('harness');
     document.getElementById('harness').hidden = false;
     // popup.js runs its own start() on import.
     await import('./popup.js');

@@ -3,30 +3,44 @@
 <title>FTNSS measurement harness</title>
 <link rel="stylesheet" href="ftnss.css" />
 <style>
-  body { font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; width: 300px; margin: 0; padding: 14px;
+  /*
+   * THE HARNESS'S STYLES, AND ONLY THE HARNESS'S. Every rule below is scoped under #harness or
+   * body.harness, and a test fails if one is not (tools/popup-styles.test.mjs).
+   *
+   * They were global. This block loads AFTER ftnss.css and sets body, button and button.primary at
+   * the same specificity, so it won the cascade in the consumer panel too: measured in headless
+   * Chrome, the shipped panel rendered 300px wide on the harness's dark ground with a rounded
+   * WHITE-on-orange primary button (3.30:1, the pairing ftnss.css exists to prevent) in the system
+   * font. With the block removed the same page rendered 360px, ink on #FD5115, square, brand fonts.
+   * Greptile flagged it in its final summary on #20; nobody tracked it, and the README screenshots
+   * hid it because they render ftnss.css on its own rather than this page.
+   *
+   * body.harness is set by main.js in developer mode only.
+   */
+  body.harness { font: 13px/1.5 ui-sans-serif, system-ui, sans-serif; width: 300px; margin: 0; padding: 14px;
          background: #14161a; color: #f2f3f5; }
-  h1 { font-size: 11px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .05em; color: #8b93a1; }
-  button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid #3a4049;
+  #harness h1 { font-size: 11px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: .05em; color: #8b93a1; }
+  #harness button { font: inherit; cursor: pointer; border-radius: 6px; border: 1px solid #3a4049;
            background: #1e2229; color: #f2f3f5; padding: 5px 9px; }
-  button:hover { background: #262b33; }
-  button.primary { background: #FF4D1C; border-color: #FF4D1C; color: #fff; }
-  .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
-  code { font-family: ui-monospace, monospace; color: #9fd0ff; overflow-wrap: anywhere; }
-  .muted { color: #8b93a1; }
-  .version { float: right; color: #5c6470; font-weight: normal; letter-spacing: 0; }
-  .warn { color: #ffb26b; }
-  .ok { color: #7ee08a; }
-  .gym { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0;
+  #harness button:hover { background: #262b33; }
+  #harness button.primary { background: #FF4D1C; border-color: #FF4D1C; color: #fff; }
+  #harness .row { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+  #harness code { font-family: ui-monospace, monospace; color: #9fd0ff; overflow-wrap: anywhere; }
+  #harness .muted { color: #8b93a1; }
+  #harness .version { float: right; color: #5c6470; font-weight: normal; letter-spacing: 0; }
+  #harness .warn { color: #ffb26b; }
+  #harness .ok { color: #7ee08a; }
+  #harness .gym { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0;
          border-bottom: 1px solid #22262d; }
-  .gym:last-child { border-bottom: 0; }
-  .gym b { font-weight: 600; }
-  .gym .gymlink { font-weight: 600; color: #f2f3f5; text-decoration: none; border-bottom: 1px solid #4a5058; }
-  .gym .gymlink:hover { color: #FF4D1C; border-bottom-color: #FF4D1C; }
-  .gym .dist { color: #8b93a1; white-space: nowrap; }
-  hr { border: 0; border-top: 1px solid #2c3038; margin: 14px 0 10px; }
-  select { font: inherit; width: 100%; background: #0e1013; color: #f2f3f5;
+  #harness .gym:last-child { border-bottom: 0; }
+  #harness .gym b { font-weight: 600; }
+  #harness .gym .gymlink { font-weight: 600; color: #f2f3f5; text-decoration: none; border-bottom: 1px solid #4a5058; }
+  #harness .gym .gymlink:hover { color: #FF4D1C; border-bottom-color: #FF4D1C; }
+  #harness .gym .dist { color: #8b93a1; white-space: nowrap; }
+  #harness hr { border: 0; border-top: 1px solid #2c3038; margin: 14px 0 10px; }
+  #harness select { font: inherit; width: 100%; background: #0e1013; color: #f2f3f5;
            border: 1px solid #3a4049; border-radius: 6px; padding: 5px 7px; }
-  input { font: inherit; width: 100%; box-sizing: border-box; margin-top: 6px; background: #0e1013;
+  #harness input { font: inherit; width: 100%; box-sizing: border-box; margin-top: 6px; background: #0e1013;
           color: #f2f3f5; border: 1px solid #3a4049; border-radius: 6px; padding: 5px 7px; }
 </style>
 
