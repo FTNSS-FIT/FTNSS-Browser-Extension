@@ -147,8 +147,10 @@ export function siteOriginFor(endpoint) {
  * shipped product never records that (DECISIONS 11), and `utm_content=airbnb` on a click would record
  * it on our own server. A test pins these exact strings, so a change to them is a deliberate one.
  *
- * Consent is Consumer Web's side and needs nothing from here: its analytics start opted out, and an
- * unconsented visit carrying these parameters is dropped rather than buffered.
+ * What happens to them on arrival is Consumer Web's side, and this file makes no claim about consent.
+ * Measured there 2026-09-13: the PostHog event that reads these parameters is opt-in, but Vercel Web
+ * Analytics records page views, full URL included, before the cookie prompt is answered. Which of
+ * those becomes the rule is Jordan's decision on the site, not something a link can settle.
  *
  * The gym page reads exactly these three from its own URL (Consumer Web, GymDetailsClient.tsx), and
  * its locale and legacy-slug redirects copy the query string, so they survive to the event.

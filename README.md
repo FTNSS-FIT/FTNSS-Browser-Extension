@@ -196,8 +196,7 @@ from it does, and only when you ask what is nearby.
 `utm_medium=browser-extension`, `utm_campaign=nearby-gyms`), so ftnss.fit can count visits that came
 from the extension. They are the same on every link and say nothing about the page you were on: not
 the site, not the listing, not the hotel. They are pinned by a test in
-[`tools/locale.test.mjs`](tools/locale.test.mjs), and they only reach analytics if you accept the
-site's cookie prompt.
+[`tools/locale.test.mjs`](tools/locale.test.mjs).
 
 The extension also cannot call anywhere it likes: the origins it may contact are named in the
 manifest, and permission for one of them is requested at the moment you configure it rather than
