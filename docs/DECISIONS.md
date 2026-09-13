@@ -453,7 +453,8 @@ request is added. `tools/no-network.test.mjs` does not change.
   2026-09-13: the PostHog event that reads these parameters is opt-in, but Vercel Web Analytics renders
   unconditionally and records page views, full URL included, before the cookie prompt is answered.
   **Jordan ruled the same day that Vercel Web Analytics is exempt as cookieless**, against Consumer
-  Web's recommendation to gate it; recorded in Consumer Web's DECISIONS.md. So a visit through an
+  Web's recommendation to gate it; recorded in Consumer Web's DECISIONS.md by
+  FTNSS-FIT/FTNSS-Consumer-Web#1173, which scopes the exemption to that one tool. So a visit through an
   extension link reaches that counter before any prompt, and product analytics only after consent.
   The README says both. The extension neither depends on nor works around either.
 - The exact values are agreed with Consumer Web before they ship (#35).
