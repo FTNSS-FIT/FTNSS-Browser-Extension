@@ -8,12 +8,17 @@ import assert from 'node:assert/strict';
 import { gymUrl, activeLocale, SUPPORTED_LOCALES, DEFAULT_LOCALE } from '../src/lib/locale.js';
 
 const ENDPOINT = 'https://ftnss.fit/api/proximity';
+
+// The agreed campaign parameters, WRITTEN OUT here rather than imported from locale.js. Importing the
+// constant would let a change to it pass every test below; spelling it out means changing what a
+// link says about itself needs two edits, one of them in a test.
+const Q = '?utm_source=ftnss-extension&utm_medium=browser-extension&utm_campaign=nearby-gyms';
 const PATH = '/book/gyms/ca/ontario/toronto/hone-fitness-isabella-toronto';
 
 test('a gym path becomes a locale-prefixed url on the endpoint origin', () => {
   // Verified against production: this exact shape returns 200 and every url carries a locale
   // prefix, including English — `localePrefix: 'always'`, so there is no unprefixed form.
-  assert.equal(gymUrl(PATH, ENDPOINT), `https://ftnss.fit/en${PATH}`);
+  assert.equal(gymUrl(PATH, ENDPOINT), `https://ftnss.fit/en${PATH}${Q}`);
 });
 
 test('a link opens the SITE, not whatever host serves the endpoint', () => {
@@ -24,14 +29,14 @@ test('a link opens the SITE, not whatever host serves the endpoint', () => {
   //
   // Endpoint origin and site origin coincide in production and diverge everywhere else — the shape
   // of thing that passes every test and fails the first time somebody clicks.
-  assert.equal(gymUrl(PATH, 'http://localhost:8787/api/proximity'), `https://ftnss.fit/en${PATH}`);
-  assert.equal(gymUrl(PATH, 'https://not-ftnss.example/api/proximity'), `https://ftnss.fit/en${PATH}`);
+  assert.equal(gymUrl(PATH, 'http://localhost:8787/api/proximity'), `https://ftnss.fit/en${PATH}${Q}`);
+  assert.equal(gymUrl(PATH, 'https://not-ftnss.example/api/proximity'), `https://ftnss.fit/en${PATH}${Q}`);
 
   // An FTNSS host IS followed, so a real second origin still works.
-  assert.equal(gymUrl(PATH, 'https://www.ftnss.fit/api/proximity'), `https://www.ftnss.fit/en${PATH}`);
+  assert.equal(gymUrl(PATH, 'https://www.ftnss.fit/api/proximity'), `https://www.ftnss.fit/en${PATH}${Q}`);
 
   // The property that mattered is untouched: the origin is ours, and no response can choose it.
-  assert.equal(gymUrl(PATH, ENDPOINT), `https://ftnss.fit/en${PATH}`);
+  assert.equal(gymUrl(PATH, ENDPOINT), `https://ftnss.fit/en${PATH}${Q}`);
 });
 
 test('nothing that is not a site-relative gym path becomes a link', () => {
@@ -64,7 +69,7 @@ test('an unsupported locale produces no link rather than a 404', () => {
   // us. An allowlist fails by omitting a language we do support, which is the survivable direction.
   assert.equal(gymUrl(PATH, ENDPOINT, 'xx'), null);
   assert.equal(gymUrl(PATH, ENDPOINT, 'en-US'), null, 'close is not the same as supported');
-  assert.equal(gymUrl(PATH, ENDPOINT, 'fr-CA'), `https://ftnss.fit/fr-CA${PATH}`);
+  assert.equal(gymUrl(PATH, ENDPOINT, 'fr-CA'), `https://ftnss.fit/fr-CA${PATH}${Q}`);
 });
 
 test('a malformed endpoint yields no link', () => {
@@ -92,4 +97,35 @@ test('this build is English, and the plumbing for more is real', () => {
     assert.ok(SUPPORTED_LOCALES.includes(late), `${late} is served and must be linkable`);
   }
   assert.throws(() => SUPPORTED_LOCALES.push('zz'), 'the list must not be mutable at runtime');
+});
+
+test('gym links carry exactly the agreed campaign parameters, and nothing from the input', () => {
+  const url = new URL(gymUrl(PATH, ENDPOINT));
+  assert.deepEqual(
+    [...url.searchParams.entries()],
+    [
+      ['utm_source', 'ftnss-extension'],
+      ['utm_medium', 'browser-extension'],
+      ['utm_campaign', 'nearby-gyms'],
+    ],
+  );
+
+  // CONSTANT across every input a link is built from. If any value varied with the path, the
+  // locale or the origin, the parameters would be carrying something about what was browsed.
+  const variants = [
+    gymUrl(PATH, ENDPOINT, 'fr-CA'),
+    gymUrl('/book/gyms/us/pennsylvania/philadelphia/some-other-gym', ENDPOINT, 'de'),
+    gymUrl(PATH, 'https://www.ftnss.fit/api/proximity', 'ja'),
+    gymUrl(PATH, 'http://localhost:8787/api/proximity'),
+  ];
+  for (const v of variants) {
+    assert.equal(new URL(v).search, Q, `${v} must carry the same parameters as every other link`);
+  }
+
+});
+
+test('a refused link stays refused — the parameters never make an unsafe path into a link', () => {
+  assert.equal(gymUrl('//evil.example/login', ENDPOINT), null);
+  assert.equal(gymUrl('/book/gyms/', ENDPOINT), null);
+  assert.equal(gymUrl(PATH, ENDPOINT, 'xx'), null);
 });
