@@ -198,6 +198,12 @@ from the extension. They are the same on every link and say nothing about the pa
 the site, not the listing, not the hotel. They are pinned by a test in
 [`tools/locale.test.mjs`](tools/locale.test.mjs).
 
+On ftnss.fit, these parameters reach FTNSS's product analytics only after you accept analytics in
+the cookie prompt. The site's cookieless page-view counter, Vercel Web Analytics, records every visit
+before any prompt, including the page address and so these parameters. It sets no cookie and keeps
+no persistent identifier, and because the values are constants, what it learns is only that a visit
+came from the extension.
+
 The extension also cannot call anywhere it likes: the origins it may contact are named in the
 manifest, and permission for one of them is requested at the moment you configure it rather than
 granted up front.
