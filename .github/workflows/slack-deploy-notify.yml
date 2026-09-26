@@ -18,7 +18,58 @@ on:
 
 jobs:
   notify-opened:
-    if: github.event.action == 'opened'
+    # 🔴 SKIPPED FOR DEPENDABOT, BECAUSE IT CANNOT WORK — NOT BECAUSE IT IS NOISY.
+    #
+    # A workflow run triggered by Dependabot does NOT receive repository secrets. GitHub gives it a
+    # restricted token and a SEPARATE Dependabot secrets store, so `secrets.*SLACK*` resolves to
+    # the empty string and the action dies with
+    #
+    #     SlackError: Missing input! Either a method or webhook is required to take action.
+    #
+    # ⚠️ NOT HYPOTHETICAL. Measured 2026-08-31, counting ONLY this notify workflow, ONLY runs on
+    # dependabot/* branches, and confirming the SlackError in the log rather than trusting a red X:
+    #
+    #     Partner-Web      5 of 5  FAILED
+    #     Payments-Api     4 of 4  FAILED
+    #     eShop-Web        4 of 4  FAILED
+    #     Admin-Web        4 of 5  FAILED (1 skipped)
+    #     Partner-Mobile   1 of 1  FAILED
+    #     Consumer-Web     0 of 13 — immune, and instructively so; see below
+    #     everywhere else  no dependabot runs yet
+    #
+    # 🔴 AND THE CONTROL, WHICH IS THE LOAD-BEARING LINE HERE: every NON-Dependabot branch on the
+    # same day SUCCEEDED — including branches whose names begin with "dependabot/" but were
+    # authored by a HUMAN. That is the arm proving the discriminator is the ACTOR rather than the
+    # branch name, and it is the only reason `github.actor` is the right mechanism. Without it the
+    # table above is a list of failures with nothing to compare them against.
+    #
+    # ⚠️ THESE ARE SIBLING REPOS. Several, possibly including this one, have never had a Dependabot
+    # PR at all, so this is NOT a claim that this repo has been broken. The guard is correct either
+    # way — it prevents a failure that is structural, not one that is necessarily in the history.
+    #
+    # 🔴 TWO EARLIER VERSIONS OF THIS TABLE WERE WRONG, AND BOTH ERRORS ARE WORTH KNOWING:
+    #   * "Payments-Api 8 of 12" counted every workflow on those branches, not this one. Four of
+    #     those eight were codex-review failing because the OpenAI credits are gone — a different
+    #     mechanism, absorbed into this one by proximity. A true cause must earn each incident.
+    #   * "Consumer-Web 1 failure" was a HUMAN branch inside the 04:11-07:00Z GitHub Actions
+    #     incident: 2-3s, zero steps. The tell is DURATION — a real secrets failure runs long
+    #     enough to reach the Slack step and throw. Consumer-Web has never failed this way.
+    #
+    # Consumer-Web is immune because its Slack step is guarded `if: env.SLACK_WEBHOOK_URL != ''`,
+    # so a Dependabot run skips and the job goes green. ⚠️ That is precisely the SILENT failure
+    # rejected at the bottom of this comment — it also swallows a rotated secret. Measured: it is
+    # the only repo of the twelve with that guard, which is why this file does not need a
+    # loud-failure step: here an empty webhook already throws, loudly.
+    #
+    # ⚠️ Scoped to `opened` on purpose. The merge job below is NOT skipped: on `closed`,
+    # github.actor is the HUMAN who merged, so secrets are present and the notification works —
+    # and a Dependabot merge is a real deploy that should still be announced.
+    #
+    # ⚠️ And deliberately NOT a "skip if the webhook is empty" guard. That reads as the more
+    # general fix and is worse: it would also swallow a rotated or deleted secret and switch
+    # deploy notifications off SILENTLY. Dependabot is a known, permanent, expected condition and
+    # is named as such. Every other cause of an empty webhook must stay loud.
+    if: github.event.action == 'opened' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Build payload
