@@ -192,6 +192,18 @@ advertising, or error-reporting SDKs, ever. No crawling: it reads the page you a
 at, on your machine, and **the reading itself never leaves it** — only a rounded coordinate derived
 from it does, and only when you ask what is nearby.
 
+**Gym links carry three fixed campaign parameters** (`utm_source=ftnss-extension`,
+`utm_medium=browser-extension`, `utm_campaign=nearby-gyms`), so ftnss.fit can count visits that came
+from the extension. They are the same on every link and say nothing about the page you were on: not
+the site, not the listing, not the hotel. They are pinned by a test in
+[`tools/locale.test.mjs`](tools/locale.test.mjs).
+
+On ftnss.fit, these parameters reach FTNSS's product analytics only after you accept analytics in
+the cookie prompt. The site's cookieless page-view counter, Vercel Web Analytics, records every visit
+before any prompt, including the page address and so these parameters. It sets no cookie and keeps
+no persistent identifier, and because the values are constants, what it learns is only that a visit
+came from the extension.
+
 The extension also cannot call anywhere it likes: the origins it may contact are named in the
 manifest, and permission for one of them is requested at the moment you configure it rather than
 granted up front.

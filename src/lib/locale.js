@@ -138,6 +138,31 @@ export function siteOriginFor(endpoint) {
  * @param {string} path      site-relative, no locale prefix, e.g. `/book/gyms/ca/ontario/…`
  * @param {string} endpoint  the proximity endpoint, used only for its origin
  */
+/**
+ * The campaign parameters every gym link carries, so ftnss.fit can count visits that came from the
+ * extension. DECISIONS 19; values agreed with Consumer Web on 2026-09-13.
+ *
+ * CONSTANTS, AND THAT IS THE WHOLE PRIVACY ARGUMENT. Nothing here may be derived from the page, the
+ * listing, the hostname or the gym — not even which site family a reading came from, because the
+ * shipped product never records that (DECISIONS 11), and `utm_content=airbnb` on a click would record
+ * it on our own server. A test pins these exact strings, so a change to them is a deliberate one.
+ *
+ * What happens to them on arrival is Consumer Web's side. As of 2026-09-13: the PostHog event that
+ * reads these parameters is opt-in, and Vercel Web Analytics records page views, full URL included,
+ * before the cookie prompt is answered. That second one is deliberate: Jordan exempted it as
+ * cookieless (recorded in Consumer Web's DECISIONS.md). The README discloses both halves.
+ *
+ * The gym page reads exactly these three from its own URL (Consumer Web, GymDetailsClient.tsx), and
+ * its locale and legacy-slug redirects copy the query string, so they survive to the event.
+ */
+export const CAMPAIGN = Object.freeze({
+  utm_source: 'ftnss-extension',
+  utm_medium: 'browser-extension',
+  utm_campaign: 'nearby-gyms',
+});
+
+const CAMPAIGN_QUERY = new URLSearchParams(CAMPAIGN).toString();
+
 export function gymUrl(path, endpoint, locale = activeLocale()) {
   if (typeof path !== 'string' || typeof endpoint !== 'string') return null;
   if (!SUPPORTED_LOCALES.includes(locale)) return null;
@@ -158,5 +183,5 @@ export function gymUrl(path, endpoint, locale = activeLocale()) {
 
   const origin = siteOriginFor(endpoint);
   if (origin == null) return null;
-  return `${origin}/${locale}${path}`;
+  return `${origin}/${locale}${path}?${CAMPAIGN_QUERY}`;
 }
