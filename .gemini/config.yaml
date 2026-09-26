@@ -1,0 +1,25 @@
+# Gemini Code Assist — the reviewer for this repository.
+#
+# THIS DIRECTORY DID NOT EXIST until this file. Every Gemini review here before it ran with none of
+# the rules in styleguide.md loaded, and a rules-less review looks exactly like an informed one.
+# Tracked in #30.
+#
+# ⚠️ Gemini declines to review anything under .gemini/, so a change here gets a human read instead.
+# Only keys that appear in the fleet's other configs are used here; an unrecognized key in a file no
+# reviewer reads back would fail silently.
+
+have_fun: false
+
+code_review:
+  disable: false
+  # MEDIUM, not LOW. AGENTS.md → Code Review Rules asks for defects that can be justified, and
+  # prefers three real findings over twenty observations.
+  comment_severity_threshold: MEDIUM
+  max_review_comments: -1
+  pull_request_opened:
+    summary: true
+    # true, matching nine of the ten configured FTNSS repos. The cost is that opening a PR spends one
+    # of the org's 20 shared daily reviews, drafts included, so batch the work before opening. The
+    # alternative Consumer-Mobile chose makes a forgotten `/gemini review` silent, which is the worse
+    # failure in a repository this quiet.
+    code_review: true
