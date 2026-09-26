@@ -14,8 +14,9 @@
 //
 // What survives:
 //   • nothing derived from the URL is persisted, not even a hash;
-//   • no record carries anything about the site at all — the cohort lives outside the records, in
-//     the export filename, because a coarse label plus a date still proves which domain was visited;
+//   • a record names its site only as `family`, `variant` and `brand`, from our own closed
+//     vocabulary, never the hostname, and only in the harness: DECISIONS 11 explains why the
+//     harness may and the shipped product never will;
 //   • the projection is applied when a record is WRITTEN, not when it is exported, so the trail
 //     never exists on disk in the first place;
 //   • that projection is a strict ALLOWLIST. A denylist fails open — it protects only the fields
@@ -365,9 +366,10 @@ const EXPORT_FIELDS = [
   // airbnb.com on that day. Coarsening the value did not help, because the constraint that keeps the
   // data honest is exactly what makes it identifying.
   //
-  // The cohort now lives OUTSIDE the records. One export per cohort, with the cohort in the
-  // filename, and the report takes it from there. The comparison this phase exists to make survives
-  // intact; what disappears is any row that says where somebody was.
+  // That design was reversed by DECISIONS 11: the harness has an operator rather than users, and
+  // the workflow it forced cost more measurement accuracy than the privacy it bought. So records
+  // carry `family`, `variant` and `brand` again (above). The shipped product records none of it.
+  // (The note above is kept because it explains why these fields look fought over. They were.)
   // (Codex review round 21, PR #1.)
   'recordedAt',
   'transmitted', // the ~1km point the product WOULD send — needed for the coverage gate, and

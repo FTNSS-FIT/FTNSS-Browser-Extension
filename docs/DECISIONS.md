@@ -302,6 +302,9 @@ cost**: every named domain is a permission prompt, growth forces existing users 
 manifest listing sixty domains reads to a store reviewer as `<all_urls>` written out longhand — which
 is the concern raised when the v1 list was first scoped and remains unresolved.
 
+**Resolved 2026-09-13, see §20.** The sentence above is left as written: it was true when §14 was
+decided, and a reader should be able to see that it changed.
+
 **Nothing else grew.** Permissions are still `storage` alone, asserted by test. What widened is the
 set of pages a content script may read, on an unpublished internal build.
 
@@ -340,6 +343,13 @@ somewhere to live.
   origin a person just typed is both narrower and more truthful.
 
 `host_permissions` stays absent and the `permissions` array stays `["storage"]`. Both are asserted.
+
+**Amended 2026-09-13: the endpoint now has a compiled-in default, and the reasoning above expired
+rather than being wrong.** `POST https://ftnss.fit/api/proximity` went live on 2026-08-15, and
+Consumer Web's dev origin is still unreachable from an extension, so production is not one option
+among several; it is the only environment this build can call. #26 (merged 2026-08-25) made it the
+default. **The second reason still holds:** the origin is requested at runtime, now on the click
+that first searches, so installing the extension still grants nothing until a person says yes.
 
 ## 16. Exactly one file may reach the network, and it is named in a test
 
@@ -420,3 +430,62 @@ had no inventory anywhere; it had queried the wrong column, and one of them was 
 Because the panel reads availability from the response rather than a hardcoded list, the wrong
 reading never reached a user and needed no correction in code. **A design that fails safe against
 its author's own bad data is worth more than one that is merely correct today.**
+
+## 19. Conversion is measured on ftnss.fit, from constant UTM parameters on gym links
+
+**Decided 2026-09-13 by Jordan**, matching the recommendation. Rejected: aggregate extension-side
+counts (a second network request, and a disclosed change to the privacy promise), and declaring
+conversion data permanently out of scope.
+
+Gym links opened from the panel carry `utm_source`, `utm_medium` and `utm_campaign`, the three
+parameters Consumer Web already reads from the gym page's own URL and attaches to its gym-view event
+(`GymDetailsClient.tsx`, read on 2026-09-13). The person has chosen to click by then, and attribution
+happens on our own site.
+
+**Why this keeps the promise intact:** no listing, page or site data leaves the browser, and no
+request is added. `tools/no-network.test.mjs` does not change.
+
+**The constraints are the decision, not implementation detail:**
+- **Constant values only.** Never a listing id, never a hostname, and **not the site family either**:
+  §11 says the shipped product never records which site a reading came from, and
+  `utm_content=airbnb` on a click would record exactly that on our own server.
+- **Consent is Consumer Web's side, and it is not uniform there.** Measured by Consumer Web on
+  2026-09-13: the PostHog event that reads these parameters is opt-in, but Vercel Web Analytics renders
+  unconditionally and records page views, full URL included, before the cookie prompt is answered.
+  **Jordan ruled the same day that Vercel Web Analytics is exempt as cookieless**, against Consumer
+  Web's recommendation to gate it; recorded in Consumer Web's DECISIONS.md by
+  FTNSS-FIT/FTNSS-Consumer-Web#1173, which scopes the exemption to that one tool. So a visit through an
+  extension link reaches that counter before any prompt, and product analytics only after consent.
+  The README says both. The extension neither depends on nor works around either.
+- The exact values are agreed with Consumer Web before they ship (#35).
+
+## 20. The store build lists the primary domains of all five brands
+
+**Decided 2026-09-13 by Jordan — AGAINST the recommendation.** Recommended: Airbnb alone, adding each
+brand as geocoding (§13) lands. Chosen: `airbnb.com`, `booking.com`, `expedia.com`, `hotels.com` and
+`vrbo.com`, with their subdomains. The measurement harness keeps its 81 patterns (§14); the store
+build and the harness must not share one list.
+
+⚠️ **This question was asked twice.** The first version stated, wrongly, that four of these brands
+could be read. It was re-asked with the measured table below, and this is the answer to the corrected
+question.
+
+**What it costs, measured:**
+
+| brand | yields a location today | evidence |
+|---|---|---|
+| Airbnb | yes, 15 of 15 pages | PHASE-1-FINDINGS |
+| Booking.com | no, 0 of 48, address only | PHASE-1-FINDINGS |
+| Expedia, Hotels.com | no, 6 of 6 address only | PHASE-1-FINDINGS, recorded 2026-09-13 |
+| Vrbo | **never measured** | |
+
+So on four of five listed sites the panel will say the location could not be read until §13 is
+decided and built.
+
+**Why it can still be the right call:** §14 records that every domain added later forces existing
+users to re-accept a permission prompt. Shipping all five up front pays that cost once, before there
+are users, instead of once per brand as geocoding arrives.
+
+**Sanity check for a later reader:** if §13 is decided as *decline address-only sites*, four of these
+five domains become permissions for pages the extension can never read, and this entry should be
+revisited.
