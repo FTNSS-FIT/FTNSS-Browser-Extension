@@ -64,7 +64,26 @@ jobs:
   notify:
     if: github.event.action == 'closed' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
+    permissions:
+      contents: read       # read the shared merge-timing action
+      pull-requests: read  # the PR's timestamps and the issues it closes (#996)
+      issues: read         # each closed issue's timestamps
     steps:
+      # Time in the queue + each issue it closed (FTNSS-Admin-Web#996). The logic is shared by
+      # every repo's merge post so it cannot drift; continue-on-error so an unreachable action
+      # costs only this line, never the post.
+      - name: Merge timing
+        id: timing
+        continue-on-error: true
+        uses: FTNSS-FIT/FTNSS-Admin-Web/.github/actions/merge-timing@main
+        with:
+          repo: ${{ github.repository }}
+          pr-number: ${{ github.event.pull_request.number }}
+          token: ${{ github.token }}
+      - name: Export merge timing
+        env:
+          LINE: ${{ steps.timing.outputs.line }}
+        run: echo "MERGE_TIMING=$LINE" >> "$GITHUB_ENV"
       - name: Build payload
         id: data
         env:
@@ -91,11 +110,13 @@ jobs:
           payload=$(jq -nc \
             --arg applabel "$APP_LABEL" --arg envn "$ENVN" --arg title "$PR_TITLE" --arg body "$BODY_SNIPPET" \
             --arg url "$PR_URL" --arg num "$PR_NUM" --arg head "$HEAD_REF" --arg base "$BASE_REF" \
-            --arg mergedby "$MERGED_BY" --arg shashort "$SHA_SHORT" --arg shaurl "$SHA_URL" \
+            --arg mergedby "$MERGED_BY" --arg shashort "$SHA_SHORT" --arg shaurl "$SHA_URL" --arg timing "$MERGE_TIMING" \
             '{
               text: (":merged: " + $applabel + " — PR Merged → " + $envn),
               attachments: [ { color: "#FF4D1C", blocks: [
                 { type: "section", text: { type: "mrkdwn", text: ("*<" + $url + "|#" + $num + ": " + $title + ">*") } },
+                # Between the PR link and the speech balloon (#996); `empty` drops it from the array.
+                (if $timing == "" then empty else { type: "section", text: { type: "mrkdwn", text: $timing } } end),
                 { type: "section", text: { type: "mrkdwn", text: (":speech_balloon: " + $body) } },
                 { type: "section", fields: [
                   { type: "mrkdwn", text: (":seedling: *Branch*\n`" + $head + "` → `" + $base + "`") },
