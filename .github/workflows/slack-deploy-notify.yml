@@ -69,13 +69,21 @@ jobs:
       pull-requests: read  # the PR's timestamps and the issues it closes (#996)
       issues: read         # each closed issue's timestamps
     steps:
-      # Time in the queue + each issue it closed (FTNSS-Admin-Web#996). The logic is shared by
-      # every repo's merge post so it cannot drift; continue-on-error so an unreachable action
-      # costs only this line, never the post.
+      # Time in the queue + each issue it closed (FTNSS-Admin-Web#996).
+      #
+      # ⚠️ A LOCAL COPY, unlike every other repo. This repo is PUBLIC, and a public repo cannot
+      # use an action from a private one: `uses: FTNSS-FIT/FTNSS-Admin-Web/...` fails at "Set up
+      # job" ("Unable to resolve action"), BEFORE continue-on-error can apply, so the whole merge
+      # post was lost (run 36281021644, 2026-09-26). Keep .github/actions/merge-timing in step
+      # with FTNSS-Admin-Web's copy when that one changes.
+      - uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          sparse-checkout: .github/actions
       - name: Merge timing
         id: timing
         continue-on-error: true
-        uses: FTNSS-FIT/FTNSS-Admin-Web/.github/actions/merge-timing@main
+        uses: ./.github/actions/merge-timing
         with:
           repo: ${{ github.repository }}
           pr-number: ${{ github.event.pull_request.number }}

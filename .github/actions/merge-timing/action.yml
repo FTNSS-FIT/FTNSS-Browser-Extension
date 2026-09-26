@@ -1,0 +1,31 @@
+name: Merge timing line
+description: >
+  One mrkdwn line for a merged PR's Slack post: how long it was in the queue, and each issue it
+  closed with how long that issue was open (#996). Shared so the fleet's merge posts cannot drift.
+inputs:
+  repo:
+    description: owner/name of the PR's repository
+    required: true
+  pr-number:
+    description: the merged PR's number
+    required: true
+  token:
+    description: a token that can read the PR (and, ideally, the issues it closes)
+    required: true
+outputs:
+  line:
+    description: the line, or empty when it could not be computed (omit it from the post then)
+    value: ${{ steps.t.outputs.line }}
+runs:
+  using: composite
+  steps:
+    - id: t
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        REPO: ${{ inputs.repo }}
+        PR_NUM: ${{ inputs.pr-number }}
+      run: |
+        line=$("$GITHUB_ACTION_PATH/merge-timing.sh" "$REPO" "$PR_NUM" || true)
+        echo "line=$line" >> "$GITHUB_OUTPUT"
+        echo "merge-timing: ${line:-<empty>}"
