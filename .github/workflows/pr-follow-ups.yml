@@ -1,0 +1,41 @@
+name: PR follow-ups
+
+# Every PR into main names its outstanding work as linked issues, in one line of its body:
+#   Follow-ups: #12, #13     or     Follow-ups: none
+#
+# The logic lives in tools/pr-follow-ups.mjs, which is testable locally and covered by
+# tools/pr-follow-ups.test.mjs in both directions. This file only wires it to the event.
+#
+# Adopted from FTNSS-FIT/FTNSS-Consumer-Web#1150 on Jordan's instruction, 2026-09-13.
+#
+# NOT A REQUIRED CHECK. Adding it to branch protection is Jordan's call. And because Gemini declines
+# to review anything under .github/workflows/, this file gets no automated review: it was verified
+# locally in both directions instead, and the PR that added it says how.
+
+on:
+  pull_request:
+    branches: [main]
+    # `edited` so fixing the PR body re-runs the check without a push.
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-follow-ups-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  follow-ups:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check the Follow-ups line
+        env:
+          # Through the environment, never interpolated into the script: a PR body is
+          # attacker-controlled text, and `${{ }}` inside `run:` is a shell injection.
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node tools/pr-follow-ups.mjs

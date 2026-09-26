@@ -115,4 +115,8 @@ with a control has run.
 
 - One feature per branch, cut from `main`, small enough to review in a single pass.
 - Self-review the full diff before opening a PR.
+- **Every PR body ends with a `Follow-ups:` line** — `Follow-ups: #12, #13`, or `Follow-ups: none`.
+  Work a PR leaves undone becomes a standalone issue **before** it merges, in the repo that owns it;
+  a sentence saying "later" or "out of scope" in a PR body is a missing issue. Checked by
+  `tools/pr-follow-ups.mjs` on every PR. When the fix lands, close the issue with the evidence.
 - Never commit anything you would not want published, in any commit, at any point.
